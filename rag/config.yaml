@@ -1,0 +1,69 @@
+db_path: rag/data/genshin_rag.db
+
+ollama: 
+  base_url: http://localhost:11434
+  embedding_model: all-minilm:latest
+
+pipeline:
+  chunk_size: 800
+  chunk_overlap: 300
+  max_embed_chars: 500
+  min_embed_chars: 200
+  archive_raw: true
+
+filters:
+  deny_url_regex: "(?i)(new-in-|future|beta|datamine|preload|hidden|unreleased|test|prototype|dev|internal)"
+  deny_text_regex: "(?i)(unreleased|upcoming|beta build|from beta|not yet released|future version|test server|datamined|subject to change|preload data|development version)"
+
+logging:
+  level: INFO
+  file: rag/logs/pipeline.log
+
+sources:
+  - name: kqm_tcl
+    kind: github
+    tier: primary
+    enabled: true
+    weight: 0.85
+    path: rag/data/repos/kqm_tcl
+
+  - name: kqm_news
+    kind: github
+    tier: primary
+    enabled: true
+    weight: 0.75
+    path: rag/data/repos/kqm_news
+
+  - name: genshin_wiki
+    kind: fandom_api
+    tier: primary
+    enabled: true
+    weight: 0.95
+    api: https://genshin-impact.fandom.com/api.php
+    max_pages: null
+    rate_limit_s: 1.5
+
+  - name: honey
+    kind: honey_html
+    tier: supplementary
+    enabled: true
+    weight: 0.65
+    base_url: https://gensh.honeyhunterworld.com
+    seeds:
+      - "https://gensh.honeyhunterworld.com/?lang=EN"
+    max_pages: null
+    rate_limit_s: 1.5
+
+  - name: homdgcat
+    kind: homdgcat_html
+    tier: supplementary
+    enabled: false
+    weight: 0.25
+    base_url: https://homdgcat.wiki
+
+  - name: hakushin
+    kind: hakushin_html
+    tier: supplementary
+    enabled: false
+    weight: 0.45
+    base_url: https://gi20.hakush.in

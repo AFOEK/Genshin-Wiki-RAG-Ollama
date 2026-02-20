@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+rag/data/repos/*
+*.db
+*.db-*
+*.log
