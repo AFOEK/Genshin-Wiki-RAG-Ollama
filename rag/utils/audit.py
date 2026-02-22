@@ -33,6 +33,11 @@ class IntegrityReport:
 
     failures: list[IntegrityFailure]
 
+    orphan_chunks: int = 0
+    orphan_embeddings: int = 0
+    missing_embeddings: int = 0
+    docs_missing_chunks: int = 0
+
 @dataclass
 class CompressionStats:
     docs_rows: int
@@ -54,10 +59,14 @@ def sample(rows: list, samples: Optional[int], rng: random.Random) -> list:
         return rows
     return rng.sample(rows, samples)
 
-def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, sample_chunks: Optional[int] = 200, seed: int = 1337, active_chunks_only: bool = True) -> IntegrityReport:
+def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, sample_chunks: Optional[int] = 200, seed: int = 1337, active_chunks_only: bool = True, check_ophans: bool = True, check_missing_embeddings: bool = True, max_orphan_failures: int = 200, max_missing_embedding_failures: int = 200) -> IntegrityReport:
     rng = random.Random(seed)
     cur = conn.cursor()
     failures: list[IntegrityFailure] = []
+    orphan_chunks = 0
+    orphan_embeddings = 0
+    missing_embeddings = 0
+    docs_missing_chunks = 0
 
     cur.execute("""
     SELECT doc_id, url, raw_zst, raw_hash FROM docs WHERE raw_zst IS NOT NULL OR raw_hash IS NOT NULL
@@ -67,7 +76,7 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
 
     docs_rows_checked = []
     for doc_id, url, raw_zst, raw_hash in doc_rows:
-        if raw_zst in None:
+        if raw_zst is None:
             failures.append(IntegrityFailure("docs", doc_id, url , "missing_blob_doc"))
             continue
         if raw_hash is None:
@@ -134,6 +143,81 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
     
     chunk_checked = len(chunk_picks)
 
+    if check_ophans:
+        cur.execute("""
+        SELECT c.chunks_id, c.doc_id
+        FROM chunks c
+        LEFT JOIN docs d ON d.doc_id = d.doc_id
+        WHERE d.doc_id IS NULL
+        """)
+        rows = cur.fetchall()
+        orphan_chunks = len(rows)
+        for chunk_id, doc_id in rows[:max_orphan_failures]:
+            failures.append(
+                IntegrityFailure(
+                    kind="orphan",
+                    id=str(chunk_id),
+                    url="",
+                    reason=f"Orphaned chunk: doc_id={doc_id}"
+                )
+            )
+
+        cur.execute("""
+        SELECT e.chunk_id
+        FROM embeddings e
+        LEFT JOIN chunks c ON c.chunk_id = e.chunk_id
+        WHERE c.chunk_id IS NULL
+        """)
+        rows = cur.fetchall()
+        orphan_embeddings = len(rows)
+        for (chunk_id,) in rows[:max_orphan_failures]:
+            failures.append(
+                IntegrityFailure(
+                    kind="orphan",
+                    id=str(chunk_id),
+                    url="",
+                    reason="orphan_embedding: chunk_id missing"
+                )
+            )
+        if check_missing_embeddings:
+            cur.execute("""
+            SELECT d.doc_id, d.url
+            FROM docs d
+            LEFT JOIN chunks c ON c.doc_id = d.doc_id AND c.is_active=1
+            GROUP BY d.doc_id
+            HAVING COUNT(c.chunk_id)=0
+            """)
+            rows = cur.fetchall()
+            docs_missing_chunks = len(rows)
+            for doc_id, url in rows[:max_orphan_failures]:
+                failures.append(
+                    IntegrityFailure(
+                        kind="docs",
+                        id=str(doc_id),
+                        url=url,
+                        reason="doc_has_no_active_chunks"
+                    )
+                )
+
+        cur.execute("""
+        SELECT c.chunk_id, d.url
+        FROM chunks c
+        JOIN docs d ON d.doc_id = c.doc_id
+        LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+        WHERE c.is_active=1 AND e.chunk_id IS NULL
+        """)
+        rows = cur.fetchall()
+        missing_embeddings = len(rows)
+        for chunk_id, url in rows[:max_missing_embedding_failures]:
+            failures.append(
+                IntegrityFailure(
+                    kind="chunks",
+                    id=str(chunk_id),
+                    url=url,
+                    reason="active_chunk_missing_embedding"
+                )
+            )
+
     return IntegrityReport(
         docs_total=docs_total,
         docs_checked=docs_checked,
@@ -141,7 +225,11 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
         chunks_total=chunks_total,
         chunks_checked=chunk_checked,
         chunks_ok=chunks_ok,
-        failures=failures
+        failures=failures,
+        orphan_chunks=orphan_chunks,
+        orphan_embeddings=orphan_embeddings,
+        missing_embeddings=missing_embeddings,
+        docs_missing_chunks=docs_missing_chunks,
     )
 
 def compression_stats(conn: sqlite3.Connection, active_chunks_only: bool = True) -> CompressionStats:

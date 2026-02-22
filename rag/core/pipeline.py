@@ -25,42 +25,76 @@ def defang_tables(s: str) -> str:
     return s 
 
 def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0):
+    cur = conn.cursor()
+    cur.execute("SELECT doc_id, raw_hash FROM docs WHERE url=?", (url,))
+    row = cur.fetchone()
+    raw_hash = sha256_text(raw_text)
+    if row:
+        doc_id_existing, old_raw_hash = row
+        if old_raw_hash == raw_hash:
+            cur.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=? AND is_active=1", (doc_id_existing,))
+            active_chunks = int(cur.fetchone()[0] or 0)
+            if active_chunks > 0:
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM chunks c
+                    LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+                    WHERE c.doc_id=? AND c.is_active=1 AND e.chunk_id IS NULL
+                """, (doc_id_existing,))
+                missing_emb = int(cur.fetchone()[0] or 0)
+                if missing_emb == 0:
+                    log.info(f"SKIP {url} (doc+chunks+embeddings already complete)")
+                    return
+                log.warning(f"Embeddings missing for {missing_emb} chunks, embedding-only pass for {url}")
+                MAX_EMBED_CHARS = int(config.get("pipeline", {}).get("max_embed_chars", 1800))
+                MIN_EMBED_CHARS = int(config.get("pipeline", {}).get("min_embed_chars", 800))
+                cur.execute("""
+                    SELECT c.chunk_id, c.text
+                    FROM chunks c
+                    LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+                    WHERE c.doc_id=? AND c.is_active=1 AND e.chunk_id IS NULL
+                """, (doc_id_existing,))
+                rows = cur.fetchall()
+                for cid, txt in rows:
+                    safe_txt = txt[:MAX_EMBED_CHARS] if len(txt) > MAX_EMBED_CHARS else txt
+                    safe_txt = defang_tables(safe_txt)
+                    vec = dims = None
+                    last_err = None
+                    for attempt in range(6):
+                        try:
+                            vec, dims = embed_fn(safe_txt)
+                            break
+                        except Exception as e:
+                            last_err = e
+                            log.exception(f"Embed retry {attempt+1}/6 chunk_id={cid}")
+                            if len(safe_txt) <= MIN_EMBED_CHARS:
+                                break
+                            safe_txt = safe_txt[: max(MIN_EMBED_CHARS, len(safe_txt)//4)]
+
+                    if vec is None or dims is None:
+                        log.warning(f"embed failed chunk_id={cid} final_len={len(safe_txt)} err={last_err}")
+                        continue
+
+                    cur.execute(
+                        "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES(?, ?, ?)",
+                        (cid, dims, vec)
+                    )
+                conn.commit()
+                return
+        log.warning(f"REBUILD {url} (content changed)")
+
     log.info(f"Processing document for {title} with {url}")
     cleaned = raw_text
-
     if source in ("genshin_wiki", "fandom_api", "wiki"):
         cleaned = clean_fandom_text(raw_text)
-    
     norm = normalize(cleaned)
-    raw_hash = sha256_text(raw_text)
     norm_hash = sha256_text(norm)
-
     archive_raw = bool(config.get("pipeline", {}).get("archive_raw", False))
-    raw_zst = None
-    raw_len = None
-    raw_zst_len = None
-
+    raw_zst = raw_len = raw_zst_len = None
     if archive_raw:
         raw_len = len(raw_text)
         raw_zst = zstd_compress_text(raw_text)
         raw_zst_len = len(raw_zst)
-        log.info(f"Compressed document using zstd with {raw_zst_len}")
-
-    cur = conn.cursor()
-    cur.execute("SELECT doc_id, norm_hash FROM docs WHERE url=?", (url,))
-    row = cur.fetchone()
-
-    if row:
-        doc_id_exisiting, old_norm_hash = row
-
-        cur.execute("SELECT COUNT(*) FROM chunks where doc_id=? AND is_active=?",(doc_id_exisiting, 1))
-        active_chunks = cur.fetchone()[0]
-
-        if old_norm_hash == norm_hash and active_chunks > 0:
-            log.info("SKIP, chunk exist")
-            return
-        else:
-            log.warning("REBUILD, content changed or unchange but chunks missing")
     
     cur.execute("""
     INSERT INTO docs(source, url, title, fetched_at, raw_hash, norm_hash, tier, weight, raw_zst, raw_len, raw_zst_len)

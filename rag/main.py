@@ -18,6 +18,14 @@ from adapters.html import crawl_site
 #     ("test", "local://xiangling", "Xiangling", "Xiangling is a Pyro polearm character. Guoba breathes fire.")
 # ]
 
+def safe_process(conn, embed_fn, cfg, name, url, title, text, tier, weight, log):
+    try:
+        process_document(conn, embed_fn, cfg, name, url, title, text, tier=tier, weight=weight)
+        return True
+    except Exception:
+        log.exception("process_document failed source=%s title=%s url=%s", name, title, url)
+        return False
+
 def main():
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -52,7 +60,7 @@ def main():
                     continue
                 if not filters.text_allowed(text):
                     continue
-                process_document(conn, embed_fn, cfg, name, url, title, text, tier=tier, weight=weight)
+                safe_process(conn, embed_fn, cfg, name, url, title, text, tier, weight, log)
                 log.info(f"Processed documents successfully, name={name} with {title}, {url}, and {tier}")
 
         elif kind == "fandom_api":
@@ -65,7 +73,7 @@ def main():
                     continue
                 if not filters.text_allowed(text):
                     continue
-                process_document(conn, embed_fn, cfg, name, url, title, text, tier=tier, weight=weight)
+                safe_process(conn, embed_fn, cfg, name, url, title, text, tier, weight, log)
                 log.info(f"Processed documents successfully, name={name} with {title}, {url}, and {tier}")
         
         elif kind == "honey_html":
@@ -85,20 +93,27 @@ def main():
                     continue
                 if not filters.text_allowed(text):
                     continue
-                process_document(conn, embed_fn, cfg, name, url, title, text, tier=tier, weight=weight)
+                safe_process(conn, embed_fn, cfg, name, url, title, text, tier, weight, log)
                 log.info(f"Processed documents successfully, name={name} with {title}, {url}, and {tier}")
         else:
             log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 
     try:
-        report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500)
+        report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures = 2500, max_missing_embedding_failures = 2500)
         if report.failures:
-            log.error(f"Audit failed with {len(report.failures)}")
+            log.error(f"Audit failed with {len(report.failures)} problems")
+            by_reason = {}
+            for f in report.failures:
+                by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
+            for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                log.error(f"  {reason}: {n}")
+
             for f in report.failures[:10]:
-                log.error(f"Failures: {f}")
+                log.error(f"Example failure: {f}")
+
             raise RuntimeError(f"Audit failed: {len(report.failures)} problems")
-        
-        log.info(f"All documents have been processed !")
+
+        log.info("All documents have been processed!")
     except Exception:
         log.exception("Pipeline terminated due to audit failures")
     
