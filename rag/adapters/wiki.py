@@ -13,7 +13,7 @@ _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 def sleep_backoff(attemp: int, base: float = 1.0, cap: float = 60.0) -> None:
     delay = min(cap, base * (2 ** attemp))
-    delay *= (0.75 + random.Random() * 0.6)
+    delay *= (0.75 + random.random() * 0.6)
     time.sleep(delay)
 
 def get_json_with_retry(
