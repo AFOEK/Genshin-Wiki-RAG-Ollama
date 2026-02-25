@@ -1,5 +1,6 @@
 import threading, queue, logging
 from core.pipeline import process_document
+from core.db import connect
 
 log = logging.getLogger(__name__)
 STOP = object()
@@ -26,7 +27,8 @@ def producer(source_name: str, docs_iter, out_q: queue.Queue):
         out_q.put((source_name, STOP, STOP, STOP))
         log.info(f"[{source_name}] finished produced={produced}")
 
-def ingest_consumer(num_producers: int, in_q: queue.Queue, conn, embed_fn, cfg, filters, tier_map, weight_map):
+def ingest_consumer(num_producers: int, in_q: queue.Queue, db_path, embed_fn, cfg, filters, tier_map, weight_map):
+    conn = connect(db_path)
     finished = 0
     processed = 0
     skipped = 0
@@ -52,12 +54,16 @@ def ingest_consumer(num_producers: int, in_q: queue.Queue, conn, embed_fn, cfg, 
             else:
                 failed += 1
 
-            if processed % 200 == 0:
+            if processed and  processed % 200 == 0:
                 log.info(f"[Ingest] processed={processed} skipped={skipped} failed={failed} queue_size={in_q.qsize()}")
 
         except Exception:
             log.exception(f"[Ingest] failed src={src} title={title} url={url}")
         finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
             in_q.task_done()
 
     log.info(f"[Ingest] DONE processed={processed} skipped={skipped} failed={failed}")

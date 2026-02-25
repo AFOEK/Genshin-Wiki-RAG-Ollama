@@ -6,6 +6,8 @@ log = logging.getLogger(__name__)
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA busy_timeout=10000;
 
 CREATE TABLE IF NOT EXISTS docs (
     doc_id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -31,7 +31,6 @@ def main():
     log = logging.getLogger(__name__)
     log.info("[INFO] Logging initialized")
     db_path = resolve_db_path(cfg)
-    conn = connect(str("db_path"))
     log.info("[INFO] Database initialized at %s", db_path)
 
     def embed_fn(text):
@@ -86,7 +85,8 @@ def main():
         t = threading.Thread(target=producer, args=(name, docs_iter, q), daemon=True)
         producers.append(t)
     
-    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, conn, embed_fn, cfg, filters, tier_map, weight_map), daemon=True)
+
+    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map), daemon=True)
     t_ingest.start()
     for t in producers:
         t.start()
@@ -95,6 +95,9 @@ def main():
         t.join()
     q.join()
     t_ingest.join()
+
+    conn = connect(str(db_path))
+    log.info("[INFO] Audit starting")
 
     try:
         report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures = 2500, max_missing_embedding_failures = 2500)
