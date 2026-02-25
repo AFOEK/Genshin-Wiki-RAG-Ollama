@@ -34,36 +34,45 @@ def ingest_consumer(num_producers: int, in_q: queue.Queue, db_path, embed_fn, cf
     skipped = 0
     failed = 0
 
-    while finished < num_producers:
-        src, url, title, text = in_q.get()
-        try:
-            if url is STOP:
-                finished += 1
-                continue
-
-            if not filters.url_allowed(url) or not filters.text_allowed(text):
-                skipped += 1
-                continue
-
-            tier = tier_map.get(src, "primary")
-            weight = weight_map.get(src, 1.0)
-            ok = safe_process(conn, embed_fn, cfg, src, url, title, text, tier, weight, log)
-            
-            if ok:
-                processed += 1
-            else:
-                failed += 1
-
-            if processed and  processed % 200 == 0:
-                log.info(f"[Ingest] processed={processed} skipped={skipped} failed={failed} queue_size={in_q.qsize()}")
-
-        except Exception:
-            log.exception(f"[Ingest] failed src={src} title={title} url={url}")
-        finally:
+    try:
+        while finished < num_producers:
+            src, url, title, text = in_q.get()
             try:
-                conn.close()
+                if url is STOP:
+                    finished += 1
+                    continue
+
+                if not filters.url_allowed(url) or not filters.text_allowed(text):
+                    skipped += 1
+                    continue
+
+                tier = tier_map.get(src, "primary")
+                weight = weight_map.get(src, 1.0)
+
+                ok = safe_process(conn, embed_fn, cfg, src, url, title, text, tier, weight, log)
+
+                if ok:
+                    processed += 1
+                else:
+                    failed += 1
+
+                if processed and processed % 200 == 0:
+                    log.info(
+                        "[Ingest] processed=%d skipped=%d failed=%d queue_size=%d",
+                        processed, skipped, failed, in_q.qsize()
+                    )
             except Exception:
-                pass
-            in_q.task_done()
+                log.exception("[Ingest] failed src=%s title=%s url=%s", src, title, url)
+                failed += 1
+            finally:
+                in_q.task_done()
+
+        log.info("[Ingest] DONE processed=%d skipped=%d failed=%d", processed, skipped, failed)
+
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     log.info(f"[Ingest] DONE processed={processed} skipped={skipped} failed={failed}")
