@@ -1,4 +1,8 @@
-db_path: rag/data/genshin_rag.db
+storage:
+  primary_root: /mnt/ssd/genshin_rag
+  secondary_root: $HOME/Documents/Genshin-Wiki-RAG-Ollama/rag
+
+db_path: data/genshin_rag.db
 
 ollama: 
   base_url: http://localhost:11434

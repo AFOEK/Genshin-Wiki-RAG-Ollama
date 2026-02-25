@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timezone
-from tqdm import tqdm
 
 from utils.hashing import sha256_text
 from utils.textproc import normalize, chunk_text
@@ -66,7 +65,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                             break
                         except Exception as e:
                             last_err = e
-                            log.exception(f"Embed retry {attempt+1}/6 chunk_id={cid}")
+                            log.exception("Embed retry %d/6 chunk_id=%s", attempt+1, cid)
                             if len(safe_txt) <= MIN_EMBED_CHARS:
                                 break
                             safe_txt = safe_txt[: max(MIN_EMBED_CHARS, len(safe_txt)//4)]

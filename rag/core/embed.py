@@ -33,5 +33,5 @@ def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: 
             last_err = str(e)
             time.sleep(backoff_s * (2 ** attempt))
             log.exception("Failed due to embedding failure, retrying")
-    log.error(f"Ollama embeddings failed after {retries} retries. Last error: {last_err}")
-    raise RuntimeError(f"Ollama embeddings failed after {retries} retries. Last error: {last_err}")
+    log.error("Ollama embeddings failed after %d retries. Last error: %s", retries, last_err)
+    raise RuntimeError("Ollama embeddings failed after %d retries. Last error: %s", retries, last_err)

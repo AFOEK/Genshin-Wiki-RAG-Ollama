@@ -22,7 +22,7 @@ def get_json_with_retry(
         *,
         params: dict[str, Any],
         timeout: float = 60.0,
-        max_retries: int = 8
+        max_retries: int = 10
 ) -> Optional[dict[str, Any]]:
     for attempt in range(max_retries):
         try:
@@ -72,7 +72,7 @@ def list_allpages(api: str, limit: int = 100, namespace: int = 0):
         if cont:
             params.update(cont)
 
-        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=8)
+        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
         if not data:
             log.warning("allpages failed; sleeping and retrying")
             time.sleep(10)
@@ -105,7 +105,7 @@ def fetch_page_html(session: requests.Session, api: str, title: str) -> str | No
         "disablelimitreport": "1",
         "redirects": "1",
     }
-    data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=8)
+    data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
     if not data:
         return None
 

@@ -96,8 +96,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
 
         except (Timeout, ConnectionError) as e:
             retries[url] = attempt + 1
-            if retries[url] <= 6:
-                log.warning("Network error (%s) url=%s retry=%d/6", type(e).__name__, url, retries[url])
+            if retries[url] <= 10:
+                log.warning("Network error (%s) url=%s retry=%d/10", type(e).__name__, url, retries[url])
                 sleep_backoff(attempt)
                 q.append(url)
                 continue
@@ -108,8 +108,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
 
         except RequestException as e:
             retries[url] = attempt + 1
-            if retries[url] <= 3:
-                log.warning("RequestException url=%s retry=%d/3 err=%s", url, retries[url], e)
+            if retries[url] <= 10:
+                log.warning("RequestException url=%s retry=%d/10 err=%s", url, retries[url], e)
                 sleep_backoff(attempt)
                 q.append(url)
                 continue
