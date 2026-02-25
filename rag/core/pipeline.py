@@ -158,12 +158,12 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         dims = None
         last_err = None
 
-        for i in range(6):
+        for i in range(8):
             try:
                 vec, dims = embed_fn(safe_txt)
                 break
             except Exception as e:
-                log.exception(f"Too long chunks token retrying {i}/6")
+                log.exception("Too long chunks token retrying %d/8", i)
                 last_err = e
                 if len(safe_txt) <= MIN_EMBED_CHARS:
                     break

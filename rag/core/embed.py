@@ -20,7 +20,7 @@ def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: 
                 except Exception:
                     msg = r.text
                     log.exception("Failed with connectiong to embed backend ollama")
-                raise RuntimeError(f"HTTP 400: {msg[:300]}")
+                raise RuntimeError("HTTP 400: %s", msg[:300])
             if r.status_code >= 500:
                 last_err = f"HTTP {r.status_code}: {r.text[:300]}"
                 time.sleep(backoff_s * (2 ** attempt))
