@@ -58,6 +58,17 @@ sources:
     max_pages: null
     rate_limit_s: 1.5
 
+  - name: lunaris
+    kind: lunaris_html
+    tier: supplementary
+    enabled: false
+    weight: 0.60
+    base_url: https://lunaris.moe/
+    seeds:
+      - "https://lunaris.moe/?lang=EN"
+    max_pages: null
+    rate_limit_s: 1.5
+
   - name: homdgcat
     kind: homdgcat_html
     tier: supplementary
