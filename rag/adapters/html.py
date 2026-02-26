@@ -20,6 +20,16 @@ def sleep_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> None:
 def same_site(url: str, base_url: str) -> bool:
     return urlparse(url).netloc == urlparse(base_url).netloc
 
+def soup_text_fallback(node) -> str:
+    try:
+        txt = node.get_text("\n", strip="True")
+    except Exception:
+        txt = str(node)
+
+    lines = [l.strip() for l in (txt or "").splitlines()]
+    lines = [l for l in lines if l]
+    return "\n".join(lines)
+
 def extract_links(html: str, base: str):
     soup = BeautifulSoup(html, "lxml")
     for a in soup.select("a[href]"):
@@ -43,7 +53,14 @@ def html_to_text(html: str) -> str:
         or soup.body
         or soup
     )
-    return md(str(main))
+    try:
+        return md(str(main))
+    except RecursionError:
+        log.warning("[WARN] html_to_text: RecursionError in markdownify; falling back to get_text()")
+        return soup_text_fallback(main)
+    except Exception as e:
+        log.warning("[WARN] html_to_text: markdownify failed (%s); falling back to get_text()", type(e).__name__)
+        return soup_text_fallback(main)
 
 def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 1.0, max_pages: int | None = 2000):
     q = deque(seeds)
@@ -61,6 +78,14 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
         if deny_url and deny_url.search(url):
             continue
 
+        SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
+                    ".svg", ".pdf", ".zip", ".mp4", ".mp3",
+                    ".ico", ".css", ".js", ".woff", ".woff2")
+        
+        if url.lower().endswith(SKIP_EXT):
+            seen.add(url)
+            continue
+
         attempt = retries.get(url, 0)
 
         try:
@@ -72,7 +97,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
 
             if r.status_code in _RETRY_STATUSES:
                 retries[url] = attempt + 1
-                if retries[url] <= 6:
+                if retries[url] <= 10:
                     ra = r.headers.get("Retry-After")
                     if ra and ra.isdigit():
                         time.sleep(min(int(ra), 120))
