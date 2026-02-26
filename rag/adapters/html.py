@@ -2,6 +2,7 @@ import time
 import requests
 import logging
 import random
+from urllib.parse import urlsplit, urlunsplit
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
@@ -11,6 +12,10 @@ from requests.exceptions import RequestException, Timeout, ConnectionError
 log = logging.getLogger(__name__)
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+def normalize_url(u: str) -> str:
+    parts = urlsplit(u)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 def sleep_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> None:
     delay = min(cap, base * (2 ** attempt))
@@ -22,7 +27,7 @@ def same_site(url: str, base_url: str) -> bool:
 
 def soup_text_fallback(node) -> str:
     try:
-        txt = node.get_text("\n", strip="True")
+        txt = node.get_text("\n", strip=True)
     except Exception:
         txt = str(node)
 
@@ -37,7 +42,10 @@ def extract_links(html: str, base: str):
         if not href:
             continue
         u = urljoin(base, href)
-        u = u.split("#", 1)[0]
+        parts = urlsplit(u)
+        if parts.scheme not in ("http", "https"):
+            continue
+        u = normalize_url(u)
         yield u
 
 def html_to_text(html: str) -> str:
@@ -82,7 +90,9 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
                     ".svg", ".pdf", ".zip", ".mp4", ".mp3",
                     ".ico", ".css", ".js", ".woff", ".woff2")
         
-        if url.lower().endswith(SKIP_EXT):
+        url = normalize_url(url)
+        path = urlsplit(url).path.lower()
+        if path.endswith(SKIP_EXT):
             seen.add(url)
             continue
 
@@ -116,7 +126,12 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
                 seen.add(url)
                 time.sleep(rate_limit_s)
                 continue
-
+            ct = (r.headers.get("Content-Type") or "").lower()
+            if ("text/html" not in ct) and ("application/xhtml+xml" not in ct):
+                log.info("Skip non-HTML content-type=%s url=%s", ct, url)
+                seen.add(url)
+                time.sleep(rate_limit_s)
+                continue
             html = r.text
 
         except (Timeout, ConnectionError) as e:
@@ -146,6 +161,10 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
         seen.add(url)
 
         for link in extract_links(html, url):
+            link = normalize_url(link)
+            path = urlsplit(link).path.lower()
+            if path.endswith(SKIP_EXT):
+                continue
             if link not in seen and same_site(link, base_url):
                 q.append(link)
 
