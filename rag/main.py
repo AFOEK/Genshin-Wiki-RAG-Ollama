@@ -16,7 +16,6 @@ from adapters.html import crawl_site
 #     ("test", "local://xiangling", "Xiangling", "Xiangling is a Pyro polearm character. Guoba breathes fire.")
 # ]
 
-
 def main():
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -35,9 +34,11 @@ def main():
     
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None
-
-    log.info("[INFO] Setting up multi-threading")
-    q = queue.Queue(maxsize=200)
+    embed_queue_size = int(cfg.get("threading", {}).get("embed_queue_size", 200))
+    embed_workers = int(cfg.get("threading", {}).get("embed_workers", 2))
+    document_queue_size = int(cfg.get("threading", {}).get("document_queue_size", 200))
+    log.info("[INFO] Setting up multi-threading, with embed_queue: %d, document_queue: %d, workers: %d", embed_queue_size, document_queue_size, embed_workers)
+    q = queue.Queue(maxsize=document_queue_size)
 
     producers = []
     tier_map = {}
@@ -82,7 +83,7 @@ def main():
         t = threading.Thread(target=producer, args=(name, docs_iter, q))
         producers.append(t)
 
-    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map))
+    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map, embed_workers, embed_queue_size))
     t_ingest.start()
     for t in producers:
         t.start()

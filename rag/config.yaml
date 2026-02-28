@@ -15,6 +15,11 @@ pipeline:
   min_embed_chars: 200
   archive_raw: true
 
+threading:
+  embed_queue_size: 750
+  embed_workers: 2
+  document_queue_size: 750
+
 filters:
   deny_url_regex: "(?i)(new-in-|future|beta|datamine|preload|hidden|unreleased|test|prototype|dev|internal)"
   deny_text_regex: "(?i)(unreleased|upcoming|beta build|from beta|not yet released|future version|test server|datamined|subject to change|preload data|development version)"
