@@ -34,9 +34,10 @@ def main():
     
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None
-    embed_queue_size = int(cfg.get("threading", {}).get("embed_queue_size", 200))
-    embed_workers = int(cfg.get("threading", {}).get("embed_workers", 2))
-    document_queue_size = int(cfg.get("threading", {}).get("document_queue_size", 200))
+    threading_cfg = cfg.get("threading")
+    embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
+    embed_workers = int(threading_cfg.get("embed_workers", 2))
+    document_queue_size = int(threading_cfg.get("document_queue_size", 200))
     log.info("[INFO] Setting up multi-threading, with embed_queue: %d, document_queue: %d, workers: %d", embed_queue_size, document_queue_size, embed_workers)
     q = queue.Queue(maxsize=document_queue_size)
 
