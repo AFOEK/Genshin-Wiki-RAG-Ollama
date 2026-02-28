@@ -7,10 +7,10 @@ log = logging.getLogger(__name__)
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA busy_timeout=10000;
+PRAGMA busy_timeout=100000;
 PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-65000;
-PRAGMA mmap_size=2500000000;
+PRAGMA cache_size=-50000;
+PRAGMA mmap_size=1500000000;
 
 CREATE TABLE IF NOT EXISTS docs (
     doc_id INTEGER PRIMARY KEY AUTOINCREMENT,
