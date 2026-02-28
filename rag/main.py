@@ -1,7 +1,4 @@
 import yaml, re, logging, queue, threading
-
-from tqdm import tqdm
-
 from core.db import connect
 from core.embed import embed
 from core.paths import resolve_db_path
@@ -68,7 +65,7 @@ def main():
         elif kind == "honey_html":
             seeds = s.get("seeds", [])
             if not seeds:
-                tqdm.write(f"[WARN] No seed for {name}, skipping")
+                log.warning(f"[WARN] No seed for {name}, skipping")
                 continue
 
             base_url = s["base_url"]
@@ -82,11 +79,10 @@ def main():
 
         if docs_iter is None:
             continue
-        t = threading.Thread(target=producer, args=(name, docs_iter, q), daemon=True)
+        t = threading.Thread(target=producer, args=(name, docs_iter, q))
         producers.append(t)
-    
 
-    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map), daemon=True)
+    t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map))
     t_ingest.start()
     for t in producers:
         t.start()
@@ -102,7 +98,7 @@ def main():
     try:
         report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures = 2500, max_missing_embedding_failures = 2500)
         if report.failures:
-            log.error(f"Audit failed with {len(report.failures)} problems")
+            log.error(f"[AUDIT] Audit failed with {len(report.failures)} problems")
             by_reason = {}
             for f in report.failures:
                 by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
@@ -110,20 +106,18 @@ def main():
                 log.error(f"  {reason}: {n}")
 
             for f in report.failures[:10]:
-                log.error(f"Example failure: {f}")
+                log.error(f"[AUDIT] Example failure: {f}")
 
-            raise RuntimeError(f"Audit failed: {len(report.failures)} problems")
+            raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
 
-        log.info("All documents have been processed!")
+        log.info("[AUDIT] All documents have been processed!")
     except Exception:
-        log.exception("Pipeline terminated due to audit failures")
+        log.exception("[AUDIT] Pipeline terminated due to audit failures")
     
     # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}
     # for source, url, title, text in TEST_DOCS:
     #     tier, weight = source_meta.get(source, ("primary", 1.0))
     #     process_document(conn, embed_fn, cfg, source, url, title, text, tier=tier, weight=weight)
-
-    # tqdm.write("Pipeline ok")
 
 if __name__ == "__main__":
     main()

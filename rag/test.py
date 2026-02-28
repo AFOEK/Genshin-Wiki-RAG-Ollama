@@ -40,10 +40,9 @@ def main():
     conn = connect(cfg["db_path"])
     cur = conn.cursor()
 
-    query_xl = "What does Xiangling's Elemental Burst do?"
-    query_zl = "What does Zhongli's Elemental skill do?"
+    query = input("Input your query:\n")
 
-    q_bytes, dims = embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], query_zl)
+    q_bytes, dims = embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], query)
     q = struct.unpack(f"<{dims}f", q_bytes)
 
     cur.execute("""
