@@ -34,7 +34,7 @@ def producer(source_name: str, docs_iter, out_q: queue.Queue):
                 log.warning("[PRODUCER] [%s] doc queue FULL; waiting...", source_name)
             out_q.put((source_name, url, title, text))
             produced += 1
-            if produced % 200 == 0:
+            if produced % out_q.maxsize == 0:
                 log.info("[PRODUCER] [%s] produced=%d q=%d", source_name, produced, out_q.qsize())
     except Exception:
         log.exception("[PRODUCER] [%s] crashed", source_name)
@@ -176,12 +176,12 @@ def ingest_consumer(num_producers: int,
                 drain_results(100)
 
                 total = processed + skipped + failed
-                if total and total % 200 == 0:
+                if total and total % embed_queue_size == 0:
                     log.info("[INGEST] processed=%d skipped=%d failed=%d doc_q=%d pending=%d embed_q=%d res_q=%d",
                              processed, skipped, failed, doc_q.qsize(), pending_embeds,
                              embed_q.qsize(), embed_res_q.qsize())
 
-                if processed and processed % 50 == 0:
+                if processed and processed % 25 == 0:
                     conn.commit()
 
             except Exception:
