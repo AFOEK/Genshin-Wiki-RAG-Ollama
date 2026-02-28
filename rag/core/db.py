@@ -9,7 +9,8 @@ PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA busy_timeout=10000;
 PRAGMA temp_store=MEMORY;
-PRAGMA mmap_size=30000000000;
+PRAGMA cache_size=-65000;
+PRAGMA mmap_size=2500000000;
 
 CREATE TABLE IF NOT EXISTS docs (
     doc_id INTEGER PRIMARY KEY AUTOINCREMENT,

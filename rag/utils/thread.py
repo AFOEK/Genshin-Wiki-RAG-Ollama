@@ -1,7 +1,7 @@
-import threading, queue, logging
+import threading, queue, logging, time
 from dataclasses import dataclass
 from typing import Callable
-from core.pipeline import process_document
+from core.pipeline import process_document, defang_tables
 from core.db import connect
 
 log = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
             assert isinstance(job, EmbedJob)
             txt = job.text
             safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
+            safe_txt = defang_tables(safe_txt)
             vec = dims = None
             last_err = None
 
@@ -71,6 +72,7 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
             if vec is None or dims is None:
                 log.error("[EMBED-%d] failed chunk_id=%s final_len=%d err=%r",
                           worker_id, job.chunk_id, len(safe_txt), last_err)
+                res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None))
                 continue
             res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=vec))
         finally:
@@ -93,7 +95,7 @@ def ingest_consumer(num_producers: int,
     conn = connect(db_path)
 
     embed_q: queue.Queue = queue.Queue(maxsize=embed_queue_size)
-    embed_res_q: queue.Queue = queue.Queue(maxsize=embed_queue_size)
+    embed_res_q: queue.Queue = queue.Queue()
 
     workers = []
     for wid in range(embed_workers):
@@ -108,36 +110,43 @@ def ingest_consumer(num_producers: int,
     finished = 0
     processed = skipped = failed = 0
     pending_embeds = 0
+    last_commit = time.monotonic()
+    inserted_since_commit = 0
 
-    def write_one_embedding(res: EmbedResult) -> bool:
-        if res.vec is None or res.dims is None:
-            return False
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES(?, ?, ?)",
-            (res.chunk_id, res.dims, res.vec)
-        )
-        return True
-
-    def drain_results(max_n: int = 50) -> int:
-        nonlocal pending_embeds
+    def drain_results(max_n: int = 200) -> int:
+        nonlocal pending_embeds, last_commit, inserted_since_commit
         drained = 0
-        inserted = 0
+        batch = []
+
         while drained < max_n:
             try:
                 res = embed_res_q.get_nowait()
             except queue.Empty:
                 break
             try:
-                if write_one_embedding(res):
-                    inserted += 1
+                if res.vec is not None and res.dims is not None:
+                    batch.append((res.chunk_id, res.dims, res.vec))
+                    inserted_since_commit += 1
                 pending_embeds -= 1
             finally:
                 embed_res_q.task_done()
             drained += 1
-        if inserted:
+
+        if batch:
+            cur = conn.cursor()
+            cur.executemany(
+                "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES(?, ?, ?)",
+                batch
+            )
+
+        now = time.monotonic()
+        if inserted_since_commit >= 500 or (inserted_since_commit > 0 and now - last_commit >= 1.0):
             conn.commit()
+            last_commit = now
+            inserted_since_commit = 0
+
         return drained
+    
     try:
         while finished < num_producers:
             try:
@@ -146,7 +155,7 @@ def ingest_consumer(num_producers: int,
                 log.info("[INGEST] idle finished=%d/%d doc_q=%d pending=%d embed_q=%d res_q=%d",
                          finished, num_producers, doc_q.qsize(), pending_embeds,
                          embed_q.qsize(), embed_res_q.qsize())
-                drain_results(200)
+                drain_results(500)
                 continue
             try:
                 if url is STOP:
@@ -170,10 +179,16 @@ def ingest_consumer(num_producers: int,
                 for chunk_id, chunk_text in chunks_to_embed:
                     if embed_q.full():
                         log.warning("[INGEST] embed queue FULL; waiting chunk_id=%s", chunk_id)
-                    embed_q.put(EmbedJob(chunk_id=chunk_id, text=chunk_text))
-                    pending_embeds += 1
+                    while True:
+                        try:
+                            embed_q.put(EmbedJob(chunk_id=chunk_id, text=chunk_text), timeout=1.0)
+                            pending_embeds += 1
+                            break
+                        except queue.Full:
+                            drain_results(max_n=100)
+                            time.sleep(0.01)
 
-                drain_results(100)
+                drain_results(500)
 
                 total = processed + skipped + failed
                 if total and total % embed_queue_size == 0:
@@ -181,7 +196,7 @@ def ingest_consumer(num_producers: int,
                              processed, skipped, failed, doc_q.qsize(), pending_embeds,
                              embed_q.qsize(), embed_res_q.qsize())
 
-                if processed and processed % 25 == 0:
+                if processed and processed % 500 == 0:
                     conn.commit()
 
             except Exception:

@@ -9,16 +9,16 @@ ollama:
   embedding_model: all-minilm:latest
 
 pipeline:
-  chunk_size: 800
-  chunk_overlap: 300
-  max_embed_chars: 500
+  chunk_size: 600
+  chunk_overlap: 150
+  max_embed_chars: 600
   min_embed_chars: 200
   archive_raw: true
 
 threading:
-  embed_queue_size: 750
+  embed_queue_size: 150
   embed_workers: 2
-  document_queue_size: 750
+  document_queue_size: 100
 
 filters:
   deny_url_regex: "(?i)(new-in-|future|beta|datamine|preload|hidden|unreleased|test|prototype|dev|internal)"
