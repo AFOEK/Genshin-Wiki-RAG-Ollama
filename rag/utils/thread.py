@@ -140,7 +140,7 @@ def ingest_consumer(num_producers: int,
             )
 
         now = time.monotonic()
-        if inserted_since_commit >= 500 or (inserted_since_commit > 0 and now - last_commit >= 1.0):
+        if inserted_since_commit >= 2500 or (inserted_since_commit > 0 and now - last_commit >= 3.0):
             conn.commit()
             last_commit = now
             inserted_since_commit = 0
@@ -155,7 +155,7 @@ def ingest_consumer(num_producers: int,
                 log.info("[INGEST] idle finished=%d/%d doc_q=%d pending=%d embed_q=%d res_q=%d",
                          finished, num_producers, doc_q.qsize(), pending_embeds,
                          embed_q.qsize(), embed_res_q.qsize())
-                drain_results(500)
+                drain_results(600)
                 continue
             try:
                 if url is STOP:
@@ -188,7 +188,7 @@ def ingest_consumer(num_producers: int,
                             drain_results(max_n=100)
                             time.sleep(0.01)
 
-                drain_results(500)
+                drain_results(600)
 
                 total = processed + skipped + failed
                 if total and total % embed_queue_size == 0:
@@ -196,7 +196,7 @@ def ingest_consumer(num_producers: int,
                              processed, skipped, failed, doc_q.qsize(), pending_embeds,
                              embed_q.qsize(), embed_res_q.qsize())
 
-                if processed and processed % 500 == 0:
+                if processed and processed % 650 == 0:
                     conn.commit()
 
             except Exception:

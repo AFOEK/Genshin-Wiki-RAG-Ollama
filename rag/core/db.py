@@ -6,6 +6,7 @@ log = logging.getLogger(__name__)
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+PRAGMA wal_autocheckpoint=2000;
 PRAGMA synchronous=NORMAL;
 PRAGMA busy_timeout=100000;
 PRAGMA temp_store=MEMORY;
