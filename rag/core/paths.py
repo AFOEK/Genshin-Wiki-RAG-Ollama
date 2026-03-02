@@ -1,13 +1,12 @@
 from __future__ import annotations
 from pathlib import Path
 import os
-import sqlite3
 import logging
 
 log = logging.getLogger(__name__)
 
 def expand_path(p: Path) -> Path:
-    return Path(os.path.expandvars(p)).expanduser()
+    return Path(os.path.expandvars(str(p))).expanduser()
 
 def is_usable_dir(p: Path) -> bool:
     try:
@@ -35,5 +34,25 @@ def resolve_storage_root(cfg: dict) -> Path:
     
 def resolve_db_path(cfg: dict) -> Path:
     root = resolve_storage_root(cfg)
-    db_rel = cfg["db_path"]
-    return (root / db_rel).resolve()
+    db_rel = cfg.get("db_path", "data/genshin_rag.db")
+    db_path = (root / db_rel).resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    log.info(f"[INFO] DB path resolved at {db_path}")
+    return db_path
+
+def resolve_faiss_dir(cfg: dict) -> Path:
+    root = resolve_storage_root(cfg)
+    faiss_rel =cfg.get("faiss_path", "data/faiss")
+    faiss_dir = (root / faiss_rel).resolve()
+    faiss_dir.mkdir(parents=True, exist_ok=True)
+    log.info(f"[INFO] FAISS directory resolved at {faiss_dir}")
+    return faiss_dir
+
+def resolve_faiss_paths(cfg: dict):
+    d = resolve_faiss_dir(cfg)
+    return (
+        d,
+        d / "index.faiss",
+        d / "ids.npy",
+        d / "meta.json",
+    )

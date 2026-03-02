@@ -70,5 +70,14 @@ def connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(p), timeout=60.0, isolation_level=None)
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.executescript(SCHEMA)
-    log.info(f"Connected to sqlite db at {p}")
+    log.info(f"[INFO] Connected to sqlite db at {p}")
+    return conn
+
+def read_only_connect(path: str) -> sqlite3.Connection:
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(p)
+    conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    log.info(f"[INFO] Read-only sqlite db connected at {p}")
     return conn

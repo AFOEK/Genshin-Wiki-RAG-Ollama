@@ -3,6 +3,7 @@ storage:
   secondary_root: $HOME/Documents/Genshin-Wiki-RAG-Ollama/rag
 
 db_path: data/genshin_rag.db
+faiss_path: data/faiss
 
 ollama: 
   base_url: http://localhost:11434

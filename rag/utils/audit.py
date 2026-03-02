@@ -3,11 +3,18 @@ from __future__ import annotations
 import random
 import sqlite3
 import logging
+import json
+import faiss
+import numpy as np
+
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
 from utils.hashing import sha256_text
 from utils.codec import zstd_decompress_text
+from core.paths import resolve_db_path, resolve_faiss_dir
+from core.db import read_only_connect
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +57,14 @@ class CompressionStats:
     chunks_avg_zst: Optional[float]
     chunks_ratio: Optional[float]
 
+@dataclass
+class FaissAuditReport:
+    index_total: int
+    ids_total: int
+    sqlite_active_embeds: int
+    dims: int
+    failures: list[str]
+
 def sample(rows: list, samples: Optional[int], rng: random.Random) -> list:
     if samples is None:
         return rows
@@ -59,7 +74,7 @@ def sample(rows: list, samples: Optional[int], rng: random.Random) -> list:
         return rows
     return rng.sample(rows, samples)
 
-def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, sample_chunks: Optional[int] = 200, seed: int = 1337, active_chunks_only: bool = True, check_ophans: bool = True, check_missing_embeddings: bool = True, max_orphan_failures: int = 200, max_missing_embedding_failures: int = 200) -> IntegrityReport:
+def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, sample_chunks: Optional[int] = 200, seed: int = 1337, active_chunks_only: bool = True, check_orphans: bool = True, check_missing_embeddings: bool = True, max_orphan_failures: int = 200, max_missing_embedding_failures: int = 200) -> IntegrityReport:
     rng = random.Random(seed)
     cur = conn.cursor()
     failures: list[IntegrityFailure] = []
@@ -143,11 +158,11 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
     
     chunk_checked = len(chunk_picks)
 
-    if check_ophans:
+    if check_orphans:
         cur.execute("""
-        SELECT c.chunks_id, c.doc_id
+        SELECT c.chunk_id, c.doc_id
         FROM chunks c
-        LEFT JOIN docs d ON d.doc_id = d.doc_id
+        LEFT JOIN docs d ON d.doc_id = c.doc_id
         WHERE d.doc_id IS NULL
         """)
         rows = cur.fetchall()
@@ -179,26 +194,26 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
                     reason="orphan_embedding: chunk_id missing"
                 )
             )
-        if check_missing_embeddings:
-            cur.execute("""
-            SELECT d.doc_id, d.url
-            FROM docs d
-            LEFT JOIN chunks c ON c.doc_id = d.doc_id AND c.is_active=1
-            GROUP BY d.doc_id
-            HAVING COUNT(c.chunk_id)=0
-            """)
-            rows = cur.fetchall()
-            docs_missing_chunks = len(rows)
-            for doc_id, url in rows[:max_orphan_failures]:
-                failures.append(
-                    IntegrityFailure(
-                        kind="docs",
-                        id=str(doc_id),
-                        url=url,
-                        reason="doc_has_no_active_chunks"
-                    )
-                )
 
+    if check_missing_embeddings:
+        cur.execute("""
+        SELECT d.doc_id, d.url
+        FROM docs d
+        LEFT JOIN chunks c ON c.doc_id = d.doc_id AND c.is_active=1
+        GROUP BY d.doc_id
+        HAVING COUNT(c.chunk_id)=0
+        """)
+        rows = cur.fetchall()
+        docs_missing_chunks = len(rows)
+        for doc_id, url in rows[:max_orphan_failures]:
+            failures.append(
+                IntegrityFailure(
+                    kind="docs",
+                    id=str(doc_id),
+                    url=url,
+                    reason="doc_has_no_active_chunks"
+                )
+            )
         cur.execute("""
         SELECT c.chunk_id, d.url
         FROM chunks c
@@ -270,4 +285,108 @@ def compression_stats(conn: sqlite3.Connection, active_chunks_only: bool = True)
         chunks_avg_raw=float(c_avg_raw) if c_avg_raw is not None else None,
         chunks_avg_zst=float(c_avg_zst) if c_avg_zst is not None else None,
         chunks_ratio=c_ratio,
+    )
+
+def audit_faiss_against_sqlite(cfg: dict, *, index_dir: str | None = None, sample_self_test: int = 200,) -> FaissAuditReport:
+    failures: list[str] = []
+
+    db_path = resolve_db_path(cfg)
+    faiss_root = resolve_faiss_dir(cfg)
+    current = Path(index_dir) if index_dir else (faiss_root / "current")
+
+    index_path = current / "index.faiss"
+    ids_path = current / "ids.npy"
+    meta_path = current / "meta.json"
+
+    for p in (index_path, ids_path, meta_path):
+        if not p.exists():
+            failures.append(f"missing_file: {p}")
+
+    if failures:
+        return FaissAuditReport(
+            index_total=0,
+            ids_total=0,
+            sqlite_active_embeds=0,
+            dims=0,
+            failures=failures,
+        )
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    index = faiss.read_index(str(index_path))
+    ids = np.load(str(ids_path))
+
+    if len(ids) != index.ntotal:
+        failures.append(f"ids_len_mismatch: ids={len(ids)} index.ntotal={index.ntotal}")
+
+    d = int(meta.get("dims", 0) or 0)
+    if d <= 0:
+        failures.append("meta_dims_invalid")
+
+    conn = read_only_connect(str(db_path))
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT e.dims AS dims
+        FROM embeddings e
+        JOIN chunks c ON c.chunk_id = e.chunk_id
+        WHERE c.is_active=1
+        LIMIT 1
+    """)
+    r = cur.fetchone()
+    if r is None:
+        failures.append("sqlite_has_no_active_embeddings")
+        sqlite_d = 0
+    else:
+        sqlite_d = int(r["dims"])
+        if d and sqlite_d != d:
+            failures.append(f"dims_mismatch: sqlite={sqlite_d} meta={d}")
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM embeddings e
+        JOIN chunks c ON c.chunk_id = e.chunk_id
+        WHERE c.is_active=1
+    """)
+    sqlite_active_embeds = int(cur.fetchone()[0] or 0)
+
+    
+    cur.execute("""
+        SELECT e.chunk_id
+        FROM embeddings e
+        JOIN chunks c ON c.chunk_id = e.chunk_id
+        WHERE c.is_active=1
+        ORDER BY e.chunk_id
+    """)
+    sqlite_ids = [int(x[0]) for x in cur.fetchall()]
+
+    faiss_ids = ids.astype(np.int64, copy=False).tolist()
+
+    if len(sqlite_ids) != len(faiss_ids):
+        failures.append(f"count_mismatch: sqlite_active={len(sqlite_ids)} faiss={len(faiss_ids)}")
+    else:
+        if sqlite_ids != faiss_ids:
+            failures.append("id_order_or_content_mismatch_between_sqlite_and_faiss")
+
+    if hasattr(index, "reconstruct") and index.ntotal > 0 and d > 0:
+        n = int(index.ntotal)
+        take = min(sample_self_test, n)
+        step = max(1, n // take)
+        q = np.zeros((d,), dtype=np.float32)
+
+        for i in range(0, n, step):
+            index.reconstruct(i, q)
+            D, I = index.search(q.reshape(1, -1), 1)
+            if int(I[0, 0]) != i:
+                failures.append(f"self_test_failed_at={i} got={int(I[0,0])} score={float(D[0,0])}")
+                break
+            take -= 1
+            if take <= 0:
+                break
+
+    return FaissAuditReport(
+        index_total=int(index.ntotal),
+        ids_total=int(len(ids)),
+        sqlite_active_embeds=sqlite_active_embeds,
+        dims=int(d or sqlite_d or 0),
+        failures=failures,
     )
