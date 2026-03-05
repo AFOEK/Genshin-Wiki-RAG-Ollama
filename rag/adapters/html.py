@@ -84,6 +84,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
         if not same_site(url, base_url):
             continue
         if deny_url and deny_url.search(url):
+            log.warning("[WARN] SKIP url:%s, illegal content detected", url)
             continue
 
         SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",

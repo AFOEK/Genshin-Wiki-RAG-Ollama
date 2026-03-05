@@ -36,6 +36,8 @@ sources:
     enabled: true
     weight: 0.85
     path: rag/data/repos/kqm_tcl
+    skip_if_unchanged: true
+    force_rescan: false
 
   - name: kqm_news
     kind: github

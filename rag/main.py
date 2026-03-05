@@ -31,9 +31,9 @@ def main():
 
     do_crawl = parse_bool(args.DB_CRAWL)
     do_db_audit = parse_bool(args.DB_AUDIT)
-    do_faiss_migrate = parse_bool(args.FAISS_migrate)
+    do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
     do_faiss_audit = parse_bool(args.FAISS_AUDIT)
-    faiss_overwrite = parse_bool(args.FAISS_overwrite)
+    faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
 
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -48,7 +48,7 @@ def main():
     log.info("[INFO] Database initialized at %s", db_path)
 
     def embed_fn(text):
-        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text)
+        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text, keep_alive="15s")
     
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None

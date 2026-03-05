@@ -5,13 +5,13 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: float = 1.0) -> tuple[bytes, int]:
+def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: float = 1.0, keep_alive: str = "30s") -> tuple[bytes, int]:
     last_err = None
     for attempt in range(retries):
         try:
             r = requests.post(
                 f"{ollama_base}/api/embed",
-                json={"model": model, "input": text, "truncate":True},
+                json={"model": model, "input": text, "truncate":True, "keep_alive":keep_alive},
                 timeout=180
             )
             if r.status_code == 400:
@@ -20,7 +20,7 @@ def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: 
                 except Exception:
                     msg = r.text
                     log.exception("Failed with connectiong to embed backend ollama")
-                raise RuntimeError("HTTP 400: %s", msg[:300])
+                raise RuntimeError(f"HTTP 400: {msg[:300]}")
             if r.status_code >= 500:
                 last_err = f"HTTP {r.status_code}: {r.text[:300]}"
                 time.sleep(backoff_s * (2 ** attempt))
@@ -34,4 +34,4 @@ def embed(ollama_base: str, model: str, text: str, retries: int = 5, backoff_s: 
             time.sleep(backoff_s * (2 ** attempt))
             log.exception("Failed due to embedding failure, retrying")
     log.error("Ollama embeddings failed after %d retries. Last error: %s", retries, last_err)
-    raise RuntimeError("Ollama embeddings failed after %d retries. Last error: %s", retries, last_err)
+    raise RuntimeError(f"Ollama embeddings failed after {retries} retries. Last error: {last_err}")
