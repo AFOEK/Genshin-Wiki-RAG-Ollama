@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 from core.pipeline import process_document, defang_tables
 from core.db import connect
+from core.embed import NonRetryableEmbedError
 
 log = logging.getLogger(__name__)
 STOP = object()
@@ -18,13 +19,68 @@ class EmbedResult:
     dims: int | None
     vec: bytes | None
 
-def safe_process(conn, embed_fn, cfg, name, url, title, text, tier, weight, log):
+def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
+    if not prepared_jobs:
+        return []
+
+    texts = [txt for _, txt in prepared_jobs]
+
     try:
-        process_document(conn, embed_fn, cfg, name, url, title, text, tier=tier, weight=weight)
-        return True
-    except Exception:
-        log.exception("[THREAD] process_document failed source=%s title=%s url=%s", name, title, url)
-        return False
+        batch_results = embed_fn(texts)
+        if len(batch_results) != len(prepared_jobs):
+            raise RuntimeError(
+                f"batch result count mismatch: got={len(batch_results)} expected={len(prepared_jobs)}"
+            )
+
+        out = []
+        for (job, _), (vec, dims) in zip(prepared_jobs, batch_results):
+            out.append(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=vec))
+        return out
+
+    except NonRetryableEmbedError as e:
+        if len(prepared_jobs) == 1:
+            job, cur_txt = prepared_jobs[0]
+            last_err = e
+
+            for attempt in range(8):
+                try:
+                    vec, dims = embed_fn(cur_txt)
+                    return [EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=vec)]
+                except NonRetryableEmbedError as ex:
+                    last_err = ex
+                    log.warning(
+                        "[EMBED-%d] shrink retry %d/8 chunk_id=%s len=%d err=%s",
+                        worker_id, attempt + 1, job.chunk_id, len(cur_txt), type(ex).__name__
+                    )
+                    if len(cur_txt) <= min_chars:
+                        break
+                    cur_txt = cur_txt[:max(min_chars, len(cur_txt) // 2)]
+                except Exception as ex:
+                    last_err = ex
+                    log.warning(
+                        "[EMBED-%d] single retry %d/8 chunk_id=%s len=%d err=%s",
+                        worker_id, attempt + 1, job.chunk_id, len(cur_txt), type(ex).__name__
+                    )
+                    if len(cur_txt) <= min_chars:
+                        break
+                    cur_txt = cur_txt[:max(min_chars, len(cur_txt) // 2)]
+
+            return [EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None)]
+
+        mid = len(prepared_jobs) // 2
+        left = embed_batch_resilient(embed_fn, prepared_jobs[:mid], min_chars, worker_id)
+        right = embed_batch_resilient(embed_fn, prepared_jobs[mid:], min_chars, worker_id)
+        return left + right
+
+    except Exception as e:
+        if len(prepared_jobs) == 1:
+            job, cur_txt = prepared_jobs[0]
+            return [EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None)]
+
+        mid = len(prepared_jobs) // 2
+        left = embed_batch_resilient(embed_fn, prepared_jobs[:mid], min_chars, worker_id)
+        right = embed_batch_resilient(embed_fn, prepared_jobs[mid:], min_chars, worker_id)
+        return left + right
 
 def producer(source_name: str, docs_iter, out_q: queue.Queue):
     produced = 0
@@ -45,38 +101,41 @@ def producer(source_name: str, docs_iter, out_q: queue.Queue):
 def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Queue, res_q: queue.Queue, cfg: dict, worker_id: int):
     max_chars = int(cfg.get("pipeline", {}).get("max_embed_chars", 1800))
     min_chars = int(cfg.get("pipeline", {}).get("min_embed_chars", 800))
+    batch_size = int(cfg.get("threading", {}).get("embed_batch_size", 4))
+
     while True:
-        job = embed_q.get()
+        first_job = embed_q.get()
+        jobs = [first_job]
         try:
-            if job is STOP:
+            if first_job is STOP:
                 return
-            assert isinstance(job, EmbedJob)
-            txt = job.text
-            safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
-            safe_txt = defang_tables(safe_txt)
-            vec = dims = None
-            last_err = None
-
-            for attempt in range(8):
+            while len(jobs) < batch_size:
                 try:
-                    vec, dims = embed_fn(safe_txt)
-                    break
-                except Exception as e:
-                    last_err = e
-                    log.warning("[EMBED-%d] retry %d/8 chunk_id=%s len=%d err=%s",
-                                worker_id, attempt + 1, job.chunk_id, len(safe_txt), type(e).__name__)
-                    if len(safe_txt) <= min_chars:
+                    nxt = embed_q.get_nowait()
+                    if nxt is STOP:
+                        embed_q.put(STOP)
                         break
-                    safe_txt = safe_txt[:max(min_chars, len(safe_txt) // 4)]
+                    jobs.append(nxt)
+                except queue.Empty:
+                    break
 
-            if vec is None or dims is None:
-                log.error("[EMBED-%d] failed chunk_id=%s final_len=%d err=%r",
-                          worker_id, job.chunk_id, len(safe_txt), last_err)
-                res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None))
-                continue
-            res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=vec))
+            prepared_jobs = []
+            batch_texts = []
+            for job in jobs:
+                assert isinstance(job, EmbedJob)
+                txt = job.text
+                safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
+                safe_txt = defang_tables(safe_txt)
+                prepared_jobs.append((job, safe_txt))
+
+            results = embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id)
+
+            for res in results:
+                res_q.put(res)
+
         finally:
-            embed_q.task_done()
+            for _ in jobs:
+                embed_q.task_done()
 
 def ingest_consumer(num_producers: int,
                     doc_q: queue.Queue,

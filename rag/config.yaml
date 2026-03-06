@@ -17,9 +17,10 @@ pipeline:
   archive_raw: true
 
 threading:
-  embed_queue_size: 100
+  embed_queue_size: 200
   embed_workers: 2
-  document_queue_size: 80
+  embed_batch_size: 4
+  document_queue_size: 200
 
 filters:
   deny_url_regex: "(?i)(new-in-|future|beta|datamine|preload|hidden|unreleased|test|prototype|dev|internal)"

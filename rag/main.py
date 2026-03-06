@@ -47,8 +47,8 @@ def main():
     db_path = resolve_db_path(cfg)
     log.info("[INFO] Database initialized at %s", db_path)
 
-    def embed_fn(text):
-        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text, keep_alive="15s")
+    def embed_fn(text_or_texts):
+        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive="15s")
     
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None
@@ -116,9 +116,6 @@ def main():
         q.join()
         t_ingest.join()
 
-    if do_faiss_migrate:
-        build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
-
     if do_db_audit:
         conn = connect(str(db_path))
         log.info("[INFO] Audit starting")
@@ -149,33 +146,36 @@ def main():
                     raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
                 log.info("[AUDIT] SQLite integrity OK")
 
-            if do_faiss_audit:
-                frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
-                if frep.failures:
-                    log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
-
-                    by_reason = {}
-                    for msg in frep.failures:
-                        reason = msg.split(":", 1)[0].strip()
-                        by_reason[reason] = by_reason.get(reason, 0) + 1
-
-                    for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
-                        log.error("  %s: %d", reason, n)
-
-                    for msg in frep.failures[:20]:
-                        log.error("[FAISS_AUDIT] Example failure: %s", msg)
-
-                    raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
-                log.info(
-                    "[FAISS_AUDIT] OK index_total=%d ids_total=%d sqlite_active=%d dims=%d",
-                    frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims
-                )
-
             log.info("[AUDIT] All requested stages completed successfully")
 
         except Exception:
             log.exception("[AUDIT] terminated due to audit/migrate failures")
     
+    if do_faiss_migrate:
+        build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
+
+    if do_faiss_audit:
+        frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
+        if frep.failures:
+            log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
+
+            by_reason = {}
+            for msg in frep.failures:
+                reason = msg.split(":", 1)[0].strip()
+                by_reason[reason] = by_reason.get(reason, 0) + 1
+
+            for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                log.error("  %s: %d", reason, n)
+
+            for msg in frep.failures[:20]:
+                log.error("[FAISS_AUDIT] Example failure: %s", msg)
+
+            raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
+        log.info(
+            "[FAISS_AUDIT] OK index_total=%d ids_total=%d sqlite_active=%d dims=%d",
+            frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims
+        )
+        
     # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}
     # for source, url, title, text in TEST_DOCS:
     #     tier, weight = source_meta.get(source, ("primary", 1.0))
