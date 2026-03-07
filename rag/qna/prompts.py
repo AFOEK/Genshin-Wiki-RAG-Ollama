@@ -1,0 +1,57 @@
+from __future__ import annotations
+from .generators import ollama_generate
+
+def build_context(chunks: list[dict]) -> str:
+    parts = []
+    for row in chunks:
+        parts.append(
+            f"[chunk_id={row['chunk_id']}] "
+            f"title={row['title']} | source={row['source']} | url={row['url']}\n"
+            f"{row['text']}\n"
+        )
+    return "\n---\n".join(parts)
+
+
+def summarize_chunk_group(base_url: str, model: str, question: str, chunks: list[dict]) -> str:
+    context = build_context(chunks)
+    prompt = f"""You are helping build a faithful lore answer from retrieved Genshin Impact knowledge chunks.
+
+Question:
+{question}
+
+Context chunks:
+{context}
+
+Task:
+- Extract only information relevant to the question.
+- Preserve chronology when possible.
+- Keep proper nouns, factions, gods, nations, events, and relationships accurate.
+- Include chunk_id citations inline like [chunk_id=123].
+- If context is fragmentary, say so briefly.
+- Return concise bullet notes, not a full polished answer.
+"""
+    return ollama_generate(base_url, model, prompt, keep_alive="20s")
+
+
+def synthesize_final_answer(base_url: str, model: str, question: str, notes: list[str]) -> str:
+    notes_block = "\n\n".join(
+        f"### Notes from batch {i+1}\n{n}" for i, n in enumerate(notes)
+    )
+    prompt = f"""You are answering a question using retrieved and pre-summarized Genshin Impact knowledge.
+
+Question:
+{question}
+
+Retrieved notes:
+{notes_block}
+
+Task:
+- Write a coherent, faithful answer using only the retrieved notes.
+- For broad lore questions, organize the answer chronologically.
+- Merge overlapping points and avoid repetition.
+- Keep important names and events accurate.
+- Include inline citations using the provided chunk_id citations.
+- If the retrieved notes are incomplete, say what is missing.
+- Do not invent facts outside the notes.
+"""
+    return ollama_generate(base_url, model, prompt, keep_alive="20s")

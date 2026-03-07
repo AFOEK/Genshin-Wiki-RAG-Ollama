@@ -1,77 +1,37 @@
-import math
-import struct
-import yaml
+from __future__ import annotations
 
-from core.db import connect
-from core.embed import embed
+import argparse
 
-def cosine(a, b):
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    return dot / (math.sqrt(na) * math.sqrt(nb) + 1e-9)
+from qna.utils import setup_basic_logging, load_cfg
+from qna.engine import answer_question
 
-def tier_factor(tier: str) -> float:
-    return 1.0 if tier == "primary" else 0.75
-
-def source_factor(source: str) -> float:
-    if source == "kqm_tcl":
-        return 1.15
-    
-    if source == "genshin_wiki":
-        return 1.05
-    
-    if source == "honey":
-        return 1.00
-    
-    if source == "kqm_news":
-        return 0.80
-
-    return 1.0
 
 def main():
-    with open("rag/config.yaml") as f:
-        cfg = yaml.safe_load(f)
+    setup_basic_logging()
 
-    conn = connect(cfg["db_path"])
-    cur = conn.cursor()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--question", required=True)
+    ap.add_argument("--config", default="rag/config.yaml")
+    ap.add_argument("--retriever", choices=["faiss", "sqlite"], default="faiss")
+    ap.add_argument("--direct_top_k", type=int, default=12)
+    ap.add_argument("--broad_top_k", type=int, default=60)
+    ap.add_argument("--summarize_batch_size", type=int, default=8)
+    args = ap.parse_args()
 
-    query = input("Input your query:\n")
+    cfg = load_cfg(args.config)
 
-    q_bytes, dims = embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], query)
-    q = struct.unpack(f"<{dims}f", q_bytes)
+    answer = answer_question(
+        cfg,
+        args.question,
+        prefer_faiss=(args.retriever == "faiss"),
+        direct_top_k=args.direct_top_k,
+        broad_top_k=args.broad_top_k,
+        summarize_batch_size=args.summarize_batch_size,
+    )
 
-    cur.execute("""
-    SELECT e.chunk_id, e.vector, d.source, d.tier, d.weight
-    FROM embeddings e
-    JOIN chunks c ON c.chunk_id = e.chunk_id
-    JOIN docs d ON d.doc_id = c.doc_id
-    WHERE c.is_active = 1
-    """)
+    print("\n=== ANSWER ===\n")
+    print(answer)
 
-    scored = []
-    for cid, vbytes, source, tier, weight in cur.fetchall():
-        v = struct.unpack(f"<{dims}f", vbytes)
-        base = cosine(q, v)
-        score = base * float(weight) * tier_factor(tier) * source_factor(source)
-        scored.append((score, base, cid, source, tier, weight))
-
-    scored.sort(reverse=True)
-
-    for rank, (score, base, cid, source, tier, weight) in enumerate(scored[:5], 1):
-        cur.execute("""
-            SELECT d.source, d.title, d.url, c.text
-            FROM chunks c
-            JOIN docs d ON d.doc_id = c.doc_id
-            WHERE c.chunk_id = ?
-        """, (cid,))
-        s2, title, url, text = cur.fetchone()
-        print(f"\n#{rank} score={score:.4f} base={base:.4f} source={s2} tier={tier} weight={weight}\nurl={url}\n")
-        print(text[:800])
 
 if __name__ == "__main__":
     main()
