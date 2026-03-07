@@ -2,7 +2,7 @@ import time
 import requests
 import logging
 import random
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qs
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
@@ -12,6 +12,13 @@ from requests.exceptions import RequestException, Timeout, ConnectionError
 log = logging.getLogger(__name__)
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
+    qs = parse_qs(urlsplit(url).query)
+    langs = qs.get("lang")
+    if not langs:
+        return True
+    return langs[0].upper() == allowed_lang.upper()
 
 def normalize_url(u: str) -> str:
     parts = urlsplit(u)
@@ -70,7 +77,7 @@ def html_to_text(html: str) -> str:
         log.warning("[WARN] html_to_text: markdownify failed (%s); falling back to get_text()", type(e).__name__)
         return soup_text_fallback(main)
 
-def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 1.0, max_pages: int | None = 2000):
+def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
     q = deque(seeds)
     seen: set[str] = set()
     retries: dict[str, int] = {}
@@ -85,6 +92,9 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
             continue
         if deny_url and deny_url.search(url):
             log.warning("[WARN] SKIP url:%s, illegal content detected", url)
+            continue
+        if not allow_lang(url, allowed_langs):
+            seen.add(url)
             continue
 
         SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
@@ -165,6 +175,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
             link = normalize_url(link)
             path = urlsplit(link).path.lower()
             if path.endswith(SKIP_EXT):
+                continue
+            if not allow_lang(link, allowed_langs):
                 continue
             if link not in seen and same_site(link, base_url):
                 q.append(link)

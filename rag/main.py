@@ -97,7 +97,7 @@ def main():
                 raw_max = s.get("max_pages", 200)
                 max_pages = int(raw_max) if raw_max is not None else None
 
-                docs_iter = crawl_site(base_url, seeds, deny_url_re, rate_limit_s=rate, max_pages=max_pages)
+                docs_iter = crawl_site(base_url, seeds, deny_url_re, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
             else:
                 log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 

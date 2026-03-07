@@ -83,7 +83,7 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FAISS_AUDIT=False
 --FAISS_overwrite=False
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, and `--FAISS_AUDIT` it will check if the embedding is properlly processed.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, and `--FAISS_AUDIT` it will check if the embedding is properly processed.
 
 ```
 # Crawl + DB Audit
