@@ -144,7 +144,7 @@ def build_faiss_from_sqlite(
             faiss.normalize_L2(X)
 
         if isinstance(index, faiss.IndexIVF) and not trained:
-            train_vecs.append(x)
+            train_vecs.append(X)
             total_train = sum(arr.shape[0] for arr in train_vecs)
             nlist = int(faiss_cfg.get("nlist", 256))
             if total_train >= max(10000, nlist * 40):

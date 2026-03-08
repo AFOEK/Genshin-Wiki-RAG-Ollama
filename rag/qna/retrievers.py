@@ -68,4 +68,4 @@ class SqliteEmbeddingRetriever:
             scores.append((score, chunk_id))
 
         scores.sort(key=lambda x: x[0], reverse=True)
-        return [(cid, score) for _, cid in scores[:k]]
+        return [(cid, score) for score, cid in scores[:k]]

@@ -84,7 +84,8 @@ def main():
                 raw_max = s.get("max_pages", 200)
                 max_pages = int(raw_max) if raw_max is not None else None
                 rate = float(s.get("rate_limit_s", 1.0))
-                docs_iter = load_fandom_docs(s, rate_limit_s=rate, max_pages=max_pages)
+                s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
+                docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages)
             
             elif kind == "honey_html":
                 seeds = s.get("seeds", [])

@@ -26,7 +26,7 @@ def answer_question(
 
     base_url = cfg["ollama"]["base_url"]
     embed_model = cfg["ollama"]["embedding_model"]
-    qa_model = cfg["ollama"].get("qa_model", cfg["ollama"].get("model", "llama3.1"))
+    qa_model = cfg["ollama"].get("qa_model", cfg["ollama"].get("model", "llama3.2"))
 
     retriever = None
     if prefer_faiss:

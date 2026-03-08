@@ -8,6 +8,7 @@ faiss_path: data/faiss
 ollama: 
   base_url: http://localhost:11434
   embedding_model: all-minilm:latest
+  qa_model: llama3.2:3b
 
 faiss:
   index_mode: flat_ip      # flat_ip | ivf_flat | hnsw
