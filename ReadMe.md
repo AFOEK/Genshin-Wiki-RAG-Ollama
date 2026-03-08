@@ -23,11 +23,11 @@ python3 -m venv .venv
 ```
 and start the virtual environments:
 ```
-source .venv/bin/active
+source .venv/bin/activete
 ```
 With python venv already activated install all python requirements by running:
 ```
-pip -r requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Ollama server setup
