@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json, os, time, logging
-import sqlite3
+import json, time, logging
 import faiss
-import yaml
 
 from pathlib import Path
 import numpy as np
@@ -12,7 +10,6 @@ from core.paths import resolve_db_path, resolve_faiss_dir
 from core.db import read_only_connect
 
 log = logging.getLogger(__name__)
-
 
 def atomic_promote(build_dir: Path, current_dir: Path):
     old = current_dir.with_name(current_dir.name + ".old")
@@ -59,7 +56,44 @@ def build_faiss_from_sqlite(
     
     d = int(row["dims"])
     log.info("[FAISS] dims=%d", d)
-    index = faiss.IndexFlatIP(d)
+    
+    faiss_cfg = cfg.get("faiss", {}) or {}
+    index_mode = str(faiss_cfg.get("index_mode", "flat_ip")).strip().lower()
+    metric_name = str(faiss_cfg.get("metric", "cosine")).strip().lower()
+
+    if metric_name == "cosine":
+        metric_type = faiss.METRIC_INNER_PRODUCT
+        normalize = True
+    elif metric_name == "ip":
+        metric_type = faiss.METRIC_INNER_PRODUCT
+        normalize = False
+    elif metric_name == "l2":
+        metric_type = faiss.METRIC_L2
+        normalize = False
+    else:
+        raise RuntimeError(f"[FAISS] unsupported metric={metric_name}")
+    
+    if index_mode == "flat_ip":
+        if metric_type == faiss.METRIC_INNER_PRODUCT:
+            index = faiss.IndexFlatIP(d)
+        else:
+            index = faiss.IndexFlatL2(d)
+    elif index_mode == "flat_l2":
+        index = faiss.IndexFlatL2(d)
+    elif index_mode == "hnsw":
+        hnsw_m = int(faiss_cfg.get("hnsw_m", 32))
+        index = faiss.IndexHNSWFlat(d, hnsw_m, metric_type)
+        index.hnsw.efConstruction = int(faiss_cfg.get("hnsw_ef_construction", 200))
+        index.hnsw.efSearch = int(faiss_cfg.get("hnsw_ef_search", 64))
+    elif index_mode == "ivf_flat":
+        nlist = int(faiss_cfg.get("nlist", 256))
+        if metric_type ==  faiss.METRIC_INNER_PRODUCT:
+            quantizer = faiss.IndexFlatIP(d)
+        else:
+            quantizer = faiss.IndexFlatL2(d)
+        index = faiss.IndexIVFFlat(quantizer, d, nlist, metric_type)
+    else:
+        raise RuntimeError(f"[FAISS] unsupported index_mode={index_mode}")
 
     try:
         faiss.omp_set_num_threads(min(threads, faiss.omp_get_max_threads()))
@@ -70,6 +104,9 @@ def build_faiss_from_sqlite(
     total = 0
     t0 = time.time()
     offset = 0
+
+    train_vecs: list[np.ndarray] = []
+    trained = not isinstance(index, faiss.IndexIVF)
 
     while True:
         cur.execute("""
@@ -101,8 +138,25 @@ def build_faiss_from_sqlite(
 
             batch_ids.append(cid)
             vecs.append(v)
-            X = np.stack(vecs, axis=0).astype(np.float32, copy=False)
-        faiss.normalize_L2(X)
+        
+        X = np.stack(vecs, axis=0).astype(np.float32, copy=False)
+        if normalize:
+            faiss.normalize_L2(X)
+
+        if isinstance(index, faiss.IndexIVF) and not trained:
+            train_vecs.append(x)
+            total_train = sum(arr.shape[0] for arr in train_vecs)
+            nlist = int(faiss_cfg.get("nlist", 256))
+            if total_train >= max(10000, nlist * 40):
+                Xtrain = np.vstack(train_vecs)
+                log.info("[FAISS] training IVF index on %d vector", Xtrain.shape[0])
+                index.train(Xtrain)
+                trained = True
+                train_vecs.clear()
+        
+        if isinstance(index, faiss.IndexIVF) and not trained:
+            offset += len(rows)
+            continue
 
         n = X.shape[0]
         start = 0
@@ -119,6 +173,12 @@ def build_faiss_from_sqlite(
             dt = time.time() - t0
             rate = total / max(dt, 1e-9)
             log.info("[FAISS] indexed=%d rate=%.0f vec/s", total, rate)
+    
+
+    if isinstance(index, faiss.IndexIVF):
+        if not trained:
+            raise RuntimeError(f"[FAISS] IVF index never got enough training vectors")
+        index.nprobe = int(faiss_cfg.get("nprobe", 16))
     
     faiss.write_index(index, str(index_path))
     np.save(str(ids_path), np.asarray(ids, dtype=np.int64))

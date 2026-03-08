@@ -22,13 +22,13 @@ class FaissRetriever:
         self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         self.dims = int(self.meta["dims"])
 
-    def search(self, query_vec: np.ndarray, k: int) -> list[int]:
-        _dists, indices = self.index.search(query_vec, k)
+    def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
+        dists, indices = self.index.search(query_vec, k)
         out = []
-        for i in indices[0]:
+        for i, score in zip(indices[0], dists[0]):
             if i < 0:
                 continue
-            out.append(int(self.ids[i]))
+            out.append((int(self.ids[i]), float(score)))
         return out
 
 class SqliteEmbeddingRetriever:
@@ -47,7 +47,7 @@ class SqliteEmbeddingRetriever:
             raise RuntimeError("No active embeddings found in SQLite")
         self.dims = int(row["dims"])
 
-    def search(self, query_vec: np.ndarray, k: int) -> list[int]:
+    def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
         cur = self.conn.cursor()
         cur.execute("""
             SELECT e.chunk_id, e.dims, e.vector
@@ -68,4 +68,4 @@ class SqliteEmbeddingRetriever:
             scores.append((score, chunk_id))
 
         scores.sort(key=lambda x: x[0], reverse=True)
-        return [cid for _, cid in scores[:k]]
+        return [(cid, score) for _, cid in scores[:k]]

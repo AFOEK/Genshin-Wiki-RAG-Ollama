@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import re
 from typing import Iterable
 
 import numpy as np
@@ -59,7 +60,34 @@ def is_broad_question(q: str) -> bool:
     ]
     return any(m in ql for m in broad_markers)
 
-
 def chunk_batch(seq: list[dict], size: int) -> Iterable[list[dict]]:
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
+
+def tokenize(s: str) -> set[str]:
+    return set(re.findall(r"[a-zA-Z0-9_']+", s.lower()))
+
+def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, float]) -> list[dict]:
+    q_terms = tokenize(question)
+    ranked = []
+
+    for row in chunks:
+        chunk_id = int(row["chunk_id"])
+        base_score = float(initial_scores.get(chunk_id, 0.0))
+
+        text_terms = tokenize(row.get("text", ""))
+        title_terms = tokenize(row.get("title", ""))
+
+        text_overlap = len(q_terms & text_terms)
+        title_overlap = len(q_terms & title_terms)
+
+        final_score = (
+            base_score
+            + 0.02 * text_overlap
+            + 0.05 * title_overlap
+        )
+
+        ranked.append((final_score, row))
+
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [row for _, row in ranked]

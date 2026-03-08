@@ -9,6 +9,17 @@ ollama:
   base_url: http://localhost:11434
   embedding_model: all-minilm:latest
 
+faiss:
+  index_mode: flat_ip      # flat_ip | ivf_flat | hnsw
+  metric: cosine           # cosine | ip | l2
+  # IVF only
+  nlist: 256
+  nprobe: 16
+  # HNSW only
+  hnsw_m: 32
+  hnsw_ef_construction: 200
+  hnsw_ef_search: 64
+
 pipeline:
   chunk_size: 600
   chunk_overlap: 150
