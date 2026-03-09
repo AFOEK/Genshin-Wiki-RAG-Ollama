@@ -106,7 +106,7 @@ After that install MiniConda:
 winget install Anaconda.MiniConda3
 winget install SQLite.SQLite
 ```
-Make sure that `conda` is recognized by the powershell by runniing:
+Make sure that `conda` is recognized by the powershell by running:
 ```
 & "$env:USERPROFILE\miniconda3\Scripts\conda.exe" init powershell
 ```
@@ -170,11 +170,11 @@ python3 rag/test.py
 ```
 It can recieve query and generate output depends what user ask.
 
-## QLoRA / LoRA fine-tuning
-Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be QLoRA / LoRA fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
+## QLoRA / LoRA and DoRA fine-tuning
+Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be Q/LoRA (Quantization /Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
 
 ## To-do list
-- [ ] JSONL for Q/LoRA fine-tuning
+- [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning
 - [ ] Use better embedding model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b
 - [x] Pulling from sources
 - [x] Add multithreading support
