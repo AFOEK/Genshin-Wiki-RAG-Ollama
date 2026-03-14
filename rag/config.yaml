@@ -29,9 +29,9 @@ pipeline:
   archive_raw: true
 
 threading:
-  embed_queue_size: 175
-  embed_workers: 2
-  embed_batch_size: 8
+  embed_queue_size: 200
+  embed_workers: 1
+  embed_batch_size: 32
   document_queue_size: 120
 
 filters:
@@ -66,7 +66,7 @@ sources:
     weight: 0.95
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
-    rate_limit_s: 1.5
+    rate_limit_s: 3.0
 
   - name: honey
     kind: honey_html
@@ -77,7 +77,7 @@ sources:
     seeds:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
-    rate_limit_s: 1.5
+    rate_limit_s: 3.0
 
   - name: lunaris
     kind: lunaris_html
