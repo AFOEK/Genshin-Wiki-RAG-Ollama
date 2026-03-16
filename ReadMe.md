@@ -143,24 +143,29 @@ Before using the python script, inside [config.yaml](rag/config.yaml) there are 
 The main entry of the script is `main.py`, in the script it has options can be used, below is the default values:
 ```
 --DB_CRAWL=True
---DB_AUDIT=True 
---FAISS_migrate=False 
+--DB_AUDIT=True
+--DB_REPAIR=False 
+--FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
---FAISS_overwrite=False
+--FAISS_OVERWRITE=False
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed and `--FAISS_overwrite` it will overwrite current FAISS vector database records.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed and `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records.
 
 ```
 # Crawl + DB Audit
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_migrate=False --FAISS_AUDIT=False
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False
 ```
 ```
 # Migrate + Audit FAISS
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_migrate=True --FAISS_AUDIT=True
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True
+```
+```
+# DB Repair + DB Audit
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True
 ```
 ```
 # Full pipeline
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_migrate=True --FAISS_AUDIT=True --FAISS_overwrite=True
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True
 ```
 
 ## QnA Test
