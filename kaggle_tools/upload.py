@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import argparse, json, shutil, subprocess
+import argparse, json, shutil, subprocess, logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
     print("+", " ".join(cmd))
@@ -42,3 +44,53 @@ def create_or_update_dataset(folder: Path, create_if_missing:bool = True) -> Non
             "-p", str(folder),
             "-r", "zip",
         ])
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--dataset-slug",
+        required=True,
+        help="Kaggle dataset slug in the form owner/dataset-name",
+    )
+    ap.add_argument(
+        "--dataset-title",
+        default="Genshin RAG Chunks",
+        help="Human-readable Kaggle dataset title",
+    )
+    ap.add_argument(
+        "--chunks-file",
+        default="rag/tmp_kaggle/chunks.jsonl",
+        help="Path to exported chunks JSONL",
+    )
+    ap.add_argument(
+        "--work-dir",
+        default="rag/tmp_kaggle/dataset_upload",
+        help="Temporary Kaggle dataset staging folder",
+    )
+    ap.add_argument(
+        "--public",
+        action="store_true",
+        help="Make dataset public; default is private",
+    )
+    args = ap.parse_args()
+
+    chunks_file = ensure_file(Path(args.chunks_file))
+    work_dir = Path(args.work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    staged_chunks = work_dir / "chunks.jsonl"
+    shutil.copy2(chunks_file, staged_chunks)
+
+    write_dataset_metadata(
+        work_dir,
+        dataset_slug=args.dataset_slug,
+        title=args.dataset_title,
+        is_private=not args.public,
+    )
+
+    create_or_update_dataset(work_dir, create_if_missing=True)
+
+    log.info(f"[INFO] Uploaded {staged_chunks} to Kaggle dataset {args.dataset_slug}")
+
+if __name__ == "__main__":
+    main()

@@ -8,6 +8,7 @@ from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite
 from utils.logging_setup import setup_logging
 from utils.thread import producer, ingest_consumer
+from utils.repair import repair_database
 
 from adapters.kqm import load_kqm_tcl_docs
 from adapters.wiki import load_fandom_docs
@@ -27,12 +28,14 @@ def main():
     ap.add_argument("--FAISS_MIGRATE", default="False")
     ap.add_argument("--FAISS_AUDIT", default="False")
     ap.add_argument("--FAISS_OVERWRITE", default="False")
+    ap.add_argument("--DB_REPAIR", default="False")
     args = ap.parse_args()
 
     do_crawl = parse_bool(args.DB_CRAWL)
     do_db_audit = parse_bool(args.DB_AUDIT)
     do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
     do_faiss_audit = parse_bool(args.FAISS_AUDIT)
+    do_db_repair = parse_bool(args.DB_REPAIR)
     faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
 
     with open("rag/config.yaml") as f:
@@ -116,6 +119,24 @@ def main():
             t.join()
         q.join()
         t_ingest.join()
+
+    if do_db_repair:
+        conn = connect(str(db_path))
+        log.info("[INFO] DB repair starting")
+        try:
+            rep = repair_database(conn, embed_fn, cfg)
+            log.info("[REPAIR] docs_no_active_chunks: found=%d repaired=%d | missing_embeddings: found=%d repaired=%d",
+            rep["docs_no_active_chunks_found"],
+            rep["docs_no_active_chunks_repaired"],
+            rep["chunks_missing_embeddings_found"],
+            rep["chunks_missing_embeddings_repaired"])
+        except Exception:
+            log.exception("[REPAIR] Database repair failed")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     if do_db_audit:
         conn = connect(str(db_path))
