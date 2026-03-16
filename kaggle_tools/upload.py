@@ -25,3 +25,20 @@ def write_dataset_metadata(folder: Path, dataset_slug: str, title: str, is_priva
         json.dumps(meta, indent=2),
         encoding="utf-8"
     )
+
+def create_or_update_dataset(folder: Path, create_if_missing:bool = True) -> None:
+    try:
+        run([
+            "kaggle", "datasets", "version",
+            "-p", str(folder),
+            "-m", "Update exported Genshin RAG chunks",
+            "-r", "zip",
+        ])
+    except subprocess.CalledProcessError:
+        if not create_if_missing:
+            raise
+        run([
+            "kaggle", "datasets", "create",
+            "-p", str(folder),
+            "-r", "zip",
+        ])
