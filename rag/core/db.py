@@ -68,6 +68,7 @@ def connect(path: str) -> sqlite3.Connection:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p), timeout=60.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.executescript(SCHEMA)
     log.info(f"[INFO] Connected to sqlite db at {p}")
