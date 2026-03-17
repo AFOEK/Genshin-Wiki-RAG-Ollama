@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json, yaml, logging
+import json, yaml, logging, sys
 from pathlib import Path
 
-from rag.core.paths import resolve_db_path
-from rag.core.db import read_only_connect
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
+
+from core.paths import resolve_db_path
+from core.db import read_only_connect
 
 log = logging.getLogger(__name__)
 

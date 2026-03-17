@@ -3,9 +3,11 @@ import argparse, json, shutil, sqlite3, subprocess, logging
 from pathlib import Path
 
 import numpy as np
-import yaml
+import yaml, sys
 
-from rag.core.paths import resolve_db_path, resolve_faiss_dir
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
+
+from core.paths import resolve_db_path, resolve_faiss_dir
 
 log = logging.getLogger(__name__)
 
