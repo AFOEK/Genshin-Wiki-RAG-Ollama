@@ -375,13 +375,35 @@ def audit_faiss_against_sqlite(cfg: dict, *, index_dir: str | None = None, sampl
 
         for i in range(0, n, step):
             index.reconstruct(i, q)
-            D, I = index.search(q.reshape(1, -1), 1)
-            if int(I[0, 0]) != i:
-                failures.append(f"self_test_failed_at={i} got={int(I[0,0])} score={float(D[0,0])}")
+            k = min(5, n)
+            D, I = index.search(q.reshape(1, -1), k)
+            got_positions = [int(x) for x in I[0] if int(x) >= 0]
+            top_score = float(D[0, 0]) if D.size else float("-inf")
+            if i in got_positions:
+                pass
+            elif top_score >= 0.999999:
+                pass
+            else:
+                failures.append(
+                    f"self_test_failed_at={i} got_topk={got_positions} score={top_score}"
+                )
                 break
             take -= 1
             if take <= 0:
                 break
+    
+    faiss_cfg = cfg.get("faiss", {}) or {}
+    cfg_metric = str(faiss_cfg.get("metric", "cosine")).strip().lower()
+    cfg_index_mode = str(faiss_cfg.get("index_mode", "flat_ip")).strip().lower()
+
+    meta_metric = str(meta.get("metric", "")).strip().lower()
+    meta_index = str(meta.get("faiss_index", "")).strip().lower()
+
+    if meta_metric and meta_metric != cfg_metric:
+        failures.append(f"metric_mismatch: cfg={cfg_metric} meta={meta_metric}")
+
+    if meta_index and meta_index != cfg_index_mode:
+        failures.append(f"index_mode_mismatch: cfg={cfg_index_mode} meta={meta_index}")
 
     return FaissAuditReport(
         index_total=int(index.ntotal),

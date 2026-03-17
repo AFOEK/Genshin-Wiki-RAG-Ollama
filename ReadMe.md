@@ -171,9 +171,24 @@ python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIG
 ## QnA Test
 If all crawling, chunking, and embedding have done, user can test the RAG by running:
 ```
-python3 rag/test.py
+python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
 ```
-It can recieve query and generate output depends what user ask.
+It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
+```
+--config rag/config.yaml    #default value: rag/config.yaml
+--retriever {faiss, sqlite} #default value: faiss
+--direct_top_k 8-32         #default value: 12
+--board_top_k 50-80         #default value: 60
+--summarize_batch_size 4-16 #default value: 8
+```
+
+Example usage:
+```
+python3 rag/test.py --question "What is ZhongLo signature weapon?"
+```
+
+## Kaggle Embedding Support
+Since local device have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU
 
 ## QLoRA / LoRA and DoRA fine-tuning
 Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be Q/LoRA (Quantization /Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
@@ -181,6 +196,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 ## To-do list
 - [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning
 - [ ] Use better embedding model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b
+- [ ] Embedding using Kaggle
 - [x] Pulling from sources
 - [x] Add multithreading support
 - [x] FAISS support

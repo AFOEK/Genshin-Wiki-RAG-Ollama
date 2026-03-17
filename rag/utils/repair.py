@@ -48,6 +48,15 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
             tier=doc_row.get("tier", "primary"),
             weight=float(doc_row.get("weight", 1.0)),
             do_embed=True)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM chunks
+            WHERE doc_id=? AND is_active=1
+        """, (doc_row["doc_id"],))
+        active_chunks = int(cur.fetchone()[0] or 0)
+        if active_chunks == 0:
+            log.warning("[REPAIR] doc_id=%s url=%s still has no active chunks after repair", doc_row["doc_id"], doc_row["url"])
         log.info("[REPAIR] repaired from archived raw doc_id=%s url=%s", doc_row["doc_id"], doc_row["url"])
         return True
     except Exception:

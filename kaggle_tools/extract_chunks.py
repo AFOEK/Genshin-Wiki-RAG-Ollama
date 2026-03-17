@@ -3,8 +3,8 @@ from __future__ import annotations
 import json, yaml, logging
 from pathlib import Path
 
-from rag.core.paths import resolve_db_path
-from rag.core.db import read_only_connect
+from ..rag.core.paths import resolve_db_path
+from ..rag.core.db import read_only_connect
 
 log = logging.getLogger(__name__)
 
