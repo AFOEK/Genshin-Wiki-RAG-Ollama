@@ -18,7 +18,7 @@ def main():
     cfg = load_cfg()
     db_path = resolve_db_path(cfg)
 
-    out_dir = Path("rag/db_kaggle")
+    out_dir = Path("rag/chunks_kaggle")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "chunks.jsonl"
 
