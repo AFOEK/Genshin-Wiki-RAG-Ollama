@@ -4,4 +4,5 @@ rag/data/repos/*
 *.db
 *.db-*
 *.log
+*.log.*
 .vscode
