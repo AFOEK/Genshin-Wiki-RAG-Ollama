@@ -59,12 +59,12 @@ def main():
     )
     ap.add_argument(
         "--chunks-file",
-        default="rag/chunks_kaggle/chunks.jsonl",
+        default="../rag/chunks_kaggle/chunks.jsonl",
         help="Path to exported chunks JSONL",
     )
     ap.add_argument(
         "--work-dir",
-        default="rag/chunks_kaggle/dataset_upload",
+        default="../rag/chunks_kaggle/dataset_upload",
         help="Temporary Kaggle dataset staging folder",
     )
     ap.add_argument(
