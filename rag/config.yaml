@@ -11,7 +11,7 @@ ollama:
   qa_model: llama3.2:3b
 
 kaggle:
-  embedding_model: mixebread-ai/mxbai-embed-large-v1.5
+  embedding_model: mixebread-ai/mxbai-embed-large-v1
   dataset_slug: afoek88/genshin-rag-chunks
   kernel_slug: afoek88/genshin-rag-embeddings
   batch_size: 128
