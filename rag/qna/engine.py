@@ -52,30 +52,43 @@ def answer_question(
     top_k = broad_top_k if broad else direct_top_k
 
     results = retriever.search(q_vec, top_k)
-    chunk_ids = [cid for cid, _score in results]
+    chunk_ids = [cid for cid, score in results]
     initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
     chunks = rerank_chunks(question, chunks, initial_scores)
+
+    for row in chunks[:5]:
+        log.info(
+            "[QNA] chunk_id=%s title=%s source=%s preview=%s",
+            row["chunk_id"],
+            row["title"],
+            row["source"],
+            (row["text"][:200] if row["text"] else "").replace("\n", " ")
+        )
 
     if not chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."
 
     if not broad:
         context = build_context(chunks)
-        prompt = f"""You are answering a question using retrieved Genshin Impact knowledge.
+        prompt = f"""You are a retrieval-grounded Genshin Impact assistant.
+        Answer the question using ONLY the provided context.
+        If the answer is not explicitly supported by the context, say:
+        "I don't have enough evidence in the retrieved context."
 
-Question:
-{question}
+        Rules:
+        - Do not use outside knowledge.
+        - Do not guess.
+        - Cite chunk IDs inline like [chunk_id=123].
+        - Keep the answer concise and factual.
 
-Context:
-{context}
+        Question:
+        {question}
 
-Task:
-- Answer using only the context.
-- Include chunk_id citations inline like [chunk_id=123].
-- If the context is insufficient, say so.
-"""
+        Context:
+        {context}
+        """
         return ollama_generate(base_url, qa_model, prompt, keep_alive="20s")
 
     notes = []

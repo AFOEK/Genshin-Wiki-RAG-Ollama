@@ -10,6 +10,10 @@ def ollama_generate(base_url: str, model: str, prompt: str, keep_alive: str = "3
             "prompt": prompt,
             "stream": False,
             "keep_alive": keep_alive,
+            "options":{
+                "temperature": 0,
+                "top_p":0.9,
+            },
         },
         timeout=300,
     )

@@ -54,13 +54,9 @@ def import_embeddings(db_path: Path, chunks_ids_path: Path, vectors_path: Path) 
     inserted = 0
     cur.execute("BEGIN")
     try:
-        for cid, vec in zip(chunk_ids, vectors):
-            vec = np.asarray(vec, dtype=np.float32)
-            cur.execute(
-                "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES (?, ?, ?)",
-                (int(cid), int(vec.shape[0]), vec.tobytes()),
-            )
-            inserted += 1
+        rows = [(int(cid), int(vec.shape[0]), vec.astype(np.float32).tobytes()) for cid, vec in zip(chunk_ids, vectors)]
+        cur.executemany("INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES (?, ?, ?)", rows)
+        inserted = cur.rowcount
         conn.commit()
     except Exception:
         conn.rollback()

@@ -52,7 +52,7 @@ def main():
             count += 1
     
     conn.close()
-    log.info("[INFO] Chunks exported {count} active chunks to {out_path}")
+    log.info(f"[INFO] Chunks exported {count} active chunks to {out_path}")
 
 if __name__ == "__main__":
     main()

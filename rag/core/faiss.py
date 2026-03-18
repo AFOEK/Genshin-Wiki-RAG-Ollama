@@ -188,7 +188,7 @@ def build_faiss_from_sqlite(
         "dims": d,
         "count": int(index.ntotal),
         "metric": "cosine",
-        "faiss_index": "IndexFlatIP",
+        "faiss_index": index_mode,
         "normalized": True,
         "db_path": str(db_path),
     }
