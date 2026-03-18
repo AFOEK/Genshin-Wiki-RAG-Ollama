@@ -11,7 +11,7 @@ from core.paths import resolve_db_path, resolve_faiss_dir
 
 log = logging.getLogger(__name__)
 
-def load_cfg(path: str = "rag/config.yaml") -> dict:
+def load_cfg(path: str = "../rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
     
@@ -108,9 +108,9 @@ def show_meta(output_dir: Path) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="rag/config.yaml")
+    ap.add_argument("--config", default="../rag/config.yaml")
     ap.add_argument("--kernel-slug", required=True, help="owner/kernel-slug")
-    ap.add_argument("--work-dir", default="rag/tmp_kaggle/output")
+    ap.add_argument("--work-dir", default="../rag/kaggle_results/output")
     ap.add_argument("--skip-import-embeddings", action="store_true")
     ap.add_argument("--replace-faiss", action="store_true")
     args = ap.parse_args()

@@ -10,7 +10,7 @@ from core.db import read_only_connect
 
 log = logging.getLogger(__name__)
 
-def load_cfg(path: str ="rag/config.yaml") -> dict:
+def load_cfg(path: str ="../rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
     
@@ -18,7 +18,7 @@ def main():
     cfg = load_cfg()
     db_path = resolve_db_path(cfg)
 
-    out_dir = Path("rag/chunks_kaggle")
+    out_dir = Path("../rag/chunks_kaggle")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "chunks.jsonl"
 
