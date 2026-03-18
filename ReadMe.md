@@ -188,7 +188,23 @@ python3 rag/test.py --question "What is ZhongLo signature weapon?"
 ```
 
 ## Kaggle Embedding Support
-Since local device have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU
+Since local device may have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU. With that this project utilized `Kaggle API` to send chunks to Kaggle, where it will be embeded to bigger model, by using [upload.py](kaggle_tools/upload.py) script.
+
+### Kaggle setups
+In order to access Kaggle using API, it required API credentials. It can be get by login to [Kaggle](kaggle.com/settings) -> Account -> Legacy Token Credential -> Create Legacy API Key. it will download a json file named `kaggle.json`, which it need to be place in `~/.kaggle/` or `C:\Users\<YOUR_USERNAME>\.kaggle\`
+
+> [!TIP]
+To access Kaggle API, it can use API Tokens but for the sake of simplicity , this guide use legacy API credential
+
+### Upload to kaggle
+After Kaggle API has been stored, before upload to the Kaggle itself. It required to run before hand:
+```
+python3 kaggle_tools/extract_chunks.py
+```
+It will extract all documents chunks and export it to `chunks.jsonl`. After that run:
+```
+python3 kaggle_tools/upload.py --dataset_slug <YOUR_KAGGLE_USERNAME>/<GENSHIN_CHUNKS_NAME>
+```
 
 ## QLoRA / LoRA and DoRA fine-tuning
 Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be Q/LoRA (Quantization /Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
@@ -197,6 +213,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning
 - [ ] Use better embedding model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b
 - [ ] Embedding using Kaggle
+- [ ] Adding cron jobs updates
 - [x] Pulling from sources
 - [x] Add multithreading support
 - [x] FAISS support

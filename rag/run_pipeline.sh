@@ -1,17 +1,34 @@
 #!/usr/bin/env bash
-set -evo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+LOCK="/tmp/genshin_rag_pipeline.lock"
+if [ "${CRON_MODE:-0}" = "1" ]; then
+    if [ -f "$LOCK" ]; then
+        LOCKED_PID=$(cat "$LOCK")
+        if kill -0 "$LOCKED_PID" 2>/dev/null; then
+            echo "Already running (PID $LOCKED_PID), skipping"
+            exit 0
+        else
+            rm -f "$LOCK"
+        fi
+    fi
+    echo $$ > "$LOCK"
+    trap 'rm -f "$LOCK"' EXIT
+fi
+
 sudo renice -n -10 -p $$
 
-LOG="rag/log/pipeline_run.log"
+LOG="rag/logs/pipeline_run.log"
 mkdir -p rag/logs
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
 }
+
+log "Pipeline starting (cron=${CRON_MODE:-0})"
 
 log "Activating virtual environment"
 source .venv/bin/activate
