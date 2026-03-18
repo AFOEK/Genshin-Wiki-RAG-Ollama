@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from urllib.parse import quote
 from requests.exceptions import RequestException, Timeout, ConnectionError, HTTPError
+from utils.clean_fandom import clean_fandom_text
+
 
 log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -168,7 +170,11 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
     for title in titles:
         html = fetch_page_html(session, api, title)
         if html:
-            text = fandom_html_to_text(html)
+            raw_text = fandom_html_to_text(html) or ""
+            text = clean_fandom_text(raw_text)
+            if not text or len(text.strip()) < 150:
+                log.info("[WIKI] Skip low-value page title=%s", title)
+                continue
             url = f"{api}?title={quote(title)}"
             yield url, title, text
         else:

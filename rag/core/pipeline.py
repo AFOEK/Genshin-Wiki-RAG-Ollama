@@ -21,7 +21,7 @@ def defang_tables(s: str) -> str:
         s = s.replace("[[", " ").replace("]]", " ")
     if s.count("{{") > 10:
         s = s.replace("{{", " ").replace("}}", " ")
-    return s 
+    return s
 
 def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0, do_embed: bool=True):
     cur = conn.cursor()
