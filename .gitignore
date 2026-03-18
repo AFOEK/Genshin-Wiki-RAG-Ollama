@@ -6,4 +6,4 @@ rag/data/repos/*
 *.log
 *.log.*
 .vscode
-.jsonl
+*.jsonl
