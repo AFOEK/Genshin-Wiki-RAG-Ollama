@@ -172,9 +172,9 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
         if html:
             raw_text = fandom_html_to_text(html) or ""
             text = clean_fandom_text(raw_text)
-            if not text or len(text.strip()) < 150:
-                log.info("[WIKI] Skip low-value page title=%s", title)
-                continue
+            # if not text or len(text.strip()) <= 80:
+            #     log.info("[WIKI] Skip low-value page title=%s", title)
+            #     continue
             url = f"{api}?title={quote(title)}"
             yield url, title, text
         else:
