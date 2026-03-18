@@ -10,6 +10,19 @@ ollama:
   embedding_model: all-minilm:latest
   qa_model: llama3.2:3b
 
+kaggle:
+  embedding_model: mixebread-ai/mxbai-embed-large-v1.5
+  dataset_slug: afoek88/genshin-rag-chunks
+  kernel_slug: afoek88/genshin-rag-embeddings
+  batch_size: 128
+  max_text_chars: 2400
+  faiss:
+    index_mode: hnsw
+    metric: cosine
+    hnsw_m: 64
+    hnsw_ef_construction: 400
+    hnsw_ef_search: 64
+
 faiss:
   index_mode: flat_ip      # flat_ip | ivf_flat | hnsw
   metric: cosine           # cosine | ip | l2
