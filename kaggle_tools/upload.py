@@ -54,7 +54,7 @@ def main():
     )
     ap.add_argument(
         "--config",
-        default="../rag/config.yaml"
+        default="rag/config.yaml"
     )
     ap.add_argument(
         "--dataset-title",
