@@ -184,7 +184,7 @@ It can recieve query and generate output depends what user ask. In the `test.py`
 
 Example usage:
 ```
-python3 rag/test.py --question "What is ZhongLo signature weapon?"
+python3 rag/test.py --question "What is ZhongLi signature weapon?"
 ```
 
 ## Kaggle Embedding Support
@@ -206,14 +206,32 @@ It will extract all documents chunks and export it to `chunks.jsonl`. After that
 python3 kaggle_tools/upload.py --dataset_slug <YOUR_KAGGLE_USERNAME>/<GENSHIN_CHUNKS_NAME>
 ```
 
+## One-for-all script
+This project provide a script to run as cron job or general usages, the script itself named [`./run_pipeline.sh`](./run_pipeline.sh). To setup the cron job:
+```
+crontab -e #choose your favorite text editor (use nano)
+
+##Add to a new line assume that the repos is on Documents
+0 3 1,15 * * CRON_MODE=1 /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/run_pipeline.sh >> /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/rag/logs/pipeline_run.log 2>&1
+```
+
+The script will run at 1st and 15th day every month at 3am.
+
+> [!TIP]
+The crontab entry can be change `0 3 1,15 * *` from the left to right order it detonates `minute hour day_of_month month day_of_week`. `CRON_MODE=1` is a lock so if 2 instance of same script running it will block.
+
 ## QLoRA / LoRA and DoRA fine-tuning
 Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be Q/LoRA (Quantization /Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
 
 ## To-do list
-- [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning
-- [ ] Use better embedding model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b
-- [ ] Embedding using Kaggle
-- [ ] Adding cron jobs updates
-- [x] Pulling from sources
-- [x] Add multithreading support
-- [x] FAISS support
+- [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
+- [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
+- [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
+- [x] Embedding using Kaggle.
+- [x] Adding cron jobs updates.
+- [x] Pulling from sources.
+- [x] Add multithreading support.
+- [x] FAISS support.
+
+## Footenote
+[^1]: It's get processed on Kaggle
