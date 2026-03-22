@@ -41,6 +41,10 @@ log "Extracting chunks"
 python3 kaggle_tools/extract_chunks.py
 log "Done extracting chunks"
 
-log "uploading to Kaggle"
+log "Uploading to Kaggle"
 python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data"
-log "Done"
+log "Done upload"
+
+log "Test"
+python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
+log "Testing done"
