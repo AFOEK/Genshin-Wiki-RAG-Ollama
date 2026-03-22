@@ -42,5 +42,5 @@ python3 kaggle_tools/extract_chunks.py
 log "Done extracting chunks"
 
 log "uploading to Kaggle"
-python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data" --chunks-file "../rag/chunks_kaggle/chunks.jsonl"
+python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data"
 log "Done"
