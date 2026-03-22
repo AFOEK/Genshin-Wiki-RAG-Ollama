@@ -191,7 +191,7 @@ python3 rag/test.py --question "What is ZhongLi signature weapon?"
 Since local device may have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU. With that this project utilized `Kaggle API` to send chunks to Kaggle, where it will be embeded to bigger model, by using [upload.py](kaggle_tools/upload.py) script.
 
 ### Kaggle setups
-In order to access Kaggle using API, it required API credentials. It can be get by login to [Kaggle](kaggle.com/settings) -> Account -> Legacy Token Credential -> Create Legacy API Key. it will download a json file named `kaggle.json`, which it need to be place in `~/.kaggle/` or `C:\Users\<YOUR_USERNAME>\.kaggle\`
+In order to access Kaggle using API, it required API credentials. It can be get by login to [Kaggle](www.kaggle.com/settings) -> Account -> Legacy Token Credential -> Create Legacy API Key. it will download a json file named `kaggle.json`, which it need to be place in `~/.kaggle/` or `C:\Users\<YOUR_USERNAME>\.kaggle\`
 
 > [!TIP]
 To access Kaggle API, it can use API Tokens but for the sake of simplicity , this guide use legacy API credential
