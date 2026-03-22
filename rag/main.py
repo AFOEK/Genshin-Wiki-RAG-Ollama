@@ -51,7 +51,7 @@ def main():
     log.info("[INFO] Database initialized at %s", db_path)
 
     def embed_fn(text_or_texts):
-        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive="15s")
+        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive=cfg["ollama"].get("embed_keep_alive", "15s"))
     
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None

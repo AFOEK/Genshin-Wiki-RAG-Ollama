@@ -9,6 +9,8 @@ ollama:
   base_url: http://localhost:11434
   embedding_model: all-minilm:latest
   qa_model: llama3.2:3b
+  qa_keep_alive: "10m"
+  embed_keep_alive: "15s"
 
 kaggle:
   embedding_model: mixebread-ai/mxbai-embed-large-v1

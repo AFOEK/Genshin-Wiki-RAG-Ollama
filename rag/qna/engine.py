@@ -27,6 +27,7 @@ def answer_question(
     base_url = cfg["ollama"]["base_url"]
     embed_model = cfg["ollama"]["embedding_model"]
     qa_model = cfg["ollama"].get("qa_model", cfg["ollama"].get("model", "llama3.2"))
+    qa_timeout = cfg["ollama"].get("qa_keep_alive", "10m")
 
     retriever = None
     if prefer_faiss:
@@ -90,10 +91,10 @@ def answer_question(
             Context:
             {context}
         """).strip()
-        return ollama_generate(base_url, qa_model, prompt, keep_alive="20s")
+        return ollama_generate(base_url, qa_model, prompt, keep_alive=qa_timeout)
 
     notes = []
     for group in chunk_batch(chunks, summarize_batch_size):
         notes.append(summarize_chunk_group(base_url, qa_model, question, group))
 
-    return synthesize_final_answer(base_url, qa_model, question, notes)
+    return synthesize_final_answer(base_url, qa_model, question, notes, qa_timeout)

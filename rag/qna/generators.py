@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import requests
 
-def ollama_generate(base_url: str, model: str, prompt: str, retries:int = 3, keep_alive: str = "30s", timeout:int = 300) -> str:
+def ollama_generate(base_url: str, model: str, prompt: str, retries:int = 3, keep_alive: str = "10m", timeout:int = 300) -> str:
     for attempt in range(retries):
         try:
             r = requests.post(

@@ -36,7 +36,7 @@ def summarize_chunk_group(base_url: str, model: str, question: str, chunks: list
     return ollama_generate(base_url, model, prompt, keep_alive="20s")
 
 
-def synthesize_final_answer(base_url: str, model: str, question: str, notes: list[str]) -> str:
+def synthesize_final_answer(base_url: str, model: str, question: str, notes: list[str], timeout: str = "15m") -> str:
     if not notes:
         return "I couldn't summarize any retrieved context for this question."
     
