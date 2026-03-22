@@ -31,7 +31,7 @@ log() {
 log "Pipeline starting (cron=${CRON_MODE:-0})"
 
 log "Activating virtual environment"
-source "$SCRIPT_DIR/../.venv/bin/activate"
+source .venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
 python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True
