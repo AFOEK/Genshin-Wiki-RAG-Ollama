@@ -6,13 +6,17 @@ import numpy as np
 import yaml, sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
-
-from core.paths import resolve_db_path, resolve_faiss_dir
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RAG_DIR   = REPO_ROOT / "rag"
 
 log = logging.getLogger(__name__)
 
-def load_cfg(path: str = "../rag/config.yaml") -> dict:
-    with open(path, "r", encoding="utf-8") as f:
+from core.paths import resolve_db_path, resolve_faiss_dir
+from utils.logging_setup import setup_logging
+
+def load_cfg(path: str | None = None) -> dict:
+    p = Path(path).resolve() if path else RAG_DIR / "config.yaml"
+    with open(p, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
     
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -72,9 +76,8 @@ def replace_faiss_bundle(cfg: dict, output_dir: Path) -> Path:
 
     required = ("index.faiss", "ids.npy", "meta.json")
     for name in required:
-        src = output_dir / name
-        if not src.exists():
-            raise FileNotFoundError(f"Missing FAISS artifacts: {src}")
+        if not (output_dir / name).exists():
+            raise FileNotFoundError(f"Missing FAISS artifact: {output_dir / name}")
     
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
@@ -100,23 +103,26 @@ def show_meta(output_dir: Path) -> None:
         log.info("[INFO] Kaggle output meta:")
         print(json.dumps(meta, indent=2))
     except Exception as e:
-        log.warning(f"[WARN] failed reading meta.json: {e}")
+        log.warning("[WARN] failed reading meta.json: %s", {e})
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="../rag/config.yaml")
+    ap.add_argument("--config",  default=str(RAG_DIR / "config.yaml"))
     ap.add_argument("--kernel-slug", required=True, help="owner/kernel-slug")
-    ap.add_argument("--work-dir", default="../rag/kaggle_results/output")
-    ap.add_argument("--skip-import-embeddings", action="store_true")
+    ap.add_argument("--work-dir", default=str(RAG_DIR / "kaggle_results" / "output"))
     ap.add_argument("--replace-faiss", action="store_true")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
     db_path = resolve_db_path(cfg)
     output_dir = ensure_dir(Path(args.work_dir))
 
     pull_kernel_output(args.kernel_slug, output_dir, force=True)
-    log.info(f"[OK] downloaded Kaggle notebook output into {output_dir}")
+    log.info(f"[KAGGLE_PULL] downloaded Kaggle notebook output into %s", output_dir)
 
     show_meta(output_dir)
 
@@ -126,13 +132,13 @@ def main():
             output_dir / "chunk_ids.npy",
             output_dir / "vectors.npy",
         )
-        log.info(f"[OK] imported {inserted} embeddings into {db_path}")
+        log.info("[KAGGLE_PULL] imported %d embeddings into %s", inserted, db_path)
     else:
         log.info("[INFO] skipped SQLite embedding import")
 
     if args.replace_faiss:
         current_dir = replace_faiss_bundle(cfg, output_dir)
-        log.info(f"[OK] replaced FAISS bundle at {current_dir}")
+        log.info("[KAGGLE_PULL] replaced FAISS bundle at %s", current_dir)
     else:
         log.info("[INFO] skipped FAISS replacement")
 

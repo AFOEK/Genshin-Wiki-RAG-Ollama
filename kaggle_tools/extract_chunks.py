@@ -7,6 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
 
 from core.paths import resolve_db_path
 from core.db import read_only_connect
+from utils.logging_setup import setup_logging
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RAG_DIR   = REPO_ROOT / "rag"
 
 log = logging.getLogger(__name__)
 
@@ -16,11 +20,17 @@ def load_cfg(path: str ="rag/config.yaml") -> dict:
     
 def main():
     cfg = load_cfg()
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
+
     db_path = resolve_db_path(cfg)
 
-    out_dir = Path("../rag/chunks_kaggle")
+    out_dir  = RAG_DIR / "chunks_kaggle"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "chunks.jsonl"
+    log.info("[EXTRACT] chunks dataset created at %s", out_path)
 
     conn = read_only_connect(str(db_path))
     cur = conn.cursor()

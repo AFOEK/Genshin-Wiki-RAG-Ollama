@@ -10,16 +10,9 @@ import yaml
 
 log = logging.getLogger(__name__)
 
-def setup_basic_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    )
-
 def load_cfg(path: str = "rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
 
 def read_only_connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

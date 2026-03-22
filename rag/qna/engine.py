@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
 from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks
@@ -58,7 +58,10 @@ def answer_question(
     chunks = fetch_chunks(conn, chunk_ids)
     chunks = rerank_chunks(question, chunks, initial_scores)
 
-    for row in chunks[:5]:
+    if not chunks:
+        return "I couldn't retrieve any relevant chunks from the knowledge base."
+
+    for row in chunks[:direct_top_k]:
         log.info(
             "[QNA] chunk_id=%s title=%s source=%s preview=%s",
             row["chunk_id"],
@@ -67,28 +70,26 @@ def answer_question(
             (row["text"][:200] if row["text"] else "").replace("\n", " ")
         )
 
-    if not chunks:
-        return "I couldn't retrieve any relevant chunks from the knowledge base."
-
     if not broad:
-        context = build_context(chunks)
-        prompt = f"""You are a retrieval-grounded Genshin Impact assistant.
-        Answer the question using ONLY the provided context.
-        If the answer is not explicitly supported by the context, say:
-        "I don't have enough evidence in the retrieved context."
+        context = build_context(chunks[:5])
+        prompt = textwrap.dedent(f"""
+            You are a retrieval-grounded Genshin Impact assistant.
+            Answer the question using ONLY the provided context.
+            If the answer is not explicitly supported by the context, say:
+            "I don't have enough evidence in the retrieved context."
 
-        Rules:
-        - Do not use outside knowledge.
-        - Do not guess.
-        - Cite chunk IDs inline like [chunk_id=123].
-        - Keep the answer concise and factual.
+            Rules:
+            - Do not use outside knowledge.
+            - Do not guess.
+            - Cite chunk IDs inline like [chunk_id=123].
+            - Keep the answer concise and factual.
 
-        Question:
-        {question}
+            Question:
+            {question}
 
-        Context:
-        {context}
-        """
+            Context:
+            {context}
+        """).strip()
         return ollama_generate(base_url, qa_model, prompt, keep_alive="20s")
 
     notes = []

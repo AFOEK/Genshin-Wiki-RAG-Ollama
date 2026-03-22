@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import yaml
 
-from qna.utils import setup_basic_logging, load_cfg
+from qna.utils import load_cfg
 from qna.engine import answer_question
+from utils.logging_setup import setup_logging
 
 
 def main():
-    setup_basic_logging()
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--question", required=True)

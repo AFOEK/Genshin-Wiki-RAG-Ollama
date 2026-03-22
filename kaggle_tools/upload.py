@@ -3,6 +3,12 @@ from __future__ import annotations
 import argparse, json, shutil, subprocess, logging, yaml
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
+from utils.logging_setup import setup_logging
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RAG_DIR = REPO_ROOT / "rag"
+
 log = logging.getLogger(__name__)
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -36,6 +42,7 @@ def create_or_update_dataset(folder: Path, create_if_missing:bool = True) -> Non
             "-m", "Update exported Genshin RAG chunks",
             "-r", "zip",
         ])
+        log.info("[INFO] Sucessfully update dataset to Kaggle")
     except subprocess.CalledProcessError:
         if not create_if_missing:
             raise
@@ -44,6 +51,7 @@ def create_or_update_dataset(folder: Path, create_if_missing:bool = True) -> Non
             "-p", str(folder),
             "-r", "zip",
         ])
+        log.info("[INFO] Sucessfully upload dataset to Kaggle")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -54,7 +62,7 @@ def main():
     )
     ap.add_argument(
         "--config",
-        default="rag/config.yaml"
+        default=str(RAG_DIR / "config.yaml")
     )
     ap.add_argument(
         "--dataset-title",
@@ -63,12 +71,12 @@ def main():
     )
     ap.add_argument(
         "--chunks-file",
-        default="../rag/chunks_kaggle/chunks.jsonl",
+        default=str(RAG_DIR / "chunks_kaggle" / "chunks.jsonl"),
         help="Path to exported chunks JSONL",
     )
     ap.add_argument(
         "--work-dir",
-        default="../rag/chunks_kaggle/dataset_upload",
+        default=str(RAG_DIR / "chunks_kaggle" / "dataset_upload"),
         help="Temporary Kaggle dataset staging folder",
     )
     ap.add_argument(
@@ -80,6 +88,11 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
+
     chunks_file = ensure_file(Path(args.chunks_file))
     work_dir = Path(args.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +100,7 @@ def main():
     staged_chunks = work_dir / "chunks.jsonl"
     shutil.copy2(chunks_file, staged_chunks)
     shutil.copy2(Path(args.config), work_dir / "config.yaml")
+    log.info("[KAGGLE_UPLOAD] Successfully setup staging files")
     title = args.dataset_title or cfg.get("kaggle", {}).get("dataset_title", "Genshin RAG Chunks")
     slug = args.dataset_slug or cfg.get("kaggle", {}).get("dataset_slug")
     if not slug:

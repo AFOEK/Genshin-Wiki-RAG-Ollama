@@ -101,7 +101,18 @@ sources:
     seeds:
       - "https://lunaris.moe/?lang=EN"
     max_pages: null
-    rate_limit_s: 1.5
+    rate_limit_s: 3.0
+
+  - name: naoka
+    kind: naoka_html
+    tier: supplementary
+    enabled: false
+    weight: 0.55
+    base_url: https://gi.nanoka.cc/
+    seeds:
+      - "https://gi.nanoka.cc/?lang=EN"
+    max_pages: null
+    rate_limit_s: 3.0
 
   - name: homdgcat
     kind: homdgcat_html
@@ -109,6 +120,8 @@ sources:
     enabled: false
     weight: 0.25
     base_url: https://homdgcat.wiki
+    max_pages: null
+    rate_limit_s: 3.0
 
   - name: hakushin
     kind: hakushin_html
@@ -116,3 +129,5 @@ sources:
     enabled: false
     weight: 0.45
     base_url: https://gi20.hakush.in
+    max_pages: null
+    rate_limit_s: 3.0

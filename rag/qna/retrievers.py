@@ -3,12 +3,27 @@ import json
 import sqlite3
 from pathlib import Path
 import faiss
+import logging
 import numpy as np
 
 from .utils import normalize_vec_from_blob
 
+log = logging.getLogger(__name__)
+
+faiss_retriever_cache: dict[str, FaissRetriever] = {}
+
 class FaissRetriever:
+    def __new__(cls, faiss_dir: Path):
+        key = str(faiss_dir)
+        if key not in faiss_retriever_cache:
+            instance = super().__new__(cls)
+            instance._initialized = False
+            faiss_retriever_cache[key] = instance
+        return faiss_retriever_cache[key]
+
     def __init__(self, faiss_dir: Path):
+        if self._initialized:
+            return
         current = faiss_dir / "current"
         self.index_path = current / "index.faiss"
         self.ids_path = current / "ids.npy"
@@ -21,8 +36,15 @@ class FaissRetriever:
         self.ids = np.load(str(self.ids_path))
         self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         self.dims = int(self.meta["dims"])
+        self.model = self.meta.get("embedding_model", "unknown")
+        log.info("[FAISS] loaded index dims=%d model=%s ntotal=%d",
+             self.dims, self.model, self.index.ntotal)
+        self._initalized = True
 
     def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
+        k = min(k, self.index.ntotal)
+        if k == 0:
+            return []
         dists, indices = self.index.search(query_vec, k)
         out = []
         for i, score in zip(indices[0], dists[0]):
@@ -68,4 +90,5 @@ class SqliteEmbeddingRetriever:
             scores.append((score, chunk_id))
 
         scores.sort(key=lambda x: x[0], reverse=True)
+        k = min(k, len(scores))
         return [(cid, score) for score, cid in scores[:k]]
