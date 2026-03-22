@@ -9,14 +9,6 @@ from utils.logging_setup import setup_logging
 
 
 def main():
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    setup_logging(
-        cfg.get("logging", {}).get("file"),
-        cfg.get("logging", {}).get("level", "INFO")
-    )
-
     ap = argparse.ArgumentParser()
     ap.add_argument("--question", required=True)
     ap.add_argument("--config", default="rag/config.yaml")
@@ -25,8 +17,11 @@ def main():
     ap.add_argument("--broad_top_k", type=int, default=60)
     ap.add_argument("--summarize_batch_size", type=int, default=8)
     args = ap.parse_args()
-
     cfg = load_cfg(args.config)
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
 
     answer = answer_question(
         cfg,
