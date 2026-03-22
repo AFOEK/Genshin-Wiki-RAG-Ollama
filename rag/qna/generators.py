@@ -15,7 +15,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, keep_alive: str = "3
                 "top_p":0.9,
             },
         },
-        timeout=300,
+        timeout=1000,
     )
     r.raise_for_status()
     data = r.json()
