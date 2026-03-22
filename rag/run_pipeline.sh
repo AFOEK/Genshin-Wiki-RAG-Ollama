@@ -19,7 +19,7 @@ if [ "${CRON_MODE:-0}" = "1" ]; then
     trap 'rm -f "$LOCK"' EXIT
 fi
 
-sudo renice -n -10 -p $$
+sudo renice -n -10 -p $$ 2>/dev/null || true
 
 LOG="rag/logs/pipeline_run.log"
 mkdir -p rag/logs
@@ -31,7 +31,7 @@ log() {
 log "Pipeline starting (cron=${CRON_MODE:-0})"
 
 log "Activating virtual environment"
-source .venv/bin/activate
+source rag/.venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
 python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True
