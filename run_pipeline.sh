@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
 LOCK="/tmp/genshin_rag_pipeline.lock"
 if [ "${CRON_MODE:-0}" = "1" ]; then
     if [ -f "$LOCK" ]; then
@@ -45,6 +47,14 @@ log "Uploading to Kaggle"
 python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data"
 log "Done upload"
 
-log "Test"
+log "Test first local embedding"
+python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
+log "Testing done"
+
+log "Kaggle kernel pull, swap FAISS and pull embeddings"
+python3 kaggle_tools/pull.py --wait --replace-faiss --poll-interval 300 --kernel-timeout 18000
+log "Done pull finish"
+
+log "Test second local embedding with better embeddings"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
 log "Testing done"
