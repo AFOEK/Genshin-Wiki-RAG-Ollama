@@ -44,17 +44,17 @@ python3 kaggle_tools/extract_chunks.py
 log "Done extracting chunks"
 
 log "Uploading to Kaggle"
-python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data"
+python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data" || log "Failed upload to Kaggle, try again"
 log "Done upload"
 
 log "Test first local embedding"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
-log "Testing done"
+log "First testing done"
 
 log "Kaggle kernel pull, swap FAISS and pull embeddings"
-python3 kaggle_tools/pull.py --wait --replace-faiss --poll-interval 300 --kernel-timeout 18000
+python3 kaggle_tools/pull.py --wait --replace-faiss --poll-interval 300 --kernel-timeout 18000 || log "Failed pull from Kaggle, train again"
 log "Done pull finish"
 
 log "Test second local embedding with better embeddings"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
-log "Testing done"
+log "Second testing done"
