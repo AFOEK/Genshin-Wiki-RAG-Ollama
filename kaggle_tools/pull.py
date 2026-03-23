@@ -3,7 +3,7 @@ import argparse, json, shutil, sqlite3, subprocess, logging
 from pathlib import Path
 
 import numpy as np
-import yaml, sys
+import yaml, sys, time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +33,54 @@ def rw_connect(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA busy_timeout=100000;")
     return conn
+
+def get_kernel_status(kernel_slug: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["kaggle", "kernels", "status", kernel_slug],
+            capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout.strip().lower()
+        log.info("[PULL] Kernel status raw: %s", output.strip())
+        if "complete"            in output: return "complete"
+        if "running"             in output: return "running"
+        if "queued"              in output: return "queued"
+        if "error"               in output: return "error"
+        if "cancelacknowledged"  in output: return "cancelled"
+        return output
+    except Exception as e:
+        log.warning("[PULL] Status check failed: %s", e)
+        return None
+    
+def wait_for_kernel(
+    kernel_slug: str,
+    poll_interval_s: int = 300,
+    timeout_s: int = 18000,
+) -> bool:
+    elapsed = 0
+    log.info("[PULL] Waiting for kernel %s (poll=%ds timeout=%ds)",
+             kernel_slug, poll_interval_s, timeout_s)
+
+    while elapsed < timeout_s:
+        status = get_kernel_status(kernel_slug)
+
+        if status == "complete":
+            log.info("[PULL] Kernel finished successfully")
+            return True
+        if status in ("error", "cancelled"):
+            log.error("[PULL] Kernel ended with status: %s", status)
+            return False
+        if status in ("running", "queued"):
+            log.info("[PULL] Still %s — next check in %ds (elapsed=%ds)",
+                     status, poll_interval_s, elapsed)
+        else:
+            log.warning("[PULL] Unknown status '%s' — will retry", status)
+
+        time.sleep(poll_interval_s)
+        elapsed += poll_interval_s
+
+    log.error("[PULL] Timed out after %ds waiting for kernel", timeout_s)
+    return False
 
 def pull_kernel_output(kernel_slug: str, out_dir: Path, force: bool = True) -> None:
     ensure_dir(out_dir)
@@ -111,6 +159,9 @@ def main():
     ap.add_argument("--kernel-slug", required=True, help="owner/kernel-slug")
     ap.add_argument("--work-dir", default=str(RAG_DIR / "kaggle_results" / "output"))
     ap.add_argument("--replace-faiss", action="store_true")
+    ap.add_argument("--wait", action="store_true", help="Poll kernel until complete before pulling")
+    ap.add_argument("--poll-interval", type=int, default=300, help="Seconds between status checks (default: 300 = 5min)")
+    ap.add_argument("--kernel-timeout", type=int, default=18000, help="Max seconds to wait (default: 18000 = 5hrs)")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
@@ -118,11 +169,33 @@ def main():
         cfg.get("logging", {}).get("file"),
         cfg.get("logging", {}).get("level", "INFO")
     )
+
+    kernel_slug = args.kernel_slug or cfg.get("kaggle", {}).get("kernel_slug")
+    if not kernel_slug:
+        log.error("[PULL] kernel_slug not set — pass --kernel-slug or set kaggle.kernel_slug in config.yaml")
+        sys.exit(1)
+
     db_path = resolve_db_path(cfg)
     output_dir = ensure_dir(Path(args.work_dir))
 
+    if args.wait:
+        ok = wait_for_kernel(
+            kernel_slug,
+            poll_interval_s=args.poll_interval,
+            timeout_s=args.kernel_timeout,
+        )
+        if not ok:
+            log.error("[PULL] Kernel did not complete — aborting")
+            sys.exit(1)
+    else:
+        # Not waiting — but check it's actually done before pulling
+        status = get_kernel_status(kernel_slug)
+        if status != "complete":
+            log.error("[PULL] Kernel status is '%s', not 'complete' — use --wait or check Kaggle", status)
+            sys.exit(1)
+
     pull_kernel_output(args.kernel_slug, output_dir, force=True)
-    log.info(f"[KAGGLE_PULL] downloaded Kaggle notebook output into %s", output_dir)
+    log.info("[KAGGLE_PULL] downloaded Kaggle notebook output into %s", output_dir)
 
     show_meta(output_dir)
 

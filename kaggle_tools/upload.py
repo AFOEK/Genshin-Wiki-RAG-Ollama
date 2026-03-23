@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import argparse, json, shutil, subprocess, logging, yaml
+import argparse, json, shutil, subprocess, logging, yaml, sys, tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
@@ -53,6 +53,39 @@ def create_or_update_dataset(folder: Path, create_if_missing:bool = True) -> Non
         ])
         log.info("[INFO] Sucessfully upload dataset to Kaggle")
 
+def trigger_kernel(kernel_slug: str, gpu_type: str = "nvidiaTeslaT4") -> bool:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        log.info("[UPLOAD] Pulling kernel source: %s", kernel_slug)
+        result = subprocess.run(
+            ["kaggle", "kernels", "pull", kernel_slug, "-p", str(tmp_path), "--metadata"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            log.error("[UPLOAD] Failed to pull kernel:\n%s", result.stderr)
+            return False
+        
+        meta_path = tmp_path / "kernel-metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["enable_gpu"] = True
+        meta["accelerator"] = gpu_type
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+        log.info("[UPLOAD] Triggering run: %s", kernel_slug)
+        result = subprocess.run(
+            ["kaggle", "kernels", "push", "-p", str(tmp_path)],
+            capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            log.error("[UPLOAD] Trigger failed:\n%s", result.stderr)
+            return False
+
+        log.info("[UPLOAD] Kernel queued: %s", result.stdout.strip())
+        return True
+    
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -84,6 +117,16 @@ def main():
         action="store_true",
         help="Make dataset public; default is private",
     )
+    ap.add_argument(
+        "--no_trigger",
+        action="store_true",
+        help="Skip triggering the Kaggle notebook after upload"
+    )
+    ap.add_argument(
+        "--gpu-type",
+        default=None,
+        help="Kaggle GPU type: nvidiaTeslaT4 (default) or nvidiaTeslaP100"
+    )
     args = ap.parse_args()
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
@@ -103,6 +146,7 @@ def main():
     log.info("[KAGGLE_UPLOAD] Successfully setup staging files")
     title = args.dataset_title or cfg.get("kaggle", {}).get("dataset_title", "Genshin RAG Chunks")
     slug = args.dataset_slug or cfg.get("kaggle", {}).get("dataset_slug")
+    gpu_type = args.gpu_type or cfg.get("kaggle", {}).get("gpu_type", "nvidiaTeslaT4")
     if not slug:
         raise RuntimeError("dataset_slug not set in args or config.yaml kaggle.dataset_slug")
 
@@ -116,6 +160,21 @@ def main():
     create_or_update_dataset(work_dir, create_if_missing=True)
 
     log.info(f"[INFO] Uploaded {staged_chunks} to Kaggle dataset {slug}")
+    if args.no_trigger:
+        log.info("[UPLOAD] --no-trigger set, skipping")
+        return
+
+    kernel_slug = cfg.get("kaggle", {}).get("kernel_slug")
+    if not kernel_slug:
+        log.warning("[UPLOAD] kaggle.kernel_slug not in config — skipping trigger")
+        return
+
+    ok = trigger_kernel(kernel_slug, gpu_type=gpu_type)
+    if not ok:
+        log.error("[UPLOAD] Trigger failed — start the notebook manually on Kaggle")
+    else:
+        log.info("[UPLOAD] All done. Kernel running on Kaggle GPU.")
+        log.info("[UPLOAD] When finished, run: python3 kaggle_tools/pull.py --replace-faiss --wait")
 
 if __name__ == "__main__":
     main()
