@@ -51,7 +51,7 @@ threading:
   document_queue_size: 120
 
 filters:
-  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|avi|mov|mkv|ogg|mp3|wav|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"
+  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"
   deny_text_regex: "(?i)(unreleased|upcoming|beta build|from beta|not yet released|future version|test server|datamined|subject to change|preload data|development version)"
 
 logging:

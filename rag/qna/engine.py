@@ -80,10 +80,13 @@ def answer_question(
             "I don't have enough evidence in the retrieved context."
 
             Rules:
-            - Do not use outside knowledge.
-            - Do not guess.
+            - Use ONLY information present in the context.
+            - You MAY infer reasonable conclusions directly supported by the context.
+            For example: if a weapon's lore mentions a character and they share history,
+            that weapon is likely associated with that character.
             - Cite chunk IDs inline like [chunk_id=123].
-            - Keep the answer concise and factual.
+            - If the context genuinely does not contain enough information, say so briefly.
+            - Do not guess facts not supported by the context.
 
             Question:
             {question}
