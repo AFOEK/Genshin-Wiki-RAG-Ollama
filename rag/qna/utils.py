@@ -85,9 +85,9 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
             + 0.1 * title_overlap
         )
 
-        weighted_based = base_score * weight
+        weighted_base = base_score * weight
 
-        tier_bonus = 0.05 if tier == "primary" else 0.02 if tier == "secondary" else 0.0
+        tier_bonus = 0.05 if tier == "primary" else 0.02 if tier == "supplementary" else 0.0
 
         media_counts = sum(text.count(ext) for ext in media_exts)
         if media_counts > 3:
@@ -103,7 +103,7 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
         if len(text.strip()) < 100:
             penalty += 0.1
         
-        final_score = final_score = weighted_based + lexical_bonus + tier_bonus + initial_scores - penalty
+        final_score = weighted_base + lexical_bonus + tier_bonus - penalty
         ranked.append((final_score, row))
 
     ranked.sort(key=lambda x: x[0], reverse=True)
