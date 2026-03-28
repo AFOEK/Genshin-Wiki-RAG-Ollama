@@ -51,7 +51,8 @@ threading:
   document_queue_size: 120
 
 filters:
-  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"
+  filters:
+  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|woff|woff2|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media|^https://genshin\\.gg/(hsr|zzz)(?:/|$)|^/(hsr|zzz)(?:/|$))"
   deny_text_regex: "(?i)(unreleased|upcoming|beta build|from beta|not yet released|future version|test server|datamined|subject to change|preload data|development version)"
 
 logging:
@@ -82,7 +83,7 @@ sources:
     weight: 0.95
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: honey
     kind: honey_html
@@ -93,7 +94,29 @@ sources:
     seeds:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
+
+  - name: game8
+    kind: game8_html
+    tier: supplementary
+    enabled: true
+    weight: 0.85
+    base_url: https://game8.co/games/Genshin-Impact
+    seeds:
+      - "https://game8.co/games/Genshin-Impact/?lang=EN"
+    max_pages: null
+    rate_limit_s: 2.0
+
+  - name: genshin_gg
+    kind: genshingg_html
+    tier: supplementary
+    enabled: true
+    weight: 0.75
+    base_url: https://genshin.gg/
+    seeds:
+     - "https://genshin.gg/?lang=EN"
+    max_pages: null
+    rate_limit_s: 2.0
 
   - name: lunaris
     kind: lunaris_html
@@ -104,7 +127,7 @@ sources:
     seeds:
       - "https://lunaris.moe/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: naoka
     kind: naoka_html
@@ -115,7 +138,7 @@ sources:
     seeds:
       - "https://gi.nanoka.cc/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: homdgcat
     kind: homdgcat_html
@@ -124,7 +147,7 @@ sources:
     weight: 0.25
     base_url: https://homdgcat.wiki
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: hakushin
     kind: hakushin_html
@@ -133,4 +156,4 @@ sources:
     weight: 0.45
     base_url: https://gi20.hakush.in
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0

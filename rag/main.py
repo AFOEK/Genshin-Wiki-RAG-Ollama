@@ -90,7 +90,7 @@ def main():
                 s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
                 docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages)
             
-            elif kind == "honey_html":
+            elif kind in {"honey_html", "game8_html", "genshingg_html"}:
                 seeds = s.get("seeds", [])
                 if not seeds:
                     log.warning(f"[WARN] No seed for {name}, skipping")

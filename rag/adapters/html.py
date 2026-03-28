@@ -99,7 +99,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
 
         SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
                     ".svg", ".pdf", ".zip", ".mp4", ".mp3",
-                    ".ico", ".css", ".js", ".woff", ".woff2")
+                    ".ico", ".css", ".js", ".woff", ".woff2",
+                    ".avi", ".mkv", ".webm")
         
         url = normalize_url(url)
         path = urlsplit(url).path.lower()
@@ -178,7 +179,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
                 continue
             if not allow_lang(link, allowed_langs):
                 continue
-            if link not in seen and same_site(link, base_url):
+            if link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link)):
                 q.append(link)
 
         text = html_to_text(html)

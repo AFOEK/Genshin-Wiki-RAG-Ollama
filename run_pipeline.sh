@@ -51,10 +51,10 @@ log "Test first local embedding"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
 log "First testing done"
 
-log "Kaggle kernel pull, swap FAISS and pull embeddings"
-python3 kaggle_tools/pull.py --wait --replace-faiss --poll-interval 300 --kernel-timeout 18000 || log "Failed pull from Kaggle, train again"
-log "Done pull finish"
+# log "Kaggle kernel pull, swap FAISS and pull embeddings"
+# python3 kaggle_tools/pull.py --wait --replace-faiss --poll-interval 300 --kernel-timeout 18000 || log "Failed pull from Kaggle, train again"
+# log "Done pull finish"
 
-log "Test second local embedding with better embeddings"
-python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
-log "Second testing done"
+# log "Test second local embedding with better embeddings"
+# python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
+# log "Second testing done"
