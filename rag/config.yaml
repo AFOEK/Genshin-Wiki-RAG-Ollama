@@ -51,8 +51,7 @@ threading:
   document_queue_size: 120
 
 filters:
-  filters:
-  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|woff|woff2|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media|^https://genshin\\.gg/(hsr|zzz)(?:/|$)|^/(hsr|zzz)(?:/|$))"
+  deny_url_regex: "(?i)(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|woff|woff2|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"
   deny_text_regex: "(?i)(unreleased|upcoming|beta build|from beta|not yet released|future version|test server|datamined|subject to change|preload data|development version)"
 
 logging:
@@ -104,6 +103,7 @@ sources:
     base_url: https://game8.co/games/Genshin-Impact
     seeds:
       - "https://game8.co/games/Genshin-Impact/?lang=EN"
+    allow_url_regex: "^https://game8\\.co/games/Genshin-Impact"
     max_pages: null
     rate_limit_s: 2.0
 
@@ -115,6 +115,7 @@ sources:
     base_url: https://genshin.gg/
     seeds:
      - "https://genshin.gg/?lang=EN"
+    allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|exploration|bosses?|quests?)?/?(?:[^/]*/?)?)?$"
     max_pages: null
     rate_limit_s: 2.0
 
