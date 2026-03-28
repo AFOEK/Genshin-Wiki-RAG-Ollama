@@ -162,6 +162,7 @@ def main():
     ap.add_argument("--wait", action="store_true", help="Poll kernel until complete before pulling")
     ap.add_argument("--poll-interval", type=int, default=300, help="Seconds between status checks (default: 300 = 5min)")
     ap.add_argument("--kernel-timeout", type=int, default=18000, help="Max seconds to wait (default: 18000 = 5hrs)")
+    ap.add_argument("--skip-import-embeddings", action="store_true")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
@@ -188,13 +189,10 @@ def main():
             log.error("[PULL] Kernel did not complete — aborting")
             sys.exit(1)
     else:
-        # Not waiting — but check it's actually done before pulling
         status = get_kernel_status(kernel_slug)
-        if status != "complete":
-            log.error("[PULL] Kernel status is '%s', not 'complete' — use --wait or check Kaggle", status)
-            sys.exit(1)
+        log.info("[PULL] Proceeding to try output download despite status=%s", status)
 
-    pull_kernel_output(args.kernel_slug, output_dir, force=True)
+    pull_kernel_output(kernel_slug, output_dir, force=True)
     log.info("[KAGGLE_PULL] downloaded Kaggle notebook output into %s", output_dir)
 
     show_meta(output_dir)
