@@ -21,6 +21,7 @@ from adapters.html import crawl_site
 def parse_bool(x: str) -> bool:
     return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--DB_CRAWL", default="True")
@@ -53,6 +54,13 @@ def main():
     def embed_fn(text_or_texts):
         return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive=cfg["ollama"].get("embed_keep_alive", "15s"))
     
+    def make_source_filters(s: dict) -> Filters:
+        return Filters(
+            deny_url_regex=cfg["filters"]["deny_url_regex"],
+            deny_text_regex=cfg["filters"]["deny_text_regex"],
+            allow_url_regex=s.get("allow_url_regex")
+        )
+    
     filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
     deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None
     threading_cfg = cfg.get("threading", {})
@@ -75,6 +83,7 @@ def main():
                 continue
 
             docs_iter = None
+            source_filters = make_source_filters(s)
             name = s["name"]
             kind = s["kind"]
             tier_map[name] = s.get("tier", "primary")
@@ -100,14 +109,15 @@ def main():
                 rate = float(s.get("rate_limit_s", 1.0))
                 raw_max = s.get("max_pages", 200)
                 max_pages = int(raw_max) if raw_max is not None else None
+                allow_url_re = (re.compile(s["allow_url_regex"]) if s.get("allow_url_regex") else None)
 
-                docs_iter = crawl_site(base_url, seeds, deny_url_re, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
+                docs_iter = crawl_site(base_url, seeds, deny_url_re, allow_url_re, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
             else:
                 log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 
             if docs_iter is None:
                 continue
-            t = threading.Thread(target=producer, args=(name, docs_iter, q))
+            t = threading.Thread(target=producer, args=(name, docs_iter, q, source_filters))
             producers.append(t)
 
         t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map, embed_workers, embed_queue_size))

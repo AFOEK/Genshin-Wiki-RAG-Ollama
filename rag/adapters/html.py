@@ -77,7 +77,7 @@ def html_to_text(html: str) -> str:
         log.warning("[WARN] html_to_text: markdownify failed (%s); falling back to get_text()", type(e).__name__)
         return soup_text_fallback(main)
 
-def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
+def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
     q = deque(seeds)
     seen: set[str] = set()
     retries: dict[str, int] = {}
@@ -92,6 +92,11 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
             continue
         if deny_url and deny_url.search(url):
             log.warning("[WARN] SKIP url:%s, illegal content detected", url)
+            seen.add(url)
+            continue
+        if allow_url and not allow_url.search(url):
+            log.info("[WARN] SKIP not in allow list: %s", url)
+            seen.add(url)
             continue
         if not allow_lang(url, allowed_langs):
             seen.add(url)
@@ -179,7 +184,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, rate_limit_s: float = 
                 continue
             if not allow_lang(link, allowed_langs):
                 continue
-            if link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link)):
+            if link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link) and not (allow_url and not allow_url.search(link))):
                 q.append(link)
 
         text = html_to_text(html)

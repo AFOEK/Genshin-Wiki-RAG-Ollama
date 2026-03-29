@@ -82,10 +82,15 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
         right = embed_batch_resilient(embed_fn, prepared_jobs[mid:], min_chars, worker_id)
         return left + right
 
-def producer(source_name: str, docs_iter, out_q: queue.Queue):
+def producer(source_name: str, docs_iter, out_q: queue.Queue, source_filters=None):
     produced = 0
     try:
         for url, title, text in docs_iter:
+            if source_filters:
+                if not source_filters.url_allowed(url):
+                    continue
+                if not source_filters.text_allowed(text):
+                    continue
             if out_q.full():
                 log.warning("[PRODUCER] [%s] doc queue FULL; waiting...", source_name)
             out_q.put((source_name, url, title, text))

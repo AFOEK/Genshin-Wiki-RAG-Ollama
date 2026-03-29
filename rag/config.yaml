@@ -114,8 +114,15 @@ sources:
     weight: 0.75
     base_url: https://genshin.gg/
     seeds:
-     - "https://genshin.gg/?lang=EN"
-    allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|exploration|bosses?|quests?)?/?(?:[^/]*/?)?)?$"
+     - "https://genshin.gg/characters/"
+     - "https://genshin.gg/builds/"
+     - "https://genshin.gg/teams/"
+     - "https://genshin.gg/tier-list/"
+     - "https://genshin.gg/farming/"
+     - "https://genshin.gg/weapons/"
+     - "https://genshin.gg/artifacts/"
+     - "https://genshin.gg/elements/"
+    allow_url_regex: "(?i)^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$"
     max_pages: null
     rate_limit_s: 2.0
 

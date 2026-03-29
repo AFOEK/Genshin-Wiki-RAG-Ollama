@@ -27,13 +27,16 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
     cur = conn.cursor()
     try:
         cur.execute("BEGIN IMMEDIATE")
-        raw_hash = sha256_text(raw_text)    
+        raw_hash = sha256_text(raw_text)
+        doc_changed = False
         cur.execute("SELECT doc_id, raw_hash FROM docs WHERE url=?", (url,))
         row = cur.fetchone()
         if row is None:
-            cur.execute("SELECT doc_id, url, raw_hash FROM docs WHERE source=? AND raw_hash=? ORDER BY doc_id DESC LIMIT 1", (source, raw_hash))
+            cur.execute(
+                "SELECT doc_id, url, raw_hash FROM docs WHERE source=? AND raw_hash=? ORDER BY doc_id DESC LIMIT 1",
+                (source, raw_hash),
+            )
             moved = cur.fetchone()
-
             if moved:
                 doc_id_existing, old_url, old_hash_raw = moved
                 log.info("[INFO] URL moved detected: %s -> %s", old_url, url)
@@ -78,6 +81,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                         FROM chunks c
                         LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
                         WHERE c.doc_id=? AND c.is_active=1 AND e.chunk_id IS NULL
+                        ORDER BY c.chunk_index
                         """,
                         (doc_id_existing,),
                     )
@@ -104,7 +108,6 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                         if vec is None or dims is None:
                             log.warning("embed failed chunk_id=%s final_len=%d err=%s", cid, len(safe_txt), last_err)
                             continue
-
                         cur.execute(
                             "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES(?, ?, ?)",
                             (cid, dims, vec),
@@ -112,9 +115,10 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     conn.commit()
                     return []
                 log.warning("REBUILD %s (unchanged raw, but no active chunks)", url)
+                doc_changed = True
             else:
                 log.warning("[WARN] REBUILD %s (content changed)", url)
-
+                doc_changed = True
         log.info("Processing document title=%s url=%s", title, url)
 
         cleaned = raw_text
@@ -169,7 +173,6 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             czst = zstd_compress_text(c)
             clen = len(c)
             czlen = len(czst)
-
             cur.execute(
                 """
                 INSERT INTO chunks(doc_id, chunk_index, text, text_zst, text_len, text_zst_len, chunk_hash, is_active)
@@ -184,25 +187,45 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 """,
                 (doc_id, i, c, czst, clen, czlen, chash),
             )
+        if doc_changed:
+            cur.execute(
+                """
+                DELETE FROM embeddings
+                WHERE chunk_id IN (
+                    SELECT chunk_id
+                    FROM chunks
+                    WHERE doc_id=? AND is_active=1
+                )
+                """,
+                (doc_id,),
+            )
+            log.info("[INFO] Cleared stale embeddings for rebuilt doc_id=%s url=%s", doc_id, url)
+
         cur.execute(
             """
-            SELECT chunk_id, text FROM chunks
-            WHERE doc_id=? AND is_active=1
-            AND chunk_id NOT IN (SELECT chunk_id FROM embeddings)
+            SELECT c.chunk_id, c.text
+            FROM chunks c
+            LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+            WHERE c.doc_id=? AND c.is_active=1 AND e.chunk_id IS NULL
+            ORDER BY c.chunk_index
             """,
             (doc_id,),
         )
         rows = cur.fetchall()
+
         if not do_embed:
             conn.commit()
             return rows
+
         MAX_EMBED_CHARS = int(config.get("pipeline", {}).get("max_embed_chars", 1800))
         MIN_EMBED_CHARS = int(config.get("pipeline", {}).get("min_embed_chars", 800))
+
         for cid, txt in rows:
             safe_txt = txt[:MAX_EMBED_CHARS] if len(txt) > MAX_EMBED_CHARS else txt
             safe_txt = defang_tables(safe_txt)
             vec = dims = None
             last_err = None
+
             for attempt in range(8):
                 try:
                     vec, dims = embed_fn(safe_txt)
@@ -223,13 +246,15 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     last_err,
                 )
                 continue
+
             cur.execute(
                 "INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES(?, ?, ?)",
                 (cid, dims, vec),
             )
-        conn.commit()
 
+        conn.commit()
         return []
+
     except Exception:
         conn.rollback()
-        raise 
+        raise
