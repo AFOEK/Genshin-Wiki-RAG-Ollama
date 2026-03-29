@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, time, logging
+import json, time, logging, shutils
 import faiss
 
 from pathlib import Path
@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 def atomic_promote(build_dir: Path, current_dir: Path):
     old = current_dir.with_name(current_dir.name + ".old")
     if old.exists():
-        pass
+        shutils.rmtree(old)
 
     if current_dir.exists():
         current_dir.rename(old)

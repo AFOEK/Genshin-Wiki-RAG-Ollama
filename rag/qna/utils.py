@@ -12,8 +12,8 @@ log = logging.getLogger(__name__)
 
 INTENT_PROFILES = {
     "build": {
-        "source_bonus": {"kqm_tcl": 0.2},
-        "source_penalty": {"genshin_wiki": 0.0},
+        "source_bonus": {"kqm_tcl": 0.1, "game8_html": 0.15, "genshingg_html":0.15},
+        "source_penalty": {"genshin_wiki": 0.05, "kqm_news": 0.1},
         "title_penalize": ["storyline", "voice", "voice-over", "story quest", "archon quest",
                            "world quest", "character card", "genius invokation",
                            "lore", "dialogue", "comments"],
@@ -27,7 +27,7 @@ INTENT_PROFILES = {
     },
     "lore": {
         "source_bonus": {"genshin_wiki": 0.1},
-        "source_penalty": {"honey": 0.05, "kqm_tcl": 0.05, "kqm_news": 0.03},
+        "source_penalty": {"honey": 0.08, "kqm_tcl": 0.05, "kqm_news": 0.03, "game8_html": 0.1, "genshingg_html":0.1},
         "title_penalize": ["change history", "voice-overs", "character card",
                            "genius invokation", "normal attack", "constellation",
                            "ascension", "recommended", "signature weapon", "bis weapon",
@@ -40,8 +40,8 @@ INTENT_PROFILES = {
         "text_require_penalty": 0.0,
     },
     "mechanic":{
-        "source_bonus": {"kqm_tcl": 0.1},
-        "source_penalty": {"genshin_wiki": 0.05, "kqm_news": 0.05, "honey": 0.08},
+        "source_bonus": {"genshin_wiki": 0.1, "kqm_tcl": 0.1, "game8_html": 0.1, "genshingg_html":0.1},
+        "source_penalty": {"kqm_news": 0.05, "honey": 0.08},
         "title_penalize": ["storyline", "voice", "farewell", "wishes",
                            "character card", "story", "world quest", "archon quest", "character story", "comments"],
         "title_boost": ["talent", "constellation", "passive", "ability",

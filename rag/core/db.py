@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS docs (
     raw_hash TEXT,
     norm_hash TEXT,
 
+    last_modified TEXT,
+    etag TEXT,
+
     raw_zst BLOB,
     raw_len INTEGER,
     raw_zst_len INTEGER
@@ -62,6 +65,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_docs_source ON docs(source);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
+CREATE INDEX IF NOT EXISTS idx_docs_last_modified ON docs(last_modified);
+CREATE INDEX IF NOT EXISTS idx_docs_etag ON docs(etag);
 """
 
 def connect(path: str) -> sqlite3.Connection:

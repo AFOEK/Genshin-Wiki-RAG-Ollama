@@ -39,7 +39,7 @@ class FaissRetriever:
         self.model = self.meta.get("embedding_model", "unknown")
         log.info("[FAISS] loaded index dims=%d model=%s ntotal=%d",
              self.dims, self.model, self.index.ntotal)
-        self._initalized = True
+        self._initialized = True
 
     def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
         k = min(k, self.index.ntotal)

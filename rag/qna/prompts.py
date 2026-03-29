@@ -9,7 +9,7 @@ def build_context(chunks: list[dict]) -> str:
         parts.append(
             f"[chunk_id={row['chunk_id']}] "
             f"title={row['title']} | source={row['source']} | url={row['url']}\n"
-            f"{row['text']}\n"
+            f"{text}\n"
         )
     return "\n---\n".join(parts)
 

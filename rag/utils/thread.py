@@ -85,22 +85,32 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
 def producer(source_name: str, docs_iter, out_q: queue.Queue, source_filters=None):
     produced = 0
     try:
-        for url, title, text in docs_iter:
+        for item in docs_iter:
+            if len(item) == 5:
+                url, title, text, last_modified, etag = item
+            elif len(item) == 3:
+                url, title, text = item
+                last_modified = etag = None
+            else:
+                log.warning("[PRODUCER] [%s] unexpected item shape %d, skipping", source_name, len(item))
+                continue
+
             if source_filters:
                 if not source_filters.url_allowed(url):
                     continue
                 if not source_filters.text_allowed(text):
                     continue
+
             if out_q.full():
                 log.warning("[PRODUCER] [%s] doc queue FULL; waiting...", source_name)
-            out_q.put((source_name, url, title, text))
+            out_q.put((source_name, url, title, text, last_modified, etag))
             produced += 1
             if produced % out_q.maxsize == 0:
                 log.info("[PRODUCER] [%s] produced=%d q=%d", source_name, produced, out_q.qsize())
     except Exception:
         log.exception("[PRODUCER] [%s] crashed", source_name)
     finally:
-        out_q.put((source_name, STOP, STOP, STOP))
+        out_q.put((source_name, STOP, STOP, STOP, STOP, STOP))
         log.info("[PRODUCER] [%s] finished produced=%d", source_name, produced)
 
 def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Queue, res_q: queue.Queue, cfg: dict, worker_id: int):
@@ -214,7 +224,7 @@ def ingest_consumer(num_producers: int,
     try:
         while finished < num_producers:
             try:
-                src, url, title, text = doc_q.get(timeout=15)
+                src, url, title, text, last_modified, etag = doc_q.get(timeout=15)
             except queue.Empty:
                 log.info("[INGEST] idle finished=%d/%d doc_q=%d pending=%d embed_q=%d res_q=%d",
                          finished, num_producers, doc_q.qsize(), pending_embeds,
@@ -235,7 +245,8 @@ def ingest_consumer(num_producers: int,
                     conn, embed_fn, cfg,
                     src, url, title, text,
                     tier=tier, weight=weight,
-                    do_embed=False
+                    do_embed=False, last_modified=last_modified,
+                    etag=etag
                 ) or []
 
                 processed += 1

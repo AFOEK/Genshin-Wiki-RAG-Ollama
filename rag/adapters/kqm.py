@@ -105,4 +105,4 @@ def load_kqm_tcl_docs(source_cfg: dict):
         title = md_path.stem
         rel = md_path.relative_to(repo_path).as_posix()
         url = f"kqm://{name}/{rel}"
-        yield url, title, text
+        yield url, title, text, None, None

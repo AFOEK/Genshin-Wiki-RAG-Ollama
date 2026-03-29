@@ -23,7 +23,7 @@ def defang_tables(s: str) -> str:
         s = s.replace("{{", " ").replace("}}", " ")
     return s
 
-def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0, do_embed: bool=True):
+def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0, do_embed: bool=True, last_modified=None, etag=None):
     cur = conn.cursor()
     try:
         cur.execute("BEGIN IMMEDIATE")
@@ -45,10 +45,10 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 cur.execute(
                     """
                     UPDATE docs
-                    SET url=?, title=?, fetched_at=?, tier=?, weight=?
+                    SET url=?, title=?, fetched_at=?, tier=?, weight=?, last_modified=?, etag=?
                     WHERE doc_id=?
                     """,
-                    (url, title, datetime.now(timezone.utc).isoformat(), tier, weight, doc_id_existing),
+                    (url, title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing),
                 )
                 row = (doc_id_existing, old_hash_raw)
         if row:
@@ -68,6 +68,13 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     )
                     missing_emb = int(cur.fetchone()[0] or 0)
                     if missing_emb == 0:
+                        cur.execute(
+                            """
+                            UPDATE docs
+                            SET title=?, fetched_at=?, tier=?, weight=?, last_modified=?, etag=?
+                            WHERE doc_id=?
+                            """,
+                            (title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing))
                         conn.commit()
                         log.info("SKIP %s (doc+chunks+embeddings already complete)", url)
                         return []
@@ -137,8 +144,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
 
         cur.execute(
             """
-            INSERT INTO docs(source, url, title, fetched_at, raw_hash, norm_hash, tier, weight, raw_zst, raw_len, raw_zst_len)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO docs(source, url, title, fetched_at, raw_hash, norm_hash, tier, weight, last_modified, etag, raw_zst, raw_len, raw_zst_len)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(url) DO UPDATE SET
                 title=excluded.title,
                 fetched_at=excluded.fetched_at,
@@ -146,6 +153,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 norm_hash=excluded.norm_hash,
                 tier=excluded.tier,
                 weight=excluded.weight,
+                last_modified=excluded.last_modified,
+                etag=excluded.etag,
                 raw_zst=excluded.raw_zst,
                 raw_len=excluded.raw_len,
                 raw_zst_len=excluded.raw_zst_len
@@ -159,6 +168,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 norm_hash,
                 tier,
                 weight,
+                last_modified,
+                etag,
                 raw_zst,
                 raw_len,
                 raw_zst_len,

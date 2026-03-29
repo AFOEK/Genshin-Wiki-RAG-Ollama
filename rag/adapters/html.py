@@ -121,6 +121,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 timeout=60,
                 headers={"User-Agent": "GenshinRAG/1.0 (personal research)"},
             )
+            last_modified = r.headers.get("Last-Modified")
+            etag = r.headers.get("ETag")
 
             if r.status_code in _RETRY_STATUSES:
                 retries[url] = attempt + 1
@@ -184,7 +186,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 continue
             if not allow_lang(link, allowed_langs):
                 continue
-            if link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link) and not (allow_url and not allow_url.search(link))):
+            if (link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link)) and not (allow_url and not allow_url.search(link))):
                 q.append(link)
 
         text = html_to_text(html)
@@ -196,5 +198,5 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         except Exception:
             log.exception("Failed to extract title url=%s", url)
 
-        yield url, title, text
+        yield url, title, text, last_modified, etag
         time.sleep(rate_limit_s)

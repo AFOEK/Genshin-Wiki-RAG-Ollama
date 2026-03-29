@@ -43,9 +43,10 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
 
         rows = data.get("query", {}).get("recentchanges", [])
         for r in rows:
-            t = r.get("title")
-            if t:
-                yield t
+            title = r.get("title")
+            ts = r.get("timestamp")
+            if title and ts:
+                yield title, ts
 
         cont = data.get("continue")
         if not cont:
@@ -159,31 +160,54 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
     if state_path.exists():
         last_run = state_path.read_text(encoding="utf-8").strip() or None
 
-    if last_run:
-        titles = iter_recently_changed_titles(api, session, start_iso=last_run, namespace=ns)
-        log.info("[WIKI] incremental crawl since %s", last_run)
+    incremental = bool(last_run)
+
+    if incremental:
+        changes = list(iter_recently_changed_titles(api, session, start_iso=last_run, namespace=ns))
+        log.info("[WIKI] incremental crawl since %s changed_titles=%d", last_run, len(changes))
     else:
-        titles = list_allpages(api, namespace=ns)
+        changes = [(title, None) for title in list_allpages(api, namespace=ns)]
         log.info("[WIKI] full crawl (no state_file)")
 
     count = 0
-    for title in titles:
+    failed = 0
+    partial = False
+    oldest_success_ts = None
+
+    for title, change_ts in changes:
         html = fetch_page_html(session, api, title)
         if html:
-            raw_text = fandom_html_to_text(html) or ""
-            text = clean_fandom_text(raw_text)
-            # if not text or len(text.strip()) <= 80:
-            #     log.info("[WIKI] Skip low-value page title=%s", title)
-            #     continue
+            text = fandom_html_to_text(html) or ""
             url = f"{api}?title={quote(title)}"
-            yield url, title, text
+            yield url, title, text, None, None
+
+            if incremental and change_ts:
+                if oldest_success_ts is None or change_ts < oldest_success_ts:
+                    oldest_success_ts = change_ts
         else:
+            failed += 1
             log.warning("[WIKI] Skipping page (fetch failed) title=%s", title)
 
         count += 1
         if max_pages is not None and count >= max_pages:
+            partial = True
+            log.warning("[WIKI] Stopped early due to max_pages=%d", max_pages)
             break
         time.sleep(rate_limit_s)
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    state_path.write_text(now_iso, encoding="utf-8")
+    if incremental:
+        if not partial and failed == 0:
+            new_state = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            state_path.write_text(new_state, encoding="utf-8")
+            log.info("[WIKI] incremental state advanced to %s", new_state)
+        else:
+            log.warning(
+                "[WIKI] incremental state NOT advanced (partial=%s failed=%d count=%d)",
+                partial, failed, count
+            )
+    else:
+        new_state = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state_path.write_text(new_state, encoding="utf-8")
+        log.info("[WIKI] full crawl state set to %s", new_state)
+    
+    log.info("[WIKI] done incremental=%s processed=%d failed=%d partial=%s", incremental, count, failed, partial)
