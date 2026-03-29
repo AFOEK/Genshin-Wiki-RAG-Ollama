@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 INTENT_PROFILES = {
     "build": {
-        "source_bonus": {"kqm_tcl": 0.1, "game8_html": 0.15, "genshingg_html":0.15},
+        "source_bonus": {"kqm_tcl": 0.15, "game8_html": 0.10, "genshingg_html":0.08},
         "source_penalty": {"genshin_wiki": 0.05, "kqm_news": 0.1},
         "title_penalize": ["storyline", "voice", "voice-over", "story quest", "archon quest",
                            "world quest", "character card", "genius invokation",
@@ -31,7 +31,7 @@ INTENT_PROFILES = {
         "title_penalize": ["change history", "voice-overs", "character card",
                            "genius invokation", "normal attack", "constellation",
                            "ascension", "recommended", "signature weapon", "bis weapon",
-                           "comments", "skill", "burst", "elemetal skill",
+                           "comments", "skill", "burst", "elemental skill",
                            "elemental burst", "utility passive", "charged attack", "plunging attack"],
         "title_boost": ["storyline", "lore", "story", "history", "quest",
                         "story quest", "world quest", "archon quest", "character story"],
@@ -40,20 +40,20 @@ INTENT_PROFILES = {
         "text_require_penalty": 0.0,
     },
     "mechanic":{
-        "source_bonus": {"genshin_wiki": 0.1, "kqm_tcl": 0.1, "game8_html": 0.1, "genshingg_html":0.1},
+        "source_bonus": {"genshin_wiki": 0.05, "kqm_tcl": 0.12, "game8_html": 0.07, "genshingg_html":0.06},
         "source_penalty": {"kqm_news": 0.05, "honey": 0.08},
         "title_penalize": ["storyline", "voice", "farewell", "wishes",
                            "character card", "story", "world quest", "archon quest", "character story", "comments"],
         "title_boost": ["talent", "constellation", "passive", "ability",
-                        "normal attack", "skill", "burst", "elemetal skill",
+                        "normal attack", "skill", "burst", "elemental skill",
                         "elemental burst", "utility passive", "charged attack", "plunging attack"],
         "title_boost_v": 0.08,
         "text_require_any": [],
         "text_require_penalty": 0.0,
     },
     "general": {
-        "source_bonus":   {},
-        "source_penalty": {},
+        "source_bonus":   {"genshin_wiki": 0.05},
+        "source_penalty": {"kqm_news": 0.03},
         "title_penalize": ["character card", "genius invokation"],
         "title_boost":    [],
         "title_boost_v":  0.0,
