@@ -32,6 +32,8 @@ log() {
 
 log "Pipeline starting (cron=${CRON_MODE:-0})"
 
+#rm -rf /mnt/ssd/genshin_rag/data/* &&  rm -rf rag/logs/* && rm -rf rag/chunks_kaggle && rm -rf rag/data/*
+
 log "Activating virtual environment"
 source .venv/bin/activate
 

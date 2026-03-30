@@ -67,6 +67,69 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
 CREATE INDEX IF NOT EXISTS idx_docs_last_modified ON docs(last_modified);
 CREATE INDEX IF NOT EXISTS idx_docs_etag ON docs(etag);
+
+CREATE VIEW IF NOT EXISTS v_docs_by_source AS
+SELECT
+    source,
+    COUNT(*) AS doc_count
+FROM docs
+GROUP BY source;
+
+CREATE VIEW IF NOT EXISTS v_active_chunks_by_source AS
+SELECT
+    d.source,
+    COUNT(*) AS active_chunk_count
+FROM chunks c
+JOIN docs d ON d.doc_id = c.doc_id
+WHERE c.is_active = 1
+GROUP BY d.source;
+
+CREATE VIEW IF NOT EXISTS v_embeddings_by_source AS
+SELECT
+    d.source,
+    COUNT(*) AS embedded_active_chunk_count
+FROM chunks c
+JOIN docs d ON d.doc_id = c.doc_id
+JOIN embeddings e ON e.chunk_id = c.chunk_id
+WHERE c.is_active = 1
+GROUP BY d.source;
+
+CREATE VIEW IF NOT EXISTS v_missing_embeddings_by_source AS
+SELECT
+    d.source,
+    COUNT(*) AS missing_embedding_count
+FROM chunks c
+JOIN docs d ON d.doc_id = c.doc_id
+LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+WHERE c.is_active = 1
+  AND e.chunk_id IS NULL
+GROUP BY d.source;
+
+CREATE VIEW IF NOT EXISTS v_source_summary AS
+SELECT
+    d.source,
+    COUNT(DISTINCT d.doc_id) AS doc_count,
+    COUNT(DISTINCT CASE WHEN c.is_active = 1 THEN c.chunk_id END) AS active_chunk_count,
+    COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NOT NULL THEN c.chunk_id END) AS embedded_active_chunk_count,
+    COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NULL THEN c.chunk_id END) AS missing_embedding_count
+FROM docs d
+LEFT JOIN chunks c ON c.doc_id = d.doc_id
+LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+GROUP BY d.source;
+
+CREATE VIEW IF NOT EXISTS v_docs_with_missing_embeddings AS
+SELECT
+    d.source,
+    d.doc_id,
+    d.title,
+    d.url,
+    COUNT(c.chunk_id) AS missing_embedding_chunks
+FROM docs d
+JOIN chunks c ON c.doc_id = d.doc_id
+LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
+WHERE c.is_active = 1
+  AND e.chunk_id IS NULL
+GROUP BY d.source, d.doc_id, d.title, d.url;
 """
 
 def connect(path: str) -> sqlite3.Connection:
