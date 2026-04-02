@@ -103,7 +103,7 @@ sources:
     base_url: https://game8.co/games/Genshin-Impact
     seeds:
       - "https://game8.co/games/Genshin-Impact/?lang=EN"
-    allow_url_regex: "^https://game8\\.co/games/Genshin-Impact"
+    allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/archives/\\d+)?/?(?:\\?.*)?$"
     max_pages: null
     rate_limit_s: 4.0
 
