@@ -102,10 +102,10 @@ sources:
     weight: 0.85
     base_url: https://game8.co/games/Genshin-Impact
     seeds:
-      - "https://game8.co/games/Genshin-Impact/?lang=EN"
+      - "https://game8.co/games/Genshin-Impact/"
     allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/archives/\\d+)?/?$"
-    deny_url_regex: "(?i)([?&]c_page=\\d+)"
-    deny_text_regex: "(?i)(all message boards|list of message boards|co-op board|discussion board|friend requests|questions|supporting cast|teapot designs|submissions:\\s*\\d+|post details|\\breply\\b|\\banonymous\\b)"
+    deny_url_regex: "([?&]c_page=\\d+)"
+    deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|questions|supporting cast|teapot designs|submissions:\\s*\\d+|post details|\\breply\\b|\\banonymous\\b)"
     max_pages: null
     rate_limit_s: 3.5
 
