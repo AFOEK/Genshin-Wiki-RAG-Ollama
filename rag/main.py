@@ -21,6 +21,17 @@ from adapters.html import crawl_site
 def parse_bool(x: str) -> bool:
     return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
 
+def merge_regex(global_pat: str | None, source_pat: str | None) -> str | None:
+    g = (global_pat or "").strip()
+    s = (source_pat or "").strip()
+
+    if g and s:
+        return f"(?:{g})|(?:{s})"
+    if g:
+        return g
+    if s:
+        return s
+    return None
 
 def main():
     ap = argparse.ArgumentParser()
@@ -55,14 +66,23 @@ def main():
         return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive=cfg["ollama"].get("embed_keep_alive", "15s"))
     
     def make_source_filters(s: dict) -> Filters:
+        merged_deny_url = merge_regex(
+            cfg.get("filters", {}).get("deny_url_regex"),
+            s.get("deny_url_regex"),
+        )
+        merged_deny_text = merge_regex(
+            cfg.get("filters", {}).get("deny_text_regex"),
+            s.get("deny_text_regex"),
+        )
+        allow_url = s.get("allow_url_regex")
+
         return Filters(
-            deny_url_regex=cfg["filters"]["deny_url_regex"],
-            deny_text_regex=cfg["filters"]["deny_text_regex"],
-            allow_url_regex=s.get("allow_url_regex")
+            deny_url_regex=merged_deny_url,
+            deny_text_regex=merged_deny_text,
+            allow_url_regex=allow_url,
         )
     
-    filters = Filters(cfg["filters"]["deny_url_regex"], cfg["filters"]["deny_text_regex"])
-    deny_url_re = re.compile(cfg["filters"]["deny_url_regex"], re.I) if cfg["filters"].get("deny_url_regex") else None
+    filters = Filters(cfg.get("filters", {}).get("deny_url_regex"), cfg.get("filters", {}).get("deny_text_regex"))
     threading_cfg = cfg.get("threading", {})
     embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
     embed_workers = int(threading_cfg.get("embed_workers", 2))
@@ -109,9 +129,9 @@ def main():
                 rate = float(s.get("rate_limit_s", 1.0))
                 raw_max = s.get("max_pages", 200)
                 max_pages = int(raw_max) if raw_max is not None else None
-                allow_url_re = (re.compile(s["allow_url_regex"]) if s.get("allow_url_regex") else None)
+                source_filters = make_source_filters(s)
 
-                docs_iter = crawl_site(base_url, seeds, deny_url_re, allow_url_re, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
+                docs_iter = crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
             else:
                 log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 
