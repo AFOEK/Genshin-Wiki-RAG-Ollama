@@ -20,6 +20,52 @@ def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
         return True
     return langs[0].upper() == allowed_lang.upper()
 
+def drop_game8_comment(soup: BeautifulSoup) -> None:
+    selectors=[
+        ".c-commentItem__container--padding-sp",
+        ".c-commentItem__header",
+        ".c-commentItem__body",
+        "a[href*='/comments']",
+        "[data-track-mario-keyword*='comment']",
+        "#comments",
+        ".comments",
+        ".comment",
+        ".comment-list",
+        ".comment-thread",
+        ".reply",
+        ".replies",
+        ".discussion",
+        ".message-board",
+    ]
+
+    for sel in selectors:
+        for node in soup.select(sel):
+            node.decompose()
+    
+    for h in soup.select("h1, h2, h3, h4"):
+        txt = h.get_text(" ", strip=True).lower()
+        if txt in {"commment", "comments"}:
+            parent = h.find_parent(["section", "div"])
+            if parent:
+                parent.decompose()
+
+def drop_honey_comment(soup: BeautifulSoup) -> None:
+    selectors = [
+        "#comment_page",
+        "#comment_page_nav1",
+        ".comments",
+        ".commentlist",
+        ".comment-respond",
+        "li.comment",
+        "ol.commentlist",
+        "a[href*='#comment-']",
+        "a[href*='replytocom=']",
+    ]
+    for sel in selectors:
+        for node in soup.select(sel):
+            node.decompose()
+
+
 def normalize_url(u: str) -> str:
     parts = urlsplit(u)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
@@ -55,10 +101,18 @@ def extract_links(html: str, base: str):
         u = normalize_url(u)
         yield u
 
-def html_to_text(html: str) -> str:
+def html_to_text(html: str, url: str | None = None) -> str:
     soup = BeautifulSoup(html, "lxml")
+
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
         tag.decompose()
+
+    if url:
+        host = urlparse(url).netloc.lower()
+        if "game8.co" in host:
+            drop_game8_comment(soup)
+        elif "honeyhunterworld.com" in host or "honey" in host:
+            drop_honey_comment(soup)
 
     main = (
         soup.select_one("main")
@@ -68,6 +122,7 @@ def html_to_text(html: str) -> str:
         or soup.body
         or soup
     )
+
     try:
         return md(str(main))
     except RecursionError:
@@ -189,7 +244,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             if (link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link)) and not (allow_url and not allow_url.search(link))):
                 q.append(link)
 
-        text = html_to_text(html)
+        text = html_to_text(html, url)
         title = url
         try:
             soup = BeautifulSoup(html, "lxml")
