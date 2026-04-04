@@ -105,7 +105,7 @@ sources:
       - "https://game8.co/games/Genshin-Impact/"
     allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/archives/\\d+)?/?$"
     deny_url_regex: "([?&]c_page=\\d+)"
-    deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|questions|supporting cast|teapot designs|submissions:\\s*\\d+|post details|\\breply\\b|\\banonymous\\b)"
+    deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\\s*\\d+|post details)"
     max_pages: null
     rate_limit_s: 4.0
 
