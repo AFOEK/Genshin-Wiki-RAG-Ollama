@@ -8,6 +8,8 @@ from utils.clean_fandom import clean_fandom_text
 
 log = logging.getLogger(__name__)
 
+MOVED_URL_SOURCE = {"honey_html", "game8_html", "genshingg_html"}
+
 def defang_tables(s: str) -> str:
     lines = s.splitlines()
     table_lines = sum(1 for l in lines if "|" in l)
@@ -31,7 +33,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         doc_changed = False
         cur.execute("SELECT doc_id, raw_hash FROM docs WHERE url=?", (url,))
         row = cur.fetchone()
-        if row is None:
+        if row is None and source in MOVED_URL_SOURCE:
             cur.execute(
                 "SELECT doc_id, url, raw_hash FROM docs WHERE source=? AND raw_hash=? ORDER BY doc_id DESC LIMIT 1",
                 (source, raw_hash),
