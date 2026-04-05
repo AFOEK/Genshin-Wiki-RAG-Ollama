@@ -82,7 +82,7 @@ sources:
     weight: 0.95
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: honey
     kind: honey_html
@@ -93,7 +93,7 @@ sources:
     seeds:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: game8
     kind: game8_html
@@ -107,7 +107,7 @@ sources:
     deny_url_regex: "([?&]c_page=\\d+)"
     deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\\s*\\d+|post details)"
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: genshin_gg
     kind: genshingg_html
@@ -126,7 +126,7 @@ sources:
      - "https://genshin.gg/elements/"
     allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$"
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: lunaris
     kind: lunaris_html
@@ -137,7 +137,7 @@ sources:
     seeds:
       - "https://lunaris.moe/?lang=EN"
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: naoka
     kind: naoka_html
@@ -148,7 +148,7 @@ sources:
     seeds:
       - "https://gi.nanoka.cc/?lang=EN"
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: homdgcat
     kind: homdgcat_html
@@ -157,7 +157,7 @@ sources:
     weight: 0.25
     base_url: https://homdgcat.wiki
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
 
   - name: hakushin
     kind: hakushin_html
@@ -166,4 +166,4 @@ sources:
     weight: 0.45
     base_url: https://gi20.hakush.in
     max_pages: null
-    rate_limit_s: 4.0
+    rate_limit_s: 6.5
