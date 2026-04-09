@@ -63,7 +63,7 @@ def main():
     log.info("[INFO] Database initialized at %s", db_path)
 
     def embed_fn(text_or_texts):
-        return embed(cfg["ollama"]["base_url"], cfg["ollama"]["embedding_model"], text_or_texts, keep_alive=cfg["ollama"].get("embed_keep_alive", "15s"))
+        return embed(cfg, text_or_texts)
     
     def make_source_filters(s: dict) -> Filters:
         merged_deny_url = merge_regex(
@@ -87,10 +87,19 @@ def main():
     embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
     embed_workers = int(threading_cfg.get("embed_workers", 2))
     document_queue_size = int(threading_cfg.get("document_queue_size", 200))
+
     log.info(
         "[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d",
         embed_queue_size, document_queue_size, embed_workers
     )
+
+    log.info(
+        "runtime embedding_provider=%s qa_provider=%s accelerator=%s",
+        cfg.get("runtime", {}).get("embedding_provider", "ollama"),
+        cfg.get("runtime", {}).get("qa_provider", "ollama"),
+        cfg.get("runtime", {}).get("accelerator", "auto"),
+    )
+    
     if do_crawl:
         q = queue.Queue(maxsize=document_queue_size)
 

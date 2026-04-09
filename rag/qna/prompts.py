@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .generators import ollama_generate
+from .generators import generate
 import textwrap
 
 def build_context(chunks: list[dict]) -> str:
@@ -33,7 +33,7 @@ def summarize_chunk_group(base_url: str, model: str, question: str, chunks: list
         - If context is fragmentary, say so briefly.
         - Return concise bullet notes, not a full polished answer.
     """).strip()
-    return ollama_generate(base_url, model, prompt, keep_alive="20s")
+    return generate(cfg, prompt)
 
 
 def synthesize_final_answer(base_url: str, model: str, question: str, notes: list[str], timeout: str = "15m") -> str:
@@ -61,4 +61,4 @@ def synthesize_final_answer(base_url: str, model: str, question: str, notes: lis
         - If the retrieved notes are incomplete, say what is missing.
         - Do not invent facts outside the notes.
     """).strip()
-    return ollama_generate(base_url, model, prompt, keep_alive="20s")
+    return generate(cfg, prompt)

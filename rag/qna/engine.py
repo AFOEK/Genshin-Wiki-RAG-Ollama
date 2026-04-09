@@ -7,7 +7,7 @@ from .utils import read_only_connect, normalize_query_vec, is_broad_question, ch
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever
 from .db_fetch import fetch_chunks, dedupe_by_doc
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
-from .generators import ollama_generate
+from .generators import generate
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def answer_question(
         retriever = SqliteEmbeddingRetriever(conn)
         log.info("[QNA] using SQLite brute-force retriever")
 
-    q_blob, q_dims = embed(base_url, embed_model, question, keep_alive="15s")
+    q_blob, q_dims = embed(cfg, question)
     if q_dims != retriever.dims:
         raise RuntimeError(
             f"query embedding dims mismatch: query={q_dims} retriever={retriever.dims}"
@@ -94,7 +94,7 @@ def answer_question(
             Context:
             {context}
         """).strip()
-        return ollama_generate(base_url, qa_model, prompt, keep_alive=qa_timeout)
+        return generate(cfg, prompt)
 
     notes = []
     for group in chunk_batch(chunks, summarize_batch_size):
