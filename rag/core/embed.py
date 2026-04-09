@@ -82,8 +82,8 @@ def embed(cfg: dict, text_or_texts, retries: int = 10, backoff_s: float = 1.0):
                     ollama["base_url"],
                     ollama["embedding_model"],
                     text_or_texts,
-                    ollama.get("embed_keep_alive", "15s")
-                    ollama.get("timeout", "180")
+                    ollama.get("embed_keep_alive", "15s"),
+                    int(ollama.get("timeout", "180"))
                 )
             
             if provider == "llamacpp":
@@ -100,7 +100,7 @@ def embed(cfg: dict, text_or_texts, retries: int = 10, backoff_s: float = 1.0):
         
         except NonRetryableEmbedError:
             raise
-        except (requests.RequestException, KeyError, ValueError, RuntimeError):
+        except (requests.RequestException, KeyError, ValueError, RuntimeError) as e:
             last_err = str(e)
             time.sleep(backoff_s * (2 ** attempt))
             log.warning("Embedding failed attempt=%d/%d err=%s", attempt + 1, retries, last_err)

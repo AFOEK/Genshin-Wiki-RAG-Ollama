@@ -36,7 +36,7 @@ def summarize_chunk_group(cfg: dict, question: str, chunks: list[dict]) -> str:
     return generate(cfg, prompt)
 
 
-def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout: str = "15m",) -> str:
+def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout: str = "15m") -> str:
     if not notes:
         return "I couldn't summarize any retrieved context for this question."
     
@@ -61,4 +61,4 @@ def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout:
         - If the retrieved notes are incomplete, say what is missing.
         - Do not invent facts outside the notes.
     """).strip()
-    return generate(cfg, prompt)
+    return generate(cfg, prompt, timeout=timeout)

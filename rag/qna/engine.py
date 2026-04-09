@@ -24,7 +24,12 @@ def answer_question(
     faiss_dir = resolve_faiss_dir(cfg)
     conn = read_only_connect(str(db_path))
 
-    qa_timeout = cfg["ollama"].get("qa_keep_alive", "10m")
+    runtime = cfg.get("runtime", {})
+    provider = runtime.get("qa_provider", "ollama").strip().lower()
+    if provider == "llamacpp":
+        qa_timeout = str(cfg.get("llamacpp", {}).get("timeout", 300))
+    else:
+        qa_timeout = cfg["ollama"].get("qa_keep_alive", "10m")
 
     retriever = None
     if prefer_faiss:

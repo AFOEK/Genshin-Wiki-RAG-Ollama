@@ -74,8 +74,8 @@ def generate(cfg: dict, prompt: str, retries: int = 8, timeout: int = 300) -> st
             lc["base_url"],
             lc["qa_model"],
             prompt,
-            retries,
-            lc.get("timeout", timeout),
+            int(lc.get("timeout", timeout)),
+            retries
         )
 
     raise RuntimeError(f"Unknown QA provider: {provider}")
