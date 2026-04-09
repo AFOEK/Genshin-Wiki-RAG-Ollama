@@ -26,15 +26,3 @@ def fetch_chunks(conn: sqlite3.Connection, chunk_ids: list[int]) -> list[dict]:
     rows = [dict(r) for r in cur.fetchall()]
     row_map = {int(r["chunk_id"]): r for r in rows}
     return [row_map[cid] for cid in chunk_ids if cid in row_map]
-
-
-def dedupe_by_doc(chunks: list[dict], max_per_doc: int = 4) -> list[dict]:
-    out = []
-    counts: dict[int, int] = {}
-    for row in chunks:
-        doc_id = int(row["doc_id"])
-        if counts.get(doc_id, 0) >= max_per_doc:
-            continue
-        counts[doc_id] = counts.get(doc_id, 0) + 1
-        out.append(row)
-    return out

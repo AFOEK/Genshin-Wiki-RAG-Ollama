@@ -5,7 +5,7 @@ from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
 from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever
-from .db_fetch import fetch_chunks, dedupe_by_doc
+from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
 from .generators import generate
 
@@ -24,9 +24,6 @@ def answer_question(
     faiss_dir = resolve_faiss_dir(cfg)
     conn = read_only_connect(str(db_path))
 
-    base_url = cfg["ollama"]["base_url"]
-    embed_model = cfg["ollama"]["embedding_model"]
-    qa_model = cfg["ollama"].get("qa_model", cfg["ollama"].get("model", "llama3.2"))
     qa_timeout = cfg["ollama"].get("qa_keep_alive", "10m")
 
     retriever = None
@@ -98,6 +95,6 @@ def answer_question(
 
     notes = []
     for group in chunk_batch(chunks, summarize_batch_size):
-        notes.append(summarize_chunk_group(base_url, qa_model, question, group))
+        notes.append(summarize_chunk_group(cfg, question, group))
 
-    return synthesize_final_answer(base_url, qa_model, question, notes, qa_timeout)
+    return synthesize_final_answer(cfg, question, notes, qa_timeout)

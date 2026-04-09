@@ -17,8 +17,10 @@ llamacpp:
   base_url: http://localhost:8081
   embedding_model: /model/nomic-embed-text-v1.5.Q8_0.gguf
   qa_model: /model/llama-3.2-3b-instruct-q4_k_m.gguf
+  qa_keep_alive: "10m"
   timeout: 300
   n_gpu_layers: 99
+  embed_keep_alive: "15s"
 
 runtime:
   embedding_provider: ollama  #ollama | llamacpp

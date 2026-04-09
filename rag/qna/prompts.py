@@ -14,7 +14,7 @@ def build_context(chunks: list[dict]) -> str:
     return "\n---\n".join(parts)
 
 
-def summarize_chunk_group(base_url: str, model: str, question: str, chunks: list[dict]) -> str:
+def summarize_chunk_group(cfg: dict, question: str, chunks: list[dict]) -> str:
     context = build_context(chunks)
     prompt = textwrap.dedent(f"""
         You are helping build a faithful lore answer from retrieved Genshin Impact knowledge chunks.
@@ -36,7 +36,7 @@ def summarize_chunk_group(base_url: str, model: str, question: str, chunks: list
     return generate(cfg, prompt)
 
 
-def synthesize_final_answer(base_url: str, model: str, question: str, notes: list[str], timeout: str = "15m") -> str:
+def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout: str = "15m",) -> str:
     if not notes:
         return "I couldn't summarize any retrieved context for this question."
     
