@@ -111,7 +111,16 @@ SELECT
     COUNT(DISTINCT d.doc_id) AS doc_count,
     COUNT(DISTINCT CASE WHEN c.is_active = 1 THEN c.chunk_id END) AS active_chunk_count,
     COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NOT NULL THEN c.chunk_id END) AS embedded_active_chunk_count,
-    COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NULL THEN c.chunk_id END) AS missing_embedding_count
+    COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NULL THEN c.chunk_id END) AS missing_embedding_count,
+    COUNT(DISTINCT CASE
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM chunks c2
+            WHERE c2.doc_id = d.doc_id
+              AND c2.is_active = 1
+        )
+        THEN d.doc_id
+    END) AS docs_with_no_active_chunks
 FROM docs d
 LEFT JOIN chunks c ON c.doc_id = d.doc_id
 LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
@@ -130,6 +139,19 @@ LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
 WHERE c.is_active = 1
   AND e.chunk_id IS NULL
 GROUP BY d.source, d.doc_id, d.title, d.url;
+
+CREATE VIEW IF NOT EXISTS v_docs_with_no_active_chunks AS
+SELECT
+    d.source,
+    d.doc_id,
+    d.title,
+    d.url,
+    0 AS active_chunk_count
+FROM docs d
+LEFT JOIN chunks c
+    ON c.doc_id = d.doc_id
+   AND c.is_active = 1
+WHERE c.chunk_id IS NULL;
 """
 
 def connect(path: str) -> sqlite3.Connection:
