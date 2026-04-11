@@ -14,6 +14,7 @@ def find_docs_with_no_active_chunks(conn: sqlite3.Connection) -> list[dict]:
     SELECT d.doc_id, d.source, d.url, d.title, d.tier, d.weight, d.raw_zst
         FROM docs d
         LEFT JOIN chunks c ON c.doc_id = d.doc_id AND c.is_active=1
+        WHERE d.status = 1
         GROUP BY d.doc_id
         HAVING COUNT(c.chunk_id)=0
     """)
@@ -35,10 +36,11 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
     if not raw_zst:
         log.warning("[REPAIR] doc_id=%s url=%s has no raw compressed; cannot repair from archive", doc_row["doc_id"], doc_row["url"])
         return False
-    
+
     try:
         raw_txt = zstd_decompress_text(raw_zst)
-        process_document(conn,
+        process_document(
+            conn,
             embed_fn,
             cfg,
             doc_row["source"],
@@ -47,7 +49,9 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
             raw_txt,
             tier=doc_row.get("tier", "primary"),
             weight=float(doc_row.get("weight", 1.0)),
-            do_embed=True)
+            do_embed=True,
+        )
+
         cur = conn.cursor()
         cur.execute("""
             SELECT COUNT(*)
@@ -55,10 +59,17 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
             WHERE doc_id=? AND is_active=1
         """, (doc_row["doc_id"],))
         active_chunks = int(cur.fetchone()[0] or 0)
+
         if active_chunks == 0:
-            log.warning("[REPAIR] doc_id=%s url=%s still has no active chunks after repair", doc_row["doc_id"], doc_row["url"])
+            cur.execute("UPDATE docs SET status=0 WHERE doc_id=?", (doc_row["doc_id"],))
+            conn.commit()
+            log.warning("[REPAIR] doc_id=%s url=%s marked inactive; repair still produced no active chunks",
+                        doc_row["doc_id"], doc_row["url"])
+            return False
+
         log.info("[REPAIR] repaired from archived raw doc_id=%s url=%s", doc_row["doc_id"], doc_row["url"])
         return True
+
     except Exception:
         log.exception("[REPAIR] failed archived-raw repair doc_id=%s url=%s", doc_row["doc_id"], doc_row["url"])
         return False

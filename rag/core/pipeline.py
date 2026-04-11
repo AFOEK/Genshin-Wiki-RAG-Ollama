@@ -136,6 +136,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
 
         norm = normalize(cleaned)
         norm_hash = sha256_text(norm)
+        chunks = chunk_text(norm, config["pipeline"]["chunk_size"], config["pipeline"]["chunk_overlap"])
 
         archive_raw = bool(config.get("pipeline", {}).get("archive_raw", False))
         raw_zst = raw_len = raw_zst_len = None
@@ -143,6 +144,62 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             raw_len = len(raw_text)
             raw_zst = zstd_compress_text(raw_text)
             raw_zst_len = len(raw_zst)
+
+        if not chunks:
+            log.warning("[SKIP] No chunks produced source=%s title=%s url=%s", source, title, url)
+
+            existing_doc_id = row[0] if row else None
+
+            if existing_doc_id is not None:
+                cur.execute(
+                    """
+                    DELETE FROM embeddings
+                    WHERE chunk_id IN (
+                        SELECT chunk_id
+                        FROM chunks
+                        WHERE doc_id=?
+                    )
+                    """,
+                    (existing_doc_id,),
+                )
+                cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
+                cur.execute(
+                    """
+                    UPDATE docs
+                    SET status=0,
+                        title=?,
+                        fetched_at=?,
+                        raw_hash=?,
+                        norm_hash=?,
+                        tier=?,
+                        weight=?,
+                        last_modified=?,
+                        etag=?,
+                        raw_zst=?,
+                        raw_len=?,
+                        raw_zst_len=?
+                    WHERE doc_id=?
+                    """,
+                    (
+                        title,
+                        datetime.now(timezone.utc).isoformat(),
+                        raw_hash,
+                        norm_hash,
+                        tier,
+                        weight,
+                        last_modified,
+                        etag,
+                        raw_zst,
+                        raw_len,
+                        raw_zst_len,
+                        existing_doc_id,
+                    ),
+                )
+                conn.commit()
+            else:
+                conn.commit()
+
+            return []
 
         cur.execute(
             """
@@ -159,7 +216,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 etag=excluded.etag,
                 raw_zst=excluded.raw_zst,
                 raw_len=excluded.raw_len,
-                raw_zst_len=excluded.raw_zst_len
+                raw_zst_len=excluded.raw_zst_len,
+                status=1
             """,
             (
                 source,
@@ -179,7 +237,6 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         )
         cur.execute("SELECT doc_id FROM docs WHERE url=?", (url,))
         doc_id = cur.fetchone()[0]
-        chunks = chunk_text(norm, config["pipeline"]["chunk_size"], config["pipeline"]["chunk_overlap"])
         cur.execute("UPDATE chunks SET is_active=0 WHERE doc_id=?", (doc_id,))
         for i, c in enumerate(chunks):
             chash = sha256_text(c)
