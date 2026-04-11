@@ -6,12 +6,12 @@ With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?
 - Sqlite3 3.46.1
 - FAISS (Facebook AI Similarity Search)
 
-This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scrapping.
+This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scrapping.
 
 ## Dependency
 Before start to use this repos, this project required some packages (Debian based build):
 ```
-sudo apt install git curl ca-certificates python3 python3-venv python3-pip sqlite3 build-essential pkg-config libxml2-dev libxslt1-dev liblz4-dev zlib1g-dev libffi-dev libssl-dev unzip jq -y
+sudo apt install git curl ca-certificates python3 python3-venv python3-pip sqlite3 build-essential pkg-config libxml2-dev libxslt1-dev liblz4-dev zlib1g-dev libffi-dev libssl-dev unzip jq libvulkan-dev glslc libopenblas-dev -y
 ```
 After that clone this github:
 ```
@@ -35,10 +35,30 @@ This project need Ollama server to assist on embeddings, for Linux installation:
 ```
 curl -fsSL https://ollama.com/install.sh | sh
 ```
-for Windows installation:
+Enable Vulkan support:
+```
+sudo systemctl edit ollama.service
+```
+Put one line override:
+```
+[Service]
+Environment="OLLAMA_VULKAN=1"
+```
+Reload the Ollama service:
+```
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+For Windows installation:
 ```
 irm https://ollama.com/install.ps1 | iex
 ```
+For add Vulkan support by set user enviroment variable:
+```
+OLLAMA_VULKAN=1
+```
+Then close Ollama from the system tray and start it again.
 After that pull appropiate Ollama model:
 ```
 # Chat model (pick one)
@@ -46,8 +66,37 @@ ollama pull llama3.2:3b
 # Embedding model
 ollama pull all-minilm
 ```
+
 > [!TIP]
 The model isn't fix, this project can use other model depends with users requirements. If pulled model is differs with guide above, user need to change [config.yaml](rag/config.yaml) model params.
+
+### Llama.cpp server setup
+Clone the llama.cpp repository:
+```
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+```
+CPU build only:
+```
+cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
+cmake --build build --config Release -j"$(nproc)"
+```
+Vulkan support:
+```
+cmake -B build -DGGML_VULKAN=1
+cmake --build build --config Release -j"$(nproc)"
+```
+CUDA support:
+```
+cmake -B build -DGGML_CUDA=ON
+cmake --build build --config Release -j"$(nproc)"
+```
+ARM® KleidiAI support [^2]:
+```
+cmake -B build -DGGML_CPU_KLEIDIAI=ON
+cmake --build build --config Release -j"$(nproc)"
+```
+> [!TIP]
+For llama.cpp windows build for Vulkan or CUDA support are more tricky, it's better just build CPU only (without BLAS). More info how to install Llama.cpp using Vulkan or OpenBLAS can be seen in official [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) github guide.
 
 ### FAISS Installation
 There are 2 options for installing FAISS:
@@ -226,6 +275,8 @@ Since current project state is on crawling and embedding all the game data, isn'
 ## To-do list
 - [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
 - [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
+- [x] Add Vulkan support.
+- [x] Llamma.cpp support
 - [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
 - [x] Embedding using Kaggle.
 - [x] Adding cron jobs updates.
@@ -235,3 +286,4 @@ Since current project state is on crawling and embedding all the game data, isn'
 
 ## Footenote
 [^1]: It's get processed on Kaggle
+[^2]: ARM architectures only
