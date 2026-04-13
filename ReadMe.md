@@ -6,7 +6,7 @@ With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?
 - Sqlite3 3.46.1
 - FAISS (Facebook AI Similarity Search)
 
-This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scrapping.
+This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scraping.
 
 ## Dependency
 Before start to use this repos, this project required some packages (Debian based build):

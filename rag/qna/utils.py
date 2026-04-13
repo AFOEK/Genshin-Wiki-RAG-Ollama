@@ -170,29 +170,24 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
         text_overlap  = len(q_terms & text_terms)
         title_overlap = len(q_terms & title_terms)
 
-        # ── Base + source weight ───────────────────────────────────────
         weighted_base = base_score * weight
 
-        # ── Lexical bonus ──────────────────────────────────────────────
         lexical_bonus = (
             0.02 * text_overlap
           + 0.10 * title_overlap
         )
 
-        # ── Tier bonus ─────────────────────────────────────────────────
         tier_bonus = (
             0.05 if tier == "primary"
             else 0.02 if tier == "supplementary"
             else 0.0
         )
 
-        # ── Intent: source bonus/penalty ───────────────────────────────
         intent_source_bonus = float(
             profile.get("source_bonus",   {}).get(source, 0.0)
           - profile.get("source_penalty", {}).get(source, 0.0)
         )
 
-        # ── Intent: title boost ────────────────────────────────────────
         title_boost_v = float(profile.get("title_boost_v", 0.0))
         intent_title_boost = (
             title_boost_v

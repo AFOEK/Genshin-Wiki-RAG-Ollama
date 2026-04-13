@@ -35,7 +35,7 @@ def embed_ollama(base_url: str, model: str, text_or_texts, keep_alive: str, time
 
     data = post_json(
         f"{base_url}/api/embed",
-        json={
+        {
             "model": model,
             "input": payload_input,
             "truncate": True,
@@ -93,7 +93,7 @@ def embed(cfg: dict, text_or_texts, retries: int = 10, backoff_s: float = 1.0):
                     llamacpp["embedding_model"],
                     text_or_texts,
                     llamacpp.get("embed_keep_alive", None),
-                    llamacpp.get("timeout", "180")
+                    int(llamacpp.get("timeout", "180"))
                 )
             
             raise RuntimeError(f"Unknown embedding provider: {provider}")
