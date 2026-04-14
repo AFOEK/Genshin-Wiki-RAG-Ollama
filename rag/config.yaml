@@ -36,11 +36,14 @@ kaggle:
   use_fp16: false
   gpu_type: nvidiaTeslaT4    # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
-    index_mode: hnsw
-    metric: cosine
-    hnsw_m: 64
-    hnsw_ef_construction: 400
-    hnsw_ef_search: 64
+    index_mode: hnsw_cagra  # flat_ip | ivf_flat | hnsw | hnsw_carga
+    metric: cosine          # cosine | ip | l2
+    hnsw_m: 40
+    hnsw_ef_construction: 300
+    hnsw_ef_search: 40
+
+    ivf_nlist: 2048
+    ivf_nprobe: 64
 
 faiss:
   index_mode: flat_ip      # flat_ip | ivf_flat | hnsw
