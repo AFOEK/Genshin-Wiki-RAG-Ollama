@@ -29,6 +29,16 @@ def post_json(url: str, payload: dict, timeout: int = 180):
     r.raise_for_status()
     return r.json()
 
+def normalize_backend_name(name: str | None) -> str | None:
+    if name is None:
+        return None
+    x = str(name).strip().lower()
+    if x in {"llama.cpp", "llamacpp", "llama_cpp"}:
+        return "llamacpp"
+    if x == "ollama":
+        return "ollama"
+    raise RuntimeError(f"Unknown embedding backend: {name}")
+
 def embed_ollama(base_url: str, model: str, text_or_texts, keep_alive: str, timeout: int):
     is_batch = isinstance(text_or_texts, (list, tuple))
     payload_input = list(text_or_texts) if is_batch else text_or_texts
@@ -69,9 +79,9 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, keep_alive: str, ti
         return pack_vec(rows[0])
     return [pack_vec(vec) for vec in rows]
 
-def embed(cfg: dict, text_or_texts, retries: int = 10, backoff_s: float = 1.0):
+def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 10, backoff_s: float = 1.0):
     runtime = cfg.get("runtime", {})
-    provider = runtime.get("embedding_provider", "ollama").strip().lower()
+    provider = normalize_backend_name(backend if backend is not None else runtime.get("embedding_provider", "ollama"))
 
     last_err =  None
     for attempt in range(retries):

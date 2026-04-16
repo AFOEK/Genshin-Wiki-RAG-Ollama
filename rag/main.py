@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--FAISS_AUDIT", default="False")
     ap.add_argument("--FAISS_OVERWRITE", default="False")
     ap.add_argument("--DB_REPAIR", default="False")
+    ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
     args = ap.parse_args()
 
     do_crawl = parse_bool(args.DB_CRAWL)
@@ -63,7 +64,7 @@ def main():
     log.info("[INFO] Database initialized at %s", db_path)
 
     def embed_fn(text_or_texts):
-        return embed(cfg, text_or_texts)
+        return embed(cfg, text_or_texts, backend=args.BACKEND)
     
     def make_source_filters(s: dict) -> Filters:
         merged_deny_url = merge_regex(

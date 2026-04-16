@@ -16,6 +16,7 @@ def main():
     ap.add_argument("--direct_top_k", type=int, default=12)
     ap.add_argument("--broad_top_k", type=int, default=60)
     ap.add_argument("--summarize_batch_size", type=int, default=8)
+    ap.add_argument("--backend", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
     args = ap.parse_args()
     cfg = load_cfg(args.config)
     setup_logging(
@@ -30,6 +31,7 @@ def main():
         direct_top_k=args.direct_top_k,
         broad_top_k=args.broad_top_k,
         summarize_batch_size=args.summarize_batch_size,
+        backend = args.backend
     )
 
     print("\n=== ANSWER ===\n")

@@ -200,6 +200,7 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
         SELECT d.doc_id, d.url
         FROM docs d
         LEFT JOIN chunks c ON c.doc_id = d.doc_id AND c.is_active=1
+        WHERE d.status = 1
         GROUP BY d.doc_id
         HAVING COUNT(c.chunk_id)=0
         """)

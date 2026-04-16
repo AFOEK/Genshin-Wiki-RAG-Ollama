@@ -95,6 +95,11 @@ ARM® KleidiAI support [^2]:
 cmake -B build -DGGML_CPU_KLEIDIAI=ON
 cmake --build build --config Release -j"$(nproc)"
 ```
+Combined build:
+```
+cmake -B build -DGGML_CPU_KLEIDIAI=ON -DGGML_VULKAN=1 -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
+cmake --build build --config Release -j"$(nproc)"
+```
 > [!TIP]
 For llama.cpp windows build for Vulkan or CUDA support are more tricky, it's better just build CPU only (without BLAS). More info how to install Llama.cpp using Vulkan or OpenBLAS can be seen in official [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) github guide.
 
@@ -197,24 +202,25 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
 --FAISS_OVERWRITE=False
+--BACKENDS=ollama
 ```
 Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed and `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records.
 
 ```
 # Crawl + DB Audit
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --BACKEND=ollama
 ```
 ```
 # Migrate + Audit FAISS
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True --BACKEND=ollama
 ```
 ```
 # DB Repair + DB Audit
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --BACKEND=ollama
 ```
 ```
 # Full pipeline
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --BACKEND=ollama
 ```
 
 ## QnA Test

@@ -8,7 +8,7 @@ from utils.clean_fandom import clean_fandom_text
 
 log = logging.getLogger(__name__)
 
-MOVED_URL_SOURCE = {"honey_html", "game8_html", "genshingg_html"}
+MOVED_URL_SOURCE = {"honey", "game8", "genshin_gg"}
 
 def defang_tables(s: str) -> str:
     lines = s.splitlines()

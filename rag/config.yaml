@@ -23,8 +23,8 @@ llamacpp:
   embed_keep_alive: "15s"
 
 runtime:
-  embedding_provider: ollama  #ollama | llamacpp
-  qa_provider: ollama         #ollama | llamacpp
+  embedding_provider: llamacpp  #ollama | llamacpp
+  qa_provider: llamacpp         #ollama | llamacpp
   accelerator: auto           #auto | cpu | vulkan | opencl
 
 kaggle:

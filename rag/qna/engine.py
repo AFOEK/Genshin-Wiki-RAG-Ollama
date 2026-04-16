@@ -19,6 +19,7 @@ def answer_question(
     direct_top_k: int = 12,
     broad_top_k: int = 60,
     summarize_batch_size: int = 8,
+    backend: str | None =None
 ) -> str:
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
@@ -43,7 +44,7 @@ def answer_question(
         retriever = SqliteEmbeddingRetriever(conn)
         log.info("[QNA] using SQLite brute-force retriever")
 
-    q_blob, q_dims = embed(cfg, question)
+    q_blob, q_dims = embed(cfg, question, backend= backend)
     if q_dims != retriever.dims:
         raise RuntimeError(
             f"query embedding dims mismatch: query={q_dims} retriever={retriever.dims}"
