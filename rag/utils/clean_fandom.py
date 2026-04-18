@@ -12,7 +12,7 @@ RE_DATA_URI = re.compile(r"data:image/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]+", re.I)
 RE_MEDIA_LINK = re.compile(r"\[?Media:[^\]\n]+\]?", re.I)
 RE_REVISION_URL = re.compile(r"https?://\S+/revision/latest\S*", re.I)
 RE_CDN_URL = re.compile(r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mp3|wav|ogg)(\?\S*)?", re.I)
-RE_BARE_BASE64 = re.compile(r"[A-Za-z0-9+/]{60,}={0,2}")
+RE_BARE_BASE64 = re.compile(r"[A-Za-z0-9+/]*[+/][A-Za-z0-9+/]{58,}={0,2}")
 
 RE_EMPTY_TABLE_CELL = re.compile(r"\|\s*\|")
 RE_BROKEN_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")

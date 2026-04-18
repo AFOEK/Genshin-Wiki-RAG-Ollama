@@ -30,7 +30,7 @@ def answer_question(
     if provider == "llamacpp":
         qa_timeout = str(cfg.get("llamacpp", {}).get("timeout", 300))
     else:
-        qa_timeout = cfg["ollama"].get("qa_keep_alive", "10m")
+        qa_timeout = int(cfg["ollama"].get("timeout", 180000))
 
     retriever = None
     if prefer_faiss:
@@ -75,7 +75,7 @@ def answer_question(
         )
 
     if not broad:
-        context = build_context(chunks[:5])
+        context = build_context(chunks[:direct_top_k])
         prompt = textwrap.dedent(f"""
             You are a retrieval-grounded Genshin Impact assistant.
             Answer the question using ONLY the provided context.
@@ -97,10 +97,20 @@ def answer_question(
             Context:
             {context}
         """).strip()
-        return generate(cfg, prompt)
+        result = generate(cfg, prompt)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return result
 
     notes = []
     for group in chunk_batch(chunks, summarize_batch_size):
         notes.append(summarize_chunk_group(cfg, question, group))
 
-    return synthesize_final_answer(cfg, question, notes, qa_timeout)
+    result = synthesize_final_answer(cfg, question, notes, qa_timeout)
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return result

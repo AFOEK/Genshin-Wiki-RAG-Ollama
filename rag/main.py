@@ -183,35 +183,38 @@ def main():
         log.info("[INFO] Audit starting")
 
         try:
-            if do_db_audit:
-                report = audit_integrity(
-                    conn,
-                    sample_chunks=1000,
-                    sample_docs=1500,
-                    max_orphan_failures=2500,
-                    max_missing_embedding_failures=2500,
-                )
+            report = audit_integrity(
+                conn,
+                sample_chunks=1000,
+                sample_docs=1500,
+                max_orphan_failures=2500,
+                max_missing_embedding_failures=2500,
+            )
 
-                if report.failures:
-                    log.error("[AUDIT] Audit failed with %d problems", len(report.failures))
+            if report.failures:
+                log.error("[AUDIT] Audit failed with %d problems", len(report.failures))
 
-                    by_reason = {}
-                    for f in report.failures:
-                        by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
+                by_reason = {}
+                for f in report.failures:
+                    by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
 
-                    for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
-                        log.error("  %s: %d", reason, n)
+                for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                    log.error("  %s: %d", reason, n)
 
-                    for f in report.failures[:10]:
-                        log.error("[AUDIT] Example failure: %s", f)
+                for f in report.failures[:10]:
+                    log.error("[AUDIT] Example failure: %s", f)
 
-                    raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
-                log.info("[AUDIT] SQLite integrity OK")
-
+                raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
+            log.info("[AUDIT] SQLite integrity OK")
             log.info("[AUDIT] All requested stages completed successfully")
-
         except Exception:
             log.exception("[AUDIT] terminated due to audit/migrate failures")
+            raise
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
     
     if do_faiss_migrate:
         build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)

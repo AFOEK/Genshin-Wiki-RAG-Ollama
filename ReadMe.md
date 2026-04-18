@@ -1,7 +1,7 @@
 # Genshin Impact Wiki Ollama RAG (Retrieval-Augmented Generation)
 
 ## Introduction
-With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llamma 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
+With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
 - Python 3.14.5
 - Sqlite3 3.46.1
 - FAISS (Facebook AI Similarity Search)
@@ -23,7 +23,7 @@ python3 -m venv .venv
 ```
 and start the virtual environments:
 ```
-source .venv/bin/activete
+source .venv/bin/activate
 ```
 With python venv already activated install all python requirements by running:
 ```
@@ -115,7 +115,7 @@ Both of the method are good to make it works, but this project preferred using s
 pip install -U faiss-cpu
 ```
 
-#### Souce build FAISS installation
+#### Source build FAISS installation
 Before running the installation make sure all packages are installed (Debian based build):
 ```
 sudo apt update && sudo apt install -y git cmake build-essential pkg-config python3-dev python3-venv libopenblas-dev liblapack-dev swig
@@ -282,7 +282,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
 - [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
 - [x] Add Vulkan support.
-- [x] Llamma.cpp support
+- [x] Llama.cpp support
 - [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
 - [x] Embedding using Kaggle.
 - [x] Adding cron jobs updates.

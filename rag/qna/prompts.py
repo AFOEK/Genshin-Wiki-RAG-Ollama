@@ -36,7 +36,7 @@ def summarize_chunk_group(cfg: dict, question: str, chunks: list[dict]) -> str:
     return generate(cfg, prompt)
 
 
-def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout: str = "15m") -> str:
+def synthesize_final_answer(cfg: dict, question: str, notes: list[str], timeout: int = 300) -> str:
     if not notes:
         return "I couldn't summarize any retrieved context for this question."
     

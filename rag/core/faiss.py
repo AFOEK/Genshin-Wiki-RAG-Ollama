@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, time, logging, shutils
+import json, time, logging, shutil
 import faiss
 
 from pathlib import Path
@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 def atomic_promote(build_dir: Path, current_dir: Path):
     old = current_dir.with_name(current_dir.name + ".old")
     if old.exists():
-        shutils.rmtree(old)
+        shutil.rmtree(old)
 
     if current_dir.exists():
         current_dir.rename(old)
@@ -191,6 +191,9 @@ def build_faiss_from_sqlite(
         "faiss_index": index_mode,
         "normalized": True,
         "db_path": str(db_path),
+        "embedding_model":{
+            cfg.get("ollama", {}).get("embedding_model") or cfg.get("llamacpp", {}).get("embedding_model", "unknown")
+        },
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     if index.ntotal > 0:
