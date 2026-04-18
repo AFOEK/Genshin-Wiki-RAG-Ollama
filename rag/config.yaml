@@ -16,8 +16,8 @@ ollama:
 llamacpp:
   base_url: http://localhost:8081
   embedding_url: http://localhost:8082
-  embedding_model: all-minilm-l6-v2.gguf
-  qa_model: llama-3.2-3b-instruct.gguf
+  embedding_model: /opt/llama-models/all-minilm-l6-v2.gguf
+  qa_model: /opt/llama-models/llama-3.2-3b-instruct.gguf
   qa_keep_alive: "10m"
   timeout: 300
   n_gpu_layers: 99
