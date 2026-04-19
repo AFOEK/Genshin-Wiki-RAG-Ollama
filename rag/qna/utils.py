@@ -164,6 +164,24 @@ def chunk_batch(seq: list[dict], size: int) -> Iterable[list[dict]]:
 def tokenize(s: str) -> set[str]:
     return set(re.findall(r"[a-zA-Z0-9_']+", s.lower()))
 
+def dedup_chunks(chunks: list[dict], initial_scores: dict[int, float], *, max_per_doc: int = 1) -> list[dict]:
+    ordered = sorted(chunks, key=lambda r: float(initial_scores.get(int(e["chunk_id"]), 0.0)), reverse=True)
+    kept = []
+    seen_counts: dict[object, int] = {}
+
+    for row in ordered:
+        key = row.get("doc_id")
+        if key is None:
+            key = (str(row.get("source") or ""), str(row.get("title") or "").strip().lower())
+        
+        n = seen_counts.get(key, 0)
+        if n >= max_per_doc:
+            continue
+
+        seen_counts[key] = n+1
+        kept.append(row)
+    return kept
+
 def detect_intent(question: str) -> str:
     q = question.lower()
     BUILD_MARKERS = [

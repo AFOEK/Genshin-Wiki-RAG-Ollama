@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -55,11 +55,14 @@ def answer_question(
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
 
-    results = retriever.search(q_vec, top_k)
+    candidate_k = max(top_k * 5, 85)
+
+    results = retriever.search(q_vec, candidate_k)
     chunk_ids = [cid for cid, score in results]
     initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
+    chunks = dedup_chunks(chunks, initial_scores, max_per_doc=1)
     chunks = rerank_chunks(question, chunks, initial_scores)
 
     if not chunks:
