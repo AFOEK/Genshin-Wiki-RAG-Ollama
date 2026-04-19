@@ -91,6 +91,7 @@ def answer_question(
             For example: if a weapon's lore mentions a character and they share history,
             that weapon is likely associated with that character.
             - Cite chunk IDs inline like [chunk_id=123].
+            - Cite source name like [source_name=xyz].
             - If the context genuinely does not contain enough information, say so briefly.
             - Do not guess facts not supported by the context.
 
