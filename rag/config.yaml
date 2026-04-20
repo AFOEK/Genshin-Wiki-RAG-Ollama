@@ -7,7 +7,7 @@ faiss_path: data/faiss
 
 ollama: 
   base_url: http://localhost:11434
-  embedding_model: all-minilm:latest
+  embedding_model: all-minilm:latest #snowflake-arctic-embed:xs
   qa_model: llama3.2:3b
   qa_keep_alive: "10m"
   timeout: 180
@@ -16,7 +16,7 @@ ollama:
 llamacpp:
   base_url: http://localhost:8081
   embedding_url: http://localhost:8082
-  embedding_model: /opt/llama-models/all-minilm-l6-v2.gguf
+  embedding_model: /opt/llama-models/all-minilm-l6-v2.gguf #snowflake-arctic-embed-xs.gguf
   qa_model: /opt/llama-models/llama-3.2-3b-instruct.gguf
   qa_keep_alive: "10m"
   timeout: 300
@@ -29,13 +29,13 @@ runtime:
   accelerator: auto           #auto | cpu | vulkan | opencl
 
 kaggle:
-  embedding_model: BAAI/bge-large-en-v4.0 #"mixedbread-ai/mxbai-embed-large-v1" "BAAI/bge-large-en-v4.0" "nomic-ai/nomic-embed-text-v4.0"
+  embedding_model: intfloat/e5-large-v2 #"mixedbread-ai/mxbai-embed-large-v1" "BAAI/bge-large-en-v1.5" "nomic-ai/nomic-embed-text-v4.0" "Snowflake/snowflake-arctic-embed-m" "intfloat/e5-large-v2"
   dataset_slug: afoek88/genshin-rag-chunks  #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
-  batch_size: 512
+  batch_size: 256
   max_text_chars: 1200
-  use_fp16: false
-  gpu_type: nvidiaTeslaT4    # nvidiaTeslaT4 | nvidiaTeslaP100
+  use_fp16: True
+  gpu_type: nvidiaTeslaP100    # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
     index_mode: hnsw  # flat_ip | ivf_flat | hnsw
     metric: cosine          # cosine | ip | l2
