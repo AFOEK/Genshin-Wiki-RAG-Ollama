@@ -29,7 +29,11 @@ runtime:
   accelerator: auto           #auto | cpu | vulkan | opencl
 
 kaggle:
-  embedding_model: intfloat/e5-large-v2 #"mixedbread-ai/mxbai-embed-large-v1" "BAAI/bge-large-en-v1.5" "nomic-ai/nomic-embed-text-v4.0" "Snowflake/snowflake-arctic-embed-m" "intfloat/e5-large-v2"
+  # e5-large-v2: 335M params, 1024-dim, strong retrieval quality
+  # bge-large-en-v1.5: 335M params, 1024-dim, alternative
+  # nomic-embed-text-v1.5: 137M params, 768-dim, faster, nearly as good
+  # snowflake-arctic-embed-m: 110M params, 768-dim, retrieval specialist
+  embedding_model: intfloat/e5-large-v2
   dataset_slug: afoek88/genshin-rag-chunks  #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
   batch_size: 256
