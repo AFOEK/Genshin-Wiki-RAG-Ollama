@@ -35,7 +35,7 @@ kaggle:
   batch_size: 256
   max_text_chars: 1200
   use_fp16: True
-  gpu_type: nvidiaTeslaP100    # nvidiaTeslaT4 | nvidiaTeslaP100
+  gpu_type: nvidiaTeslaT4    # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
     index_mode: hnsw  # flat_ip | ivf_flat | hnsw
     metric: cosine          # cosine | ip | l2
