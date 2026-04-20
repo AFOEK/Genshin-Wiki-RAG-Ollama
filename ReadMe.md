@@ -202,9 +202,9 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
 --FAISS_OVERWRITE=False
---BACKENDS=ollama
+--BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed and `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records and `--BACKENDS` it will pick backend type according user input.
 
 ```
 # Crawl + DB Audit
@@ -235,11 +235,12 @@ It can recieve query and generate output depends what user ask. In the `test.py`
 --direct_top_k 8-32         #default value: 12
 --board_top_k 50-80         #default value: 60
 --summarize_batch_size 4-16 #default value: 8
+--backend ollama            #default value: ollama
 ```
 
 Example usage:
 ```
-python3 rag/test.py --question "What is ZhongLi signature weapon?"
+python3 rag/test.py --retriever faiss --backend ollama --direct_top_k 20 --question "What is ZhongLi signature weapon?"
 ```
 
 ## Kaggle Embedding Support

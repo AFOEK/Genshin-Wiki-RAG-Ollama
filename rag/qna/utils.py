@@ -165,7 +165,7 @@ def tokenize(s: str) -> set[str]:
     return set(re.findall(r"[a-zA-Z0-9_']+", s.lower()))
 
 def dedup_chunks(chunks: list[dict], initial_scores: dict[int, float], *, max_per_doc: int = 1) -> list[dict]:
-    ordered = sorted(chunks, key=lambda r: float(initial_scores.get(int(e["chunk_id"]), 0.0)), reverse=True)
+    ordered = sorted(chunks, key=lambda r: float(initial_scores.get(int(r["chunk_id"]), 0.0)), reverse=True)
     kept = []
     seen_counts: dict[object, int] = {}
 

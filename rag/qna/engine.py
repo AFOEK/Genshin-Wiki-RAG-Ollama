@@ -30,7 +30,7 @@ def answer_question(
     if provider == "llamacpp":
         qa_timeout = str(cfg.get("llamacpp", {}).get("timeout", 300))
     else:
-        qa_timeout = int(cfg["ollama"].get("timeout", 180000))
+        qa_timeout = int(cfg["ollama"].get("timeout", 1800))
 
     retriever = None
     if prefer_faiss:

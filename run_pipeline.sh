@@ -38,7 +38,7 @@ log "Activating virtual environment"
 source .venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --BACKEND ollama
 log "Crawling, repair, audit, and FAISS. Done"
 
 log "Extracting chunks"
@@ -50,7 +50,7 @@ python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dat
 log "Done upload"
 
 log "Test first local embedding"
-python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20 || log "Test failed — continuing"
+python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20 --backend ollama || log "Test failed — continuing"
 log "First testing done"
 
 # log "Kaggle kernel pull, swap FAISS and pull embeddings"
