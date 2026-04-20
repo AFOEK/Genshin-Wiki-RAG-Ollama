@@ -29,10 +29,10 @@ runtime:
   accelerator: auto           #auto | cpu | vulkan | opencl
 
 kaggle:
-  embedding_model: mixedbread-ai/mxbai-embed-large-v1 #"BAAI/bge-large-en-v4.0" "nomic-ai/nomic-embed-text-v4.0"
+  embedding_model: BAAI/bge-large-en-v4.0 #"mixedbread-ai/mxbai-embed-large-v1" "BAAI/bge-large-en-v4.0" "nomic-ai/nomic-embed-text-v4.0"
   dataset_slug: afoek88/genshin-rag-chunks  #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
-  batch_size: 64
+  batch_size: 512
   max_text_chars: 1200
   use_fp16: false
   gpu_type: nvidiaTeslaT4    # nvidiaTeslaT4 | nvidiaTeslaP100
