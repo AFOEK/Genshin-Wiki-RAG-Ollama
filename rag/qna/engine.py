@@ -27,6 +27,7 @@ def answer_question(
 
     runtime = cfg.get("runtime", {})
     provider = runtime.get("qa_provider", "ollama").strip().lower()
+    log.info("[QNA] Use provider: %s", provider)
     if provider == "llamacpp":
         qa_timeout = str(cfg.get("llamacpp", {}).get("timeout", 300))
     else:
