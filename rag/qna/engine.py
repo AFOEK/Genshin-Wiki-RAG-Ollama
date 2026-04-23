@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks, detect_intent, filter_by_intent_source
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -45,6 +45,7 @@ def answer_question(
         retriever = SqliteEmbeddingRetriever(conn)
         log.info("[QNA] using SQLite brute-force retriever")
 
+    intent = detect_intent(question)
     q_blob, q_dims = embed(cfg, question, backend= backend)
     if q_dims != retriever.dims:
         raise RuntimeError(
@@ -61,6 +62,24 @@ def answer_question(
     results = retriever.search(q_vec, candidate_k)
     chunk_ids = [cid for cid, score in results]
     initial_scores = {cid: score for cid, score in results}
+
+    filtered_ids = filter_by_intent_source(conn, chunk_ids, intent, min_required=5, max_fallback=20)
+
+    if intent in ("build", "mechanic", "lore", "biography") and len(filtered_ids) < 3:
+        deep_results = retriever.search(q_vec, candidate_k * 5)
+        deep_ids = [cid for cid, _ in deep_results]
+        filtered_ids = filter_by_intent_source(conn, deep_ids, intent, min_required=5, max_fallback=40)
+        
+        deep_scores = {cid: score for cid, score in deep_results}
+        id_set = set(filtered_ids)
+        results = [(cid, deep_scores[cid]) for cid in filtered_ids]
+        chunk_ids = [cid for cid, _ in results]
+        initial_scores = {cid: score for cid, score in results}
+    else:
+        id_set = set(filtered_ids)
+        results = [(cid, score) for cid, score in results if cid in id_set]
+        chunk_ids = [cid for cid, _ in results]
+        initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
     chunks = dedup_chunks(chunks, initial_scores, max_per_doc=1)

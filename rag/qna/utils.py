@@ -12,8 +12,8 @@ log = logging.getLogger(__name__)
 
 INTENT_PROFILES = {
     "build": {
-        "source_bonus": {"kqm_tcl": 0.15, "game8": 0.10, "genshin_gg":0.08},
-        "source_penalty": {"genshin_wiki": 0, "kqm_news": 0.1},
+        "source_bonus": {"kqm_tcl": 0.15, "game8": 0.15, "genshin_gg":0.08},
+        "source_penalty": {"genshin_wiki": 0.12, "kqm_news": 0.15},
         "title_penalize": ["storyline", "voice", "voice-over", "story quest", "archon quest",
                            "world quest", "character card", "genius invokation",
                            "lore", "dialogue", "comments"],
@@ -24,10 +24,15 @@ INTENT_PROFILES = {
                              "elemental mastery", "em", "cr", "crit dmg", "cr%", "def%", "hp%",
                              "atk%", "staff"],
         "text_require_penalty": 0.30,
+        "source_priority":{
+            "required": ["kqm_tcl", "genshin_gg", "honey"],
+            "preferred": ["game8"],
+            "excluded": ["kqm_news"]
+        },
     },
     "lore": {
-        "source_bonus": {"genshin_wiki": 0.1},
-        "source_penalty": {"honey": 0.08, "kqm_tcl": 0.05, "kqm_news": 0.03, "game8": 0.1, "genshin_gg":0.1},
+        "source_bonus": {"genshin_wiki": 0.12},
+        "source_penalty": {"honey": 0.08, "kqm_tcl": 0.05, "kqm_news": 0.03, "game8": 0.05, "genshin_gg":0.1},
         "title_penalize": ["change history", "voice-overs", "character card",
                            "genius invokation", "normal attack", "constellation",
                            "ascension", "recommended", "signature weapon", "bis weapon",
@@ -38,6 +43,11 @@ INTENT_PROFILES = {
         "title_boost_v": 0.15,
         "text_require_any": [],
         "text_require_penalty": 0.0,
+        "source_priority":{
+            "required": ["genshin_wiki"],
+            "preferred": [],
+            "excluded": ["honey", "game8", "kqm_tcl", "kqm_news", "genshin_gg"]
+        },
     },
     "mechanic":{
         "source_bonus": {"genshin_wiki": 0.05, "kqm_tcl": 0.12, "game8": 0.07, "genshin_gg":0.06},
@@ -50,6 +60,11 @@ INTENT_PROFILES = {
         "title_boost_v": 0.08,
         "text_require_any": [],
         "text_require_penalty": 0.0,
+        "source_priority":{
+            "required": ["game8", "kqm_tcl", "genshin_gg"],
+            "preferred": ["genshin_wiki"],
+            "excluded": ["kqm_news"]
+        },
     },
     "location": {
         "source_bonus":   {"genshin_wiki": 0.20, "game8": 0.1},
@@ -67,7 +82,8 @@ INTENT_PROFILES = {
             "isle", "enkanomiya", "sub-area", "sub-region", "the chasm", "chenyu vale", "dharma forest",
             "great red sand", "girdle of the sands", "sea of bygone eras sea of bygone eras", "ancient sacred mountain",
             "temple of space", "golden apple archipelago", "three realms gateway offering", "veluriyam mirage",
-            "simulanka", "dragonspine"
+            "simulanka", "dragonspine", "windrest peak", "celestia", "abyss", "hyperborea", "sea of stars",
+            "the sea of flowers at the end"
         ],
         "title_boost_v": 0.15,
         "text_require_any": [
@@ -78,9 +94,15 @@ INTENT_PROFILES = {
             "chenyu vale", "dharma forest", "great red sand", "girdle of the sands", 
             "sea of bygone eras sea of bygone eras", "ancient sacred mountain",
             "temple of space", "golden apple archipelago", "three realms gateway offering", "veluriyam mirage",
-            "simulanka", "dragonspine"
+            "simulanka", "dragonspine", "windrest peak", "celestia", "abyss", "hyperborea", "sea of stars",
+            "the sea of flowers at the end"
         ],
         "text_require_penalty": 0.20,
+        "source_priority":{
+            "required": ["genshin_wiki"],
+            "preferred": ["game8"],
+            "excluded": ["kqm_news", "kqm_tcl", "honey"]
+        },
     },
 
     "biography": {
@@ -102,6 +124,11 @@ INTENT_PROFILES = {
             "friend", "title", "occupation", "voiced by",
         ],
         "text_require_penalty": 0.15,
+        "source_priority":{
+            "required": ["genshin_wiki"],
+            "preferred": [],
+            "excluded": ["kqm_tcl", "game8", "genshin_gg"]
+        },
     },
     "general": {
         "source_bonus":   {"genshin_wiki": 0.05, "game8":0.04},
@@ -111,8 +138,60 @@ INTENT_PROFILES = {
         "title_boost_v":  0.0,
         "text_require_any": [],
         "text_require_penalty": 0.0,
+        "source_priority": {
+            "required": [],
+            "preferred": ["genshin_wiki", "game8"],
+            "excluded": []
+        },
     },
 }
+
+def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
+    profile = INTENT_PROFILES.get(intent, INTENT_PROFILES["general"])
+    priority = profile.get("source_priority", {})
+
+    required = set(priority.get("required", []))
+    preferred = set(priority.get("preferred", []))
+    excluded = set(priority.get("excluded", []))
+
+    if not required and not excluded:
+        return chunk_ids
+    
+    placeholder = ",".join("?" for _ in chunk_ids)
+    cur = conn.cursor()
+    cur.execute(f"""
+        SELECT c.chunk_id, d.source
+        FROM chunks c
+        JOIN docs d ON d.doc_id = c.doc_id
+        WHERE c.chunk_id IN ({placeholder})
+    """, chunk_ids)
+    source_map = {row["chunk_id"]: row["source"] for row in cur}
+
+    required_ids = []
+    preferred_ids = []
+    neutral_ids = []
+
+    for cid in chunk_ids:
+        src = source_map.get(cid, "")
+        if src in excluded:
+            continue
+        elif src in required:
+            required_ids.append(cid)
+        elif src in preferred:
+            preferred_ids.append(cid)
+        else:
+            neutral_ids.append(cid)
+    
+    result = required_ids[:]
+
+    if len(result) < min_required:
+        result.extend(preferred_ids)
+
+    if len(result) < min_required:
+        needed = max_fallback - len(result)
+        result.extend(neutral_ids[:needed])
+    
+    return result
 
 def load_cfg(path: str = "rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
@@ -244,6 +323,9 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
     profile = INTENT_PROFILES[intent]
     media_exts = [".jpeg", ".jpg", ".png", ".webp", ".mp4", ".svg", ".ico" , ".webm", ".mp3", ".gif", ".wav", ".ogg", ".woff", ".woff2"]
     ranked = []
+    priority = profile.get("source_priority", {})
+    required = set(priority.get("required", []))
+    excluded = set(priority.get("excluded", []))
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
@@ -305,6 +387,12 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
             text_l = text.lower()
             if not any(r in text_l for r in require_any):
                 penalty += float(profile.get("text_require_penalty", 0.0))
+
+        source = row.get("source") or ""
+        if source in excluded:
+            penalty += 0.95
+        elif source not in required and source not in priority.get("preferred", []):
+            penalty += 0.25
 
         final_score = (
             weighted_base
