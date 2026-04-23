@@ -82,8 +82,8 @@ def answer_question(
         initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
-    chunks = dedup_chunks(chunks, initial_scores, max_per_doc=1)
     chunks = rerank_chunks(question, chunks, initial_scores)
+    chunks = dedup_chunks(chunks, initial_scores, max_per_doc=3)
 
     if not chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."

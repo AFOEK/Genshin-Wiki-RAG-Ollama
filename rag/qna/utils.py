@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 INTENT_PROFILES = {
     "build": {
         "source_bonus": {"kqm_tcl": 0.15, "game8": 0.15, "genshin_gg":0.08},
-        "source_penalty": {"genshin_wiki": 0.12, "kqm_news": 0.15},
+        "source_penalty": {"kqm_news": 0.15},
         "title_penalize": ["storyline", "voice", "voice-over", "story quest", "archon quest",
                            "world quest", "character card", "genius invokation",
                            "lore", "dialogue", "comments"],
@@ -25,7 +25,7 @@ INTENT_PROFILES = {
                              "atk%", "staff"],
         "text_require_penalty": 0.30,
         "source_priority":{
-            "required": ["kqm_tcl", "genshin_gg", "honey"],
+            "required": ["kqm_tcl", "genshin_gg", "honey", "genshin_wiki"],
             "preferred": ["game8"],
             "excluded": ["kqm_news"]
         },
@@ -391,8 +391,8 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
         source = row.get("source") or ""
         if source in excluded:
             penalty += 0.95
-        elif source not in required and source not in priority.get("preferred", []):
-            penalty += 0.25
+        # elif source not in required and source not in priority.get("preferred", []):
+        #     penalty += 0.25
 
         final_score = (
             weighted_base
