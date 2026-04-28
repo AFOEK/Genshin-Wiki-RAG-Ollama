@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks, detect_intent, filter_by_intent_source
-from .retrievers import FaissRetriever, SqliteEmbeddingRetriever
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks, detect_intent, filter_by_intent_source, rrf_fuse
+from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
 from .generators import generate
@@ -15,7 +15,7 @@ def answer_question(
     cfg: dict,
     question: str,
     *,
-    prefer_faiss: bool = True,
+    retriever_name: str = "hybrid",
     direct_top_k: int = 12,
     broad_top_k: int = 60,
     summarize_batch_size: int = 8,
@@ -34,23 +34,53 @@ def answer_question(
         qa_timeout = int(cfg["ollama"].get("timeout", 1800))
 
     retriever = None
-    if prefer_faiss:
+    if retriever_name == "faiss":
         try:
             retriever = FaissRetriever(faiss_dir)
             log.info("[QNA] using FAISS retriever")
         except Exception as e:
             log.warning("[QNA] FAISS unavailable, falling back to SQLite: %s", e)
-
-    if retriever is None:
+    elif retriever_name == "sqlite" or retriever_name == "sql":
         retriever = SqliteEmbeddingRetriever(conn)
         log.info("[QNA] using SQLite brute-force retriever")
+    elif retriever_name == "bm25":
+        retriever = BM25Retriever(conn)
+        log.info("[QNA] using SQLite BM25 retriever")
+    elif retriever_name == "hybrid":
+        log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
+
+        faiss_ret = FaissRetriever(faiss_dir)
+        bm25_ret = BM25Retriever(conn)
+
+        q_blob, q_dims = embed(cfg, question, backend=backend)
+        if q_dims != faiss_ret.dims:
+            raise RuntimeError(
+                f"query embedding dims mismatch: query={q_dims} retriever={faiss_ret.dims}"
+            )
+        q_vec = normalize_query_vec(q_blob, q_dims)
+
+        faiss_results = faiss_ret.search(q_vec, candidate_k)
+        bm25_results = bm25_ret.search(question.lower(), candidate_k)
+
+        results = rrf_fuse(faiss_results, bm25_results, k=60)
+        initial_scores = {cid: score for cid, score in results}
+    else:
+        raise RuntimeError(f"Unkown retriever: {retriever_name}")
 
     intent = detect_intent(question)
-    q_blob, q_dims = embed(cfg, question, backend= backend)
-    if q_dims != retriever.dims:
-        raise RuntimeError(
-            f"query embedding dims mismatch: query={q_dims} retriever={retriever.dims}"
-        )
+    broad = is_broad_question(question)
+    top_k = broad_top_k if broad else direct_top_k
+
+    if retriever_name == "bm25":
+        results = retriever.search(question.lower(), top_k)
+    else:
+        q_blob, q_dims = embed(cfg, question, backend=backend)
+        if q_dims != retriever.dims:
+            raise RuntimeError(
+                f"query embedding dims mismatch: query={q_dims} retriever={retriever.dims}"
+            )
+        q_vec = normalize_query_vec(q_blob, q_dims)
+        results = retriever.search(q_vec, top_k)
 
     q_vec = normalize_query_vec(q_blob, q_dims)
 
@@ -82,8 +112,8 @@ def answer_question(
         initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
-    chunks = rerank_chunks(question, chunks, initial_scores)
     chunks = dedup_chunks(chunks, initial_scores, max_per_doc=3)
+    chunks = rerank_chunks(question, chunks, initial_scores)
 
     if not chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."

@@ -12,7 +12,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--question", required=True)
     ap.add_argument("--config", default="rag/config.yaml")
-    ap.add_argument("--retriever", choices=["faiss", "sqlite"], default="faiss")
+    ap.add_argument("--retriever", choices=["faiss", "sqlite", "bm25", "hybrid"], default="hybrid")
     ap.add_argument("--direct_top_k", type=int, default=12)
     ap.add_argument("--broad_top_k", type=int, default=60)
     ap.add_argument("--summarize_batch_size", type=int, default=8)

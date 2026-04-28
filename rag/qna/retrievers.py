@@ -92,3 +92,21 @@ class SqliteEmbeddingRetriever:
         scores.sort(key=lambda x: x[0], reverse=True)
         k = min(k, len(scores))
         return [(cid, score) for score, cid in scores[:k]]
+    
+class BM25Retriever:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self.dims = None
+
+    def search(self, query: str, top_k: int):
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT
+                chunk_id,
+                -bm25(chunks_fts) as score
+            FROM chunks_fts
+            WHERE chunks_fts MATCH ?
+            ORDER BY bm25(chunks_fts)
+            LIMIT ?
+        """, (query, top_k))
+        return [(int(row[0]), float(row[1])) for row in cur.fetchall()]

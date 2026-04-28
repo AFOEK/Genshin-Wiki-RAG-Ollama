@@ -146,6 +146,16 @@ INTENT_PROFILES = {
     },
 }
 
+def rrf_fuse(*result_lists, k: int = 60) -> list[tuple[int, float]]:
+    scores: dict[int, float] = {}
+
+    for results in result_lists:
+        for rank, (chunk_id, _score) in enumerate(results, start=1):
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank)
+
+    fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return fused
+
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     profile = INTENT_PROFILES.get(intent, INTENT_PROFILES["general"])
     priority = profile.get("source_priority", {})

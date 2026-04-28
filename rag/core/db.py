@@ -67,6 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
 CREATE INDEX IF NOT EXISTS idx_docs_last_modified ON docs(last_modified);
 CREATE INDEX IF NOT EXISTS idx_docs_etag ON docs(etag);
+CREATE INDEX IF NOT EXISTS idx_chunks_active ON chunks(is_active)
 
 CREATE VIEW IF NOT EXISTS v_docs_by_source AS
 SELECT
@@ -152,6 +153,14 @@ LEFT JOIN chunks c
     ON c.doc_id = d.doc_id
    AND c.is_active = 1
 WHERE c.chunk_id IS NULL;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    chunk_id UNINDEXED,
+    doc_id UNINDEXED,
+    source UNINDEXED,
+    title,
+    text
+);
 """
 
 def connect(path: str) -> sqlite3.Connection:

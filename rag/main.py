@@ -3,6 +3,7 @@ from core.db import connect
 from core.embed import embed
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
+from core.fts import rebuild_chunks_fts
 
 from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite
@@ -88,6 +89,7 @@ def main():
     embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
     embed_workers = int(threading_cfg.get("embed_workers", 2))
     document_queue_size = int(threading_cfg.get("document_queue_size", 200))
+    db_modified = False
 
     log.info(
         "[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d",
@@ -159,6 +161,7 @@ def main():
             t.join()
         q.join()
         t_ingest.join()
+        db_modified = True
 
     if do_db_repair:
         conn = connect(str(db_path))
@@ -174,9 +177,17 @@ def main():
             log.exception("[REPAIR] Database repair failed")
         finally:
             try:
+                db_modified = True
                 conn.close()
             except Exception:
                 pass
+    if db_modified:
+        conn = connect(str(db_path))
+        try:
+            rebuild_chunks_fts(conn)
+            log.info("[FTS] chunks_fts rebuilt successfully")
+        finally:
+            conn.close()
 
     if do_db_audit:
         conn = connect(str(db_path))
