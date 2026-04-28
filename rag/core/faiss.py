@@ -191,9 +191,8 @@ def build_faiss_from_sqlite(
         "faiss_index": index_mode,
         "normalized": True,
         "db_path": str(db_path),
-        "embedding_model":{
-            cfg.get("ollama", {}).get("embedding_model") or cfg.get("llamacpp", {}).get("embedding_model", "unknown")
-        },
+        "embedding_backend": cfg.get("runtime", {}).get("embedding_provider", "unknown"),
+        "embedding_model": (cfg.get("ollama", {}).get("embedding_model") if cfg.get("runtime", {}).get("embedding_provider") == "ollama" else cfg.get("llamacpp", {}).get("embedding_model", "unknown")),
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     if index.ntotal > 0:

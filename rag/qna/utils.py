@@ -226,13 +226,19 @@ def is_broad_question(q: str) -> bool:
     ql = q.lower()
     broad_markers = [
         "all the lore",
-        "from beginning until now",
+        "from beginning until",
+        "from the beginning",
         "full lore",
         "entire lore",
         "everything about",
         "complete history",
+        "complete lore",      
+        "summarize",
+        "summarized",         
+        "overview of",  
         "chronology",
         "timeline",
+        "tell me everything", 
     ]
     return any(m in ql for m in broad_markers)
 
