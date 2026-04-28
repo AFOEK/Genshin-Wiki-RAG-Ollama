@@ -181,7 +181,9 @@ def build_faiss_from_sqlite(
         index.nprobe = int(faiss_cfg.get("nprobe", 16))
     
     faiss.write_index(index, str(index_path))
+    log.info("[FAISS] Index written at %s", str(index_path))
     np.save(str(ids_path), np.asarray(ids, dtype=np.int64))
+    log.info("[FAISS] Index ids written at %s", str(ids_path))
 
     meta = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -195,6 +197,7 @@ def build_faiss_from_sqlite(
         "embedding_model": (cfg.get("ollama", {}).get("embedding_model") if cfg.get("runtime", {}).get("embedding_provider") == "ollama" else cfg.get("llamacpp", {}).get("embedding_model", "unknown")),
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    log.info("[FAISS] JSON written at %s", str(meta_path))
     if index.ntotal > 0:
         pick = min(123, index.ntotal - 1)
         q = np.zeros((1, d), dtype=np.float32)
