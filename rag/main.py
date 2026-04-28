@@ -217,9 +217,11 @@ def main():
                 pass
     
     if do_faiss_migrate:
+        log.info("[MIGRATE] FAISS migrate from SQLite3 starting")
         build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
 
     if do_faiss_audit:
+        log.info("[FAISS_AUDIT] FAISS audit starting")
         frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
         if frep.failures:
             log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
@@ -237,9 +239,10 @@ def main():
 
             raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
         log.info(
-            "[FAISS_AUDIT] OK index_total=%d ids_total=%d sqlite_active=%d dims=%d",
+            "[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d",
             frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims
         )
+        log.info("[FAISS_AUDIT] All requested stages completed successfully")
         
     # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}
     # for source, url, title, text in TEST_DOCS:
