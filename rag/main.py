@@ -181,6 +181,7 @@ def main():
                 conn.close()
             except Exception:
                 pass
+
     if db_modified:
         conn = connect(str(db_path))
         try:
