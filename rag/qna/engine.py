@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedup_chunks, detect_intent, filter_by_intent_source, rrf_fuse
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -48,20 +48,16 @@ def answer_question(
         log.info("[QNA] using SQLite BM25 retriever")
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
-
         faiss_ret = FaissRetriever(faiss_dir)
         bm25_ret = BM25Retriever(conn)
-
         q_blob, q_dims = embed(cfg, question, backend=backend)
         if q_dims != faiss_ret.dims:
             raise RuntimeError(
                 f"query embedding dims mismatch: query={q_dims} retriever={faiss_ret.dims}"
             )
         q_vec = normalize_query_vec(q_blob, q_dims)
-
         faiss_results = faiss_ret.search(q_vec, candidate_k)
         bm25_results = bm25_ret.search(question.lower(), candidate_k)
-
         results = rrf_fuse(faiss_results, bm25_results, k=60)
         initial_scores = {cid: score for cid, score in results}
     else:
@@ -112,7 +108,7 @@ def answer_question(
         initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
-    chunks = dedup_chunks(chunks, initial_scores, max_per_doc=3)
+    chunks = dedupe_chunks(chunks, initial_scores, max_per_doc=3)
     chunks = rerank_chunks(question, chunks, initial_scores)
 
     if not chunks:

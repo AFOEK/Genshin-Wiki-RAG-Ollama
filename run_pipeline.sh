@@ -50,7 +50,7 @@ python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dat
 log "Done upload"
 
 log "Test first local embedding"
-python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20 --backend ollama || log "Test failed — continuing"
+python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever hybrid --direct_top_k 20 --backend ollama || log "Test failed — continuing"
 log "First testing done"
 
 # log "Kaggle kernel pull, swap FAISS and pull embeddings"
@@ -58,5 +58,5 @@ log "First testing done"
 # log "Done pull finish"
 
 # log "Test second local embedding with better embeddings"
-# python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever faiss --direct_top_k 20
+# python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever hybrid --direct_top_k 20
 # log "Second testing done"
