@@ -202,13 +202,19 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
 --FAISS_OVERWRITE=False
+--FTS_SYNC=True
+--FTS_INIT=False
+--FTS_REBUILD=False
 --BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records and `--BACKENDS` it will pick backend type according user input.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume taht previous run don't has `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records and `--BACKENDS` it will pick backend type according user input.
+
+> [!WARNING]
+Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
 
 ```
 # Crawl + DB Audit
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --BACKEND=ollama
 ```
 ```
 # Migrate + Audit FAISS
@@ -216,11 +222,11 @@ python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAI
 ```
 ```
 # DB Repair + DB Audit
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --BACKEND=ollama
 ```
 ```
 # Full pipeline
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --FTS_INIT=True --BACKEND=ollama
 ```
 
 ## QnA Test
@@ -230,18 +236,26 @@ python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
 ```
 It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
 ```
---config rag/config.yaml    #default value: rag/config.yaml
---retriever {faiss, sqlite} #default value: faiss
---direct_top_k 8-32         #default value: 12
---board_top_k 50-80         #default value: 60
---summarize_batch_size 4-16 #default value: 8
---backend ollama            #default value: ollama
+--config rag/config.yaml                        #default value: rag/config.yaml
+--retriever {sqlite, faiss, bm25, and hybrid}   #default value: hybrid
+--direct_top_k 8-32                             #default value: 12
+--board_top_k 50-80                             #default value: 60
+--summarize_batch_size 4-16                     #default value: 8
+--backend {ollama, llamacpp}                    #default value: ollama
 ```
 
 Example usage:
 ```
-python3 rag/test.py --retriever faiss --backend ollama --direct_top_k 20 --question "What is ZhongLi signature weapon?"
+python3 rag/test.py --retriever hybrid --backend ollama --direct_top_k 20 --question "What is ZhongLi signature weapon?"
 ```
+
+Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml), where it control:
+- `cross_encoder`
+- `context_expansion`
+The values can be changed.
+
+> [!INFO]
+In reranker `cross_encoder_model` value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model.
 
 ## Kaggle Embedding Support
 Since local device may have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU. With that this project utilized `Kaggle API` to send chunks to Kaggle, where it will be embeded to bigger model, by using [upload.py](kaggle_tools/upload.py) script.
