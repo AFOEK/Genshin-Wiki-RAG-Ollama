@@ -67,7 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
 CREATE INDEX IF NOT EXISTS idx_docs_last_modified ON docs(last_modified);
 CREATE INDEX IF NOT EXISTS idx_docs_etag ON docs(etag);
-CREATE INDEX IF NOT EXISTS idx_chunks_active ON chunks(is_active);
+CREATE INDEX IF NOT EXISTS idx_chunks_active ON chunks(doc_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
 
 CREATE VIEW IF NOT EXISTS v_docs_by_source AS
 SELECT
@@ -159,8 +160,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     doc_id UNINDEXED,
     source UNINDEXED,
     title,
-    text
+    text,
+    tokenize='unicode61'
 );
+
+CREATE TABLE IF NOT EXISTS fts_dirty_docs (
+        doc_id INTEGER PRIMARY KEY,
+        reason TEXT,
+        marked_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
 """
 
 def connect(path: str) -> sqlite3.Connection:

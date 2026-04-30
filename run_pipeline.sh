@@ -38,7 +38,7 @@ log "Activating virtual environment"
 source .venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --BACKEND ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --FTS_SYNC True --BACKEND ollama
 log "Crawling, repair, audit, and FAISS. Done"
 
 log "Extracting chunks"

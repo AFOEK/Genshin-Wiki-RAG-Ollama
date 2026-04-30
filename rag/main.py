@@ -3,7 +3,7 @@ from core.db import connect
 from core.embed import embed
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
-from core.fts import rebuild_chunks_fts
+from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_chunks_fts
 
 from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite
@@ -42,6 +42,9 @@ def main():
     ap.add_argument("--FAISS_AUDIT", default="False")
     ap.add_argument("--FAISS_OVERWRITE", default="False")
     ap.add_argument("--DB_REPAIR", default="False")
+    ap.add_argument("--FTS_SYNC", default="False")
+    ap.add_argument("--FTS_INIT", default="False")
+    ap.add_argument("--FTS_REBUILD", default="False")
     ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
     args = ap.parse_args()
 
@@ -51,6 +54,9 @@ def main():
     do_faiss_audit = parse_bool(args.FAISS_AUDIT)
     do_db_repair = parse_bool(args.DB_REPAIR)
     faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
+    do_fts_sync = parse_bool(args.FTS_SYNC)
+    do_fts_init = parse_bool(args.FTS_INIT)
+    do_fts_rebuild = parse_bool(args.FTS_REBUILD)
 
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -89,7 +95,8 @@ def main():
     embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
     embed_workers = int(threading_cfg.get("embed_workers", 2))
     document_queue_size = int(threading_cfg.get("document_queue_size", 200))
-    db_modified = False
+    fts_cfg = cfg.get("fts5", {})
+    fts_batch_size = int(fts_cfg.get("batch_size", 1500))
 
     log.info(
         "[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d",
@@ -161,7 +168,6 @@ def main():
             t.join()
         q.join()
         t_ingest.join()
-        db_modified = True
 
     if do_db_repair:
         conn = connect(str(db_path))
@@ -177,16 +183,32 @@ def main():
             log.exception("[REPAIR] Database repair failed")
         finally:
             try:
-                db_modified = True
                 conn.close()
             except Exception:
                 pass
 
-    if db_modified:
+    if do_fts_rebuild:
         conn = connect(str(db_path))
         try:
-            rebuild_chunks_fts(conn)
-            log.info("[FTS] chunks_fts rebuilt successfully")
+            log.info("[FTS5] full rebuild starting")
+            rep = rebuild_chunks_fts(conn)
+            log.info("[FTS5] full rebuild done rows=%d", rep["fts_rows_inserted"])
+        finally:
+            conn.close()
+
+    elif do_fts_init or do_fts_sync or do_crawl or do_db_repair:
+        conn = connect(str(db_path))
+        try:
+            if do_fts_init:
+                n = mark_all_active_docs_dirty(conn, reason="initial")
+                log.info("[FTS5] marked active docs dirty count=%d", n)
+
+            rep = sync_dirty_chunks_fts(conn, batch_size=fts_batch_size)
+            log.info(
+                "[FTS5] sync done dirty_docs=%d inserted_rows=%d",
+                rep["dirty_docs_synced"],
+                rep["fts_rows_inserted"],
+            )
         finally:
             conn.close()
 

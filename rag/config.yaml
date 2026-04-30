@@ -16,13 +16,28 @@ ollama:
 llamacpp:
   base_url: http://localhost:8081
   embedding_url: http://localhost:8082
-  embedding_model: /opt/llama-models/all-minilm-l6-v2.gguf #snowflake-arctic-embed-xs.gguf
-  qa_model: /opt/llama-models/llama-3.2-3b-instruct.gguf
+  embedding_model: /opt/models/all-minilm-l6-v2.gguf #snowflake-arctic-embed-xs.gguf
+  qa_model: /opt/models/llama-3.2-3b-instruct.gguf
   qa_keep_alive: "10m"
   timeout: 300
   n_gpu_layers: 99
   embed_keep_alive: "15s"
 
+fts5:
+  batch_size: 500
+
+retrieval:
+  candidate_k: 85
+  deep_candidate_multiplier: 5
+  dedup_max_per_doc: 2
+
+reranker:
+  mode: feature        # none | feature | cross_encoder
+  cross_encoder_top_n: 32
+  cross_encoder_batch_size: 8
+  max_pair_text_chars: 1200
+  cross_encoder_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  
 runtime:
   embedding_provider: ollama  #ollama | llamacpp
   qa_provider: ollama         #ollama | llamacpp

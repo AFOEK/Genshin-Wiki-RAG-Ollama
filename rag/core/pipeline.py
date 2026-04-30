@@ -6,6 +6,8 @@ from utils.textproc import normalize, chunk_text
 from utils.codec import zstd_compress_text
 from utils.clean_fandom import clean_fandom_text
 
+from core.fts import mark_fts_dirty_docs
+
 log = logging.getLogger(__name__)
 
 MOVED_URL_SOURCE = {"honey", "game8", "genshin_gg"}
@@ -52,6 +54,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     """,
                     (url, title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing),
                 )
+                mark_fts_dirty_docs(conn, doc_id_existing, reason="url_moved_metadata")
                 row = (doc_id_existing, old_hash_raw)
         if row:
             doc_id_existing, old_raw_hash = row
@@ -79,6 +82,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                             (title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing))
                         conn.commit()
                         log.info("SKIP %s (doc+chunks+embeddings already complete)", url)
+                        mark_fts_dirty_docs(conn, doc_id_existing, reason="metadata_refresh")
                         return []
                     log.warning("Embeddings missing for %d chunks, embedding-only pass for %s", missing_emb, url)
 
@@ -163,6 +167,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     (existing_doc_id,),
                 )
                 cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
+                mark_fts_dirty_docs(conn, existing_doc_id, reason="no_chunks")
                 cur.execute(
                     """
                     UPDATE docs
@@ -257,6 +262,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 """,
                 (doc_id, i, c, czst, clen, czlen, chash),
             )
+        mark_fts_dirty_docs(conn, doc_id, reason="chunks_changed")
         if doc_changed:
             cur.execute(
                 """

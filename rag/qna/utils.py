@@ -156,6 +156,43 @@ def rrf_fuse(*result_lists, k: int = 60) -> list[tuple[int, float]]:
     fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     return fused
 
+def build_hybrid_signal(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]], *, rrf_k: int = 60, rrf_scale: float = 10.0) -> dict[int, dict]:
+    signals: dict[int, dict] = {}
+
+    def ensure(cid: int) -> dict:
+        if cid not in signals:
+            signals[cid] = {
+                "rrf_score": 0.0,
+                "faiss_score": 0.0,
+                "bm25_score": 0.0,
+                "faiss_rank": None,
+                "bm25_rank": None,
+                "in_faiss": False,
+                "in_bm25": False
+            }
+        return signals[cid]
+    
+    for rank, (cid, score) in enumerate(faiss_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["faiss_score"] = float(score)
+        s["faiss_rank"] = rank
+        s["in_faiss"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, (cid, score) in enumerate(bm25_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["bm25_score"] = float(score)
+        s["bm25_rank"] = rank
+        s["in_bm25"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for s in signals.values():
+        s["rrf_score"] *= rrf_scale
+
+    return signals
+
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     profile = INTENT_PROFILES.get(intent, INTENT_PROFILES["general"])
     priority = profile.get("source_priority", {})
@@ -333,7 +370,7 @@ def detect_intent(question: str) -> str:
         return "general"
     return best
 
-def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, float]) -> list[dict]:
+def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict]) -> list[dict]:
     q_terms = tokenize(question)
     intent  = detect_intent(question)
     profile = INTENT_PROFILES[intent]
@@ -345,7 +382,20 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
-        base_score = float(initial_scores.get(chunk_id, 0.0))
+        signal = retrieval_signals.get(chunk_id, 0.0)
+        if isinstance(signal, dict):
+            base_score = float(signal.get("rrf_score", 0.0))
+            in_faiss = bool(signal.get("in_faiss", False))
+            in_bm25 = bool(signal.get("in_bm25", False))
+            faiss_rank = signal.get("faiss_rank")
+            bm25_rank = signal.get("bm25_rank")
+        else:
+            base_score = float(signal)
+            in_faiss = False
+            in_bm25 = False
+            faiss_rank = None
+            bm25_rank = None
+
         text       = row.get("text") or ""
         title      = row.get("title") or ""
         title_l    = title.lower()
@@ -383,6 +433,25 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
             else 0.0
         )
 
+        retrieval_bonus = 0.0
+        if in_faiss and in_bm25:
+            retrieval_bonus += 0.08
+
+        if intent in {"mechanic", "lore", "biography", "location", "general"}:
+            if in_bm25:
+                retrieval_bonus += 0.05
+            if bm25_rank is not None and bm25_rank <= 5:
+                retrieval_bonus += 0.07
+            elif bm25_rank is not None and bm25_rank <= 15:
+                retrieval_bonus += 0.04
+        
+        if in_faiss:
+            retrieval_bonus += 0.03
+        if faiss_rank is not None and faiss_rank <= 5:
+            retrieval_bonus += 0.05
+        elif faiss_rank is not None and faiss_rank <= 15:
+            retrieval_bonus += 0.03
+        
         penalty = 0.0
         media_count = sum(text.count(ext) for ext in media_exts)
         if media_count > 3:
@@ -416,6 +485,7 @@ def rerank_chunks(question: str, chunks: list[dict], initial_scores: dict[int, f
             + tier_bonus
             + intent_source_bonus
             + intent_title_boost
+            + retrieval_bonus
             - penalty
         )
 
