@@ -9,6 +9,7 @@ from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
 from .generators import generate
 from .cross_encoder import cross_encoder_rerank
+from .context_expand import expand_context_windows
 
 
 log = logging.getLogger(__name__)
@@ -142,8 +143,14 @@ def answer_question(
     chunks = rerank_chunks(question, chunks, initial_scores)
 
     if reranker_mode == "cross_encoder":
-        chunks = cross_encoder_rerank(question, chunks, model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)), batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)), max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)),),
-
+        chunks = cross_encoder_rerank(
+            question, 
+            chunks, 
+            model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), 
+            top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)),
+            batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)),
+            max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200))
+            )
 
     if not chunks:
         try:
@@ -162,7 +169,28 @@ def answer_question(
         )
 
     if not broad:
-        context = build_context(chunks[:direct_top_k])
+        context_cfg = cfg.get("context_expansion", {}) or {}
+        ctx_enabled = bool(context_cfg.get("enabled", False))
+
+        selected_chunks = chunks[:direct_top_k]
+
+        if ctx_enabled:
+            selected_chunks = expand_context_windows(
+                conn,
+                selected_chunks,
+                before=int(context_cfg.get("before", 1)),
+                after=int(context_cfg.get("after", 1)),
+                max_total_chunks=int(context_cfg.get("max_total_chunks", 30)),
+            )
+
+            log.info(
+                "[CTX_EXPAND] expanded context chunks=%d before=%s after=%s",
+                len(selected_chunks),
+                context_cfg.get("before", 1),
+                context_cfg.get("after", 1),
+            )
+
+        context = build_context(selected_chunks)
         prompt = textwrap.dedent(f"""
             You are a retrieval-grounded Genshin Impact assistant.
             Answer the question using ONLY the provided context.

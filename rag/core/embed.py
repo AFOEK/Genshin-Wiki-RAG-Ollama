@@ -99,7 +99,7 @@ def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 1
             if provider == "llamacpp":
                 llamacpp = cfg["llamacpp"]
                 return embed_llamacpp(
-                    llamacpp["base_url"],
+                    llamacpp["embedding_url"],
                     llamacpp["embedding_model"],
                     text_or_texts,
                     llamacpp.get("embed_keep_alive", None),
