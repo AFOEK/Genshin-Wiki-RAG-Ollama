@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -33,6 +33,14 @@ def answer_question(
 
     reranker_cfg = cfg.get("reranker", {})
     reranker_mode = str(reranker_cfg.get("mode", "feature")).strip().lower()
+    log.info("[QNA] Use reranker: %s", reranker_mode)
+
+    retrieval_cfg = cfg.get("retrieval", {}) or {}
+    candidate_k_cfg = int(retrieval_cfg.get("candidate_k", 85))
+    deep_candidate_multiplier = int(retrieval_cfg.get("deep_candidate_multiplier", 5))
+    dedup_max_per_doc = int(retrieval_cfg.get("dedup_max_per_doc", 2))
+
+    rrf_k = int(retrieval_cfg.get("rrf_k", 60))
 
     if provider == "llamacpp":
         qa_timeout = int(cfg.get("llamacpp", {}).get("timeout", 300))
@@ -42,11 +50,78 @@ def answer_question(
     intent = detect_intent(question)
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
-    candidate_k = max(top_k * 5, 85)
+    candidate_k = max(top_k * 5, candidate_k_cfg)
+    log.info(
+        "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s broad=%s",
+        top_k,
+        candidate_k,
+        deep_candidate_multiplier,
+        dedup_max_per_doc,
+        intent,
+        broad,
+    )
 
-    retriever_name = retriever_name.strip().lower()
-    if retriever_name == "sql":
-        retriever_name = "sqlite"
+    faiss_ret_cache = None
+    bm25_ret_cache = None
+    q_vec_cache = None
+    q_dims_cache = None
+
+    def get_q_vec(ret):
+        nonlocal q_vec_cache, q_dims_cache
+
+        if q_vec_cache is None:
+            q_blob, q_dims = embed(cfg, question, backend=backend)
+
+            if q_dims != ret.dims:
+                raise RuntimeError(
+                    f"query embedding dims mismatch: query={q_dims} retriever={ret.dims}"
+                )
+
+            q_vec_cache = normalize_query_vec(q_blob, q_dims)
+            q_dims_cache = q_dims
+            return q_vec_cache
+
+        if q_dims_cache != ret.dims:
+            raise RuntimeError(
+                f"cached query embedding dims mismatch: query={q_dims_cache} retriever={ret.dims}"
+            )
+
+        return q_vec_cache
+
+
+    def get_faiss_ret():
+        nonlocal faiss_ret_cache
+
+        if faiss_ret_cache is None:
+            faiss_ret_cache = FaissRetriever(faiss_dir)
+
+        return faiss_ret_cache
+
+
+    def get_bm25_ret():
+        nonlocal bm25_ret_cache
+
+        if bm25_ret_cache is None:
+            bm25_ret_cache = BM25Retriever(conn)
+
+        return bm25_ret_cache
+
+
+    def search_embedding_retriever(ret, k: int):
+        q_vec = get_q_vec(ret)
+        return ret.search(q_vec, k)
+
+
+    def search_hybrid(k: int):
+        faiss_ret = get_faiss_ret()
+        bm25_ret = get_bm25_ret()
+
+        q_vec = get_q_vec(faiss_ret)
+
+        faiss_results = faiss_ret.search(q_vec, k)
+        bm25_results = bm25_ret.search(question.lower(), k)
+
+        return rrf_fuse(faiss_results, bm25_results, k=rrf_k)
 
     def search_embedding_retriever(ret, k: int):
         q_blob, q_dims = embed(cfg, question, backend=backend)
@@ -71,11 +146,15 @@ def answer_question(
         faiss_results = faiss_ret.search(q_vec, k)
         bm25_results = bm25_ret.search(question.lower(), k)
 
-        return rrf_fuse(faiss_results, bm25_results, k=60)
+        return rrf_fuse(faiss_results, bm25_results, k=rrf_k)
+
+    retriever_name = retriever_name.strip().lower()
+    if retriever_name == "sql":
+        retriever_name = "sqlite"
 
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
-        retriever = FaissRetriever(faiss_dir)
+        retriever = get_faiss_ret()
         results = search_embedding_retriever(retriever, candidate_k)
     elif retriever_name == "sqlite":
         log.info("[QNA] using SQLite brute-force retriever")
@@ -83,10 +162,11 @@ def answer_question(
         results = search_embedding_retriever(retriever, candidate_k)
     elif retriever_name == "bm25":
         log.info("[QNA] using SQLite BM25 retriever")
-        retriever = BM25Retriever(conn)
+        retriever = get_bm25_ret()
         results = retriever.search(question.lower(), candidate_k)
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
+        retriever = None
         results = search_hybrid(candidate_k)
     else:
         raise RuntimeError(f"Unknown retriever: {retriever_name}")
@@ -103,7 +183,7 @@ def answer_question(
     )
 
     if intent in ("build", "mechanic", "lore", "biography", "location") and len(filtered_ids) < 3:
-        deep_k = candidate_k * 5
+        deep_k = candidate_k * deep_candidate_multiplier
         log.info("[QNA] intent filter returned too few chunks; deep search k=%d", deep_k)
 
         if retriever_name == "faiss":
@@ -138,10 +218,14 @@ def answer_question(
         initial_scores = {cid: score for cid, score in results}
 
     chunks = fetch_chunks(conn, chunk_ids)
-    max_per_doc = 3 if intent in ("biography", "location") else 2
+    max_per_doc = dedup_max_per_doc
+    if intent in ("biography", "location"):
+        max_per_doc = max(dedup_max_per_doc, 2)
     chunks = dedupe_chunks(chunks, initial_scores, max_per_doc=max_per_doc)
-    chunks = rerank_chunks(question, chunks, initial_scores)
 
+    if reranker_mode in ("feature", "cross_encoder"):
+        chunks = rerank_chunks(question, chunks, initial_scores)
+    
     if reranker_mode == "cross_encoder":
         chunks = cross_encoder_rerank(
             question, 
@@ -151,6 +235,8 @@ def answer_question(
             batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)),
             max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200))
             )
+    elif reranker_mode not in ("none", "feature", "cross_encoder"):
+        raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
     if not chunks:
         try:
@@ -170,7 +256,7 @@ def answer_question(
 
     if not broad:
         context_cfg = cfg.get("context_expansion", {}) or {}
-        ctx_enabled = bool(context_cfg.get("enabled", False))
+        ctx_enabled = as_bool(context_cfg.get("enabled", False))
 
         selected_chunks = chunks[:direct_top_k]
 

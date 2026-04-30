@@ -252,7 +252,8 @@ python3 rag/test.py --retriever hybrid --backend ollama --direct_top_k 20 --ques
 Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml), where it control:
 - `cross_encoder`
 - `context_expansion`
-The values can be changed.
+- `retrieval`
+The values can be changed, it will control the behavior of the retrievers.
 
 > [!INFO]
 In reranker `cross_encoder_model` value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model.
@@ -296,14 +297,23 @@ Since current project state is on crawling and embedding all the game data, isn'
 ## To-do list
 - [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
 - [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
-- [x] Add Vulkan support.
-- [x] Llama.cpp support
-- [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
+- [x] Add Vulkan and other accelerator support.
+- [x] Llama.cpp support.
+- [ ] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
 - [x] Embedding using Kaggle.
 - [x] Adding cron jobs updates.
 - [x] Pulling from sources.
 - [x] Add multithreading support.
 - [x] FAISS support.
+- [x] FTS5/BM25 support.
+- [x] Cross encoder support.
+- [x] Context expand support.
+- [x] Reranker support.
+- [x] Dense similarity search.
+- [x] Hybrid BM25 and FAISS reranker.
+- [ ] Recency weighting.
+- [ ] Parent-child retriever.
+- [ ] Cache layer retriever.
 
 ## Footenote
 [^1]: It's get processed on Kaggle

@@ -243,6 +243,9 @@ def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], inte
 def load_cfg(path: str = "rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+    
+def as_bool(x) -> bool:
+    return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
 
 def read_only_connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
