@@ -5,6 +5,7 @@ from utils.hashing import sha256_text
 from utils.textproc import normalize, chunk_text
 from utils.codec import zstd_compress_text
 from utils.clean_fandom import clean_fandom_text
+from core.parent import mark_parent_dirty_doc
 
 from core.fts import mark_fts_dirty_docs
 
@@ -168,6 +169,10 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 )
                 cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
                 mark_fts_dirty_docs(conn, existing_doc_id, reason="no_chunks")
+
+                cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
+                mark_parent_dirty_doc(conn, existing_doc_id, reason="no_chunks")
+
                 cur.execute(
                     """
                     UPDATE docs
@@ -263,6 +268,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 (doc_id, i, c, czst, clen, czlen, chash),
             )
         mark_fts_dirty_docs(conn, doc_id, reason="chunks_changed")
+        mark_parent_dirty_doc(conn, doc_id, reason="chunks_changed")
         if doc_changed:
             cur.execute(
                 """

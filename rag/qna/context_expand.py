@@ -24,12 +24,12 @@ def expand_context_windows(conn: sqlite3.Connection, seed_chunks: list[dict], *,
     SELECT chunk_id, doc_id, chunk_index
     FROM chunks
     WHERE chunk_id IN ({placeholder})
-    """, (seed_ids,))
+    """, seed_ids)
     pos_by_chunk_id = {int(r["chunk_id"]): (int(r["doc_id"]), int(r["chunk_index"])) for r in cur.fetchall()}
 
     for seed in seed_chunks:
         seed_id = int(seed["chunk_id"])
-        pos = pos_by_chunk_id.get("seed_id")
+        pos = pos_by_chunk_id.get(seed_id)
         if pos is None:
             continue
 

@@ -61,7 +61,7 @@ def embed_ollama(base_url: str, model: str, text_or_texts, keep_alive: str, time
 
     return [pack_vec(vec) for vec in embeddings]
 
-def embed_llamacpp(base_url: str, model: str, text_or_texts, keep_alive: str, timeout: int):
+def embed_llamacpp(base_url: str, model: str, text_or_texts, timeout: int):
     is_batch = isinstance(text_or_texts, (list, tuple))
     payload_input = list(text_or_texts) if is_batch else [text_or_texts]
 
@@ -70,7 +70,6 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, keep_alive: str, ti
         {
             "model": model,
             "input": payload_input,
-            "keep_alive": keep_alive
         },
         timeout=timeout
     )
@@ -102,7 +101,6 @@ def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 1
                     llamacpp["embedding_url"],
                     llamacpp["embedding_model"],
                     text_or_texts,
-                    llamacpp.get("embed_keep_alive", None),
                     int(llamacpp.get("timeout", "180"))
                 )
             

@@ -27,7 +27,7 @@ def main():
     answer = answer_question(
         cfg,
         args.question,
-        prefer_faiss=(args.retriever == "faiss"),
+        retriever_name=args.retriever,
         direct_top_k=args.direct_top_k,
         broad_top_k=args.broad_top_k,
         summarize_batch_size=args.summarize_batch_size,

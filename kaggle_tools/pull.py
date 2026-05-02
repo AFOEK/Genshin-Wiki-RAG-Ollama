@@ -190,7 +190,9 @@ def main():
             sys.exit(1)
     else:
         status = get_kernel_status(kernel_slug)
-        log.info("[PULL] Proceeding to try output download despite status=%s", status)
+        if status != "complete":
+            log.error("[PULL] Kernel status is '%s', not complete. Use --wait or --force", status)
+            sys.exit(1)
 
     pull_kernel_output(kernel_slug, output_dir, force=True)
     log.info("[KAGGLE_PULL] downloaded Kaggle notebook output into %s", output_dir)

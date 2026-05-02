@@ -83,8 +83,8 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
                     c.chunk_id,
                     c.chunk_id,
                     c.doc_id,
-                    c.source,
-                    c.title,
+                    d.source,
+                    d.title,
                     c.text
                 FROM chunks c
                 JOIN docs d on d.doc_id = c.doc_id

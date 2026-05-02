@@ -62,6 +62,45 @@ CREATE TABLE IF NOT EXISTS embeddings (
         ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS fts_dirty_docs (
+        doc_id INTEGER PRIMARY KEY,
+        reason TEXT,
+        marked_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+CREATE TABLE IF NOT EXISTS chunk_parents (
+        parent_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_id INTEGER NOT NULL,
+        parent_index INTEGER NOT NULL,
+        start_chunk_index INTEGER NOT NULL,
+        end_chunk_index INTEGER NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        UNIQUE(doc_id, parent_index),
+
+        FOREIGN KEY (doc_id) REFERENCES docs(doc_id)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE
+    );
+
+CREATE TABLE IF NOT EXISTS chunk_parent_map (
+    chunk_id INTEGER PRIMARY KEY,
+    parent_id INTEGER NOT NULL,
+
+    FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+
+    FOREIGN KEY (parent_id) REFERENCES chunk_parents(parent_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS parent_dirty_docs (
+    doc_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    marked_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_docs_source ON docs(source);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
@@ -69,6 +108,9 @@ CREATE INDEX IF NOT EXISTS idx_docs_last_modified ON docs(last_modified);
 CREATE INDEX IF NOT EXISTS idx_docs_etag ON docs(etag);
 CREATE INDEX IF NOT EXISTS idx_chunks_active ON chunks(doc_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
+CREATE INDEX IF NOT EXISTS idx_chunk_parents_doc ON chunk_parents(doc_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_parent_map_parent ON chunk_parent_map(parent_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_doc_active_parent ON chunks(doc_id, is_active, chunk_index)
 
 CREATE VIEW IF NOT EXISTS v_docs_by_source AS
 SELECT
@@ -163,12 +205,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text,
     tokenize='unicode61'
 );
-
-CREATE TABLE IF NOT EXISTS fts_dirty_docs (
-        doc_id INTEGER PRIMARY KEY,
-        reason TEXT,
-        marked_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
 """
 
 def connect(path: str) -> sqlite3.Connection:

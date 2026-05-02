@@ -4,6 +4,7 @@ from core.embed import embed
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
 from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_chunks_fts
+from core.parent import rebuild_parent_map, sync_dirty_parent_docs, mark_all_active_docs_parent_dirty
 
 from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite
@@ -45,6 +46,9 @@ def main():
     ap.add_argument("--FTS_SYNC", default="False")
     ap.add_argument("--FTS_INIT", default="False")
     ap.add_argument("--FTS_REBUILD", default="False")
+    ap.add_argument("--PARENT_REBUILD", default="False")
+    ap.add_argument("--PARENT_SYNC", default="False")
+    ap.add_argument("--PARENT_INIT", default="False")
     ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
     args = ap.parse_args()
 
@@ -57,6 +61,9 @@ def main():
     do_fts_sync = parse_bool(args.FTS_SYNC)
     do_fts_init = parse_bool(args.FTS_INIT)
     do_fts_rebuild = parse_bool(args.FTS_REBUILD)
+    do_parent_sync = parse_bool(args.PARENT_SYNC)
+    do_parent_init = parse_bool(args.PARENT_INIT)
+    do_parent_rebuild = parse_bool(args.PARENT_REBUILD)
 
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -249,6 +256,51 @@ def main():
                 conn.close()
             except Exception:
                 pass
+
+    if do_parent_rebuild:
+        conn = connect(str(db_path))
+        try:
+            parent_cfg = cfg.get("parent_child", {}) or {}
+            children_per_parent = int(parent_cfg.get("children_per_parent", 4))
+            rep = rebuild_parent_map(
+                conn,
+                children_per_parent=children_per_parent,
+            )
+
+            log.info(
+                "[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d",
+                rep["parents"],
+                rep["mapped_chunks"],
+                rep["children_per_parent"],
+            )
+        finally:
+            conn.close()
+    elif do_parent_init or do_parent_sync or do_crawl or do_db_repair:
+        conn = connect(str(db_path))
+        try:
+            parent_cfg = cfg.get("parent_child", {}) or {}
+            if do_parent_init:
+                n = mark_all_active_docs_parent_dirty(
+                    conn,
+                    reason="initial_parent_build",
+                )
+                log.info("[PARENT] marked active docs dirty count=%d", n)
+
+            rep = sync_dirty_parent_docs(
+                conn,
+                children_per_parent=int(parent_cfg.get("children_per_parent", 4)),
+                batch_size=int(parent_cfg.get("batch_size", 500)),
+            )
+
+            log.info(
+                "[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",
+                rep["dirty_docs_synced"],
+                rep["parents_inserted"],
+                rep["mapped_chunks"],
+            )
+
+        finally:
+            conn.close()
     
     if do_faiss_migrate:
         log.info("[MIGRATE] FAISS migrate from SQLite3 starting")

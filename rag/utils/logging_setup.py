@@ -15,6 +15,6 @@ def setup_logging(log_path: str | None = None, level: str = "INFO"):
         p = Path(log_path)
         p.parent.mkdir(parents=True, exist_ok=True)
 
-        fileh = RotatingFileHandler(log_path, maxBytes=25_000_000, backupCount=3)
-        fileh.setFormatter(fmt)
-        root.addHandler(fileh)
+        file = RotatingFileHandler(log_path, maxBytes=25_000_000, backupCount=3, encoding="utf-8")
+        file.setFormatter(fmt)
+        root.addHandler(file)

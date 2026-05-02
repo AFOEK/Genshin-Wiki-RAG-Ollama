@@ -18,10 +18,8 @@ llamacpp:
   embedding_url: http://localhost:8082
   embedding_model: /opt/models/all-minilm-l6-v2.gguf #snowflake-arctic-embed-xs.gguf
   qa_model: /opt/models/llama-3.2-3b-instruct.gguf
-  qa_keep_alive: "10m"
   timeout: 300
   n_gpu_layers: 99
-  embed_keep_alive: "15s"
 
 fts5:
   batch_size: 500
@@ -44,6 +42,12 @@ context_expansion:
   after: 1
   max_total_chunks: 24
   direct_only: true
+
+parent_child:
+  enabled: true
+  children_per_parent: 4
+  max_parents: 6
+  max_total_chunks: 24
   
 runtime:
   embedding_provider: ollama  #ollama | llamacpp

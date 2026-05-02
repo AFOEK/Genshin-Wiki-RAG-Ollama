@@ -10,6 +10,7 @@ from .prompts import build_context, summarize_chunk_group, synthesize_final_answ
 from .generators import generate
 from .cross_encoder import cross_encoder_rerank
 from .context_expand import expand_context_windows
+from .parent_child import fetch_parent_context_chunks
 
 
 log = logging.getLogger(__name__)
@@ -118,31 +119,6 @@ def answer_question(
 
         q_vec = get_q_vec(faiss_ret)
 
-        faiss_results = faiss_ret.search(q_vec, k)
-        bm25_results = bm25_ret.search(question.lower(), k)
-
-        return rrf_fuse(faiss_results, bm25_results, k=rrf_k)
-
-    def search_embedding_retriever(ret, k: int):
-        q_blob, q_dims = embed(cfg, question, backend=backend)
-        if q_dims != ret.dims:
-            raise RuntimeError(
-                f"query embedding dims mismatch: query={q_dims} retriever={ret.dims}"
-            )
-        q_vec = normalize_query_vec(q_blob, q_dims)
-        return ret.search(q_vec, k)
-
-    def search_hybrid(k: int):
-        faiss_ret = FaissRetriever(faiss_dir)
-        bm25_ret = BM25Retriever(conn)
-
-        q_blob, q_dims = embed(cfg, question, backend=backend)
-        if q_dims != faiss_ret.dims:
-            raise RuntimeError(
-                f"query embedding dims mismatch: query={q_dims} retriever={faiss_ret.dims}"
-            )
-
-        q_vec = normalize_query_vec(q_blob, q_dims)
         faiss_results = faiss_ret.search(q_vec, k)
         bm25_results = bm25_ret.search(question.lower(), k)
 
@@ -260,21 +236,32 @@ def answer_question(
 
         selected_chunks = chunks[:direct_top_k]
 
+        parent_cfg = cfg.get("parent_child", {}) or {}
+        parent_enabled = as_bool(parent_cfg.get("enabled", False))
+
+
+        if parent_enabled:
+            selected_chunks = fetch_parent_context_chunks(
+                conn,
+                selected_chunks,
+                max_parents=int(parent_cfg.get("max_parents", 8)),
+                max_total_chunks=int(parent_cfg.get("max_total_chunks", 32)),
+            )
+
+            log.info("[PARENT] expanded selected chunks to parent context chunks=%d", len(selected_chunks))
+
         if ctx_enabled:
+            ctx_max_total = int(context_cfg.get("max_total_chunks_after_parent", context_cfg.get("max_total_chunks", 30)))
+
             selected_chunks = expand_context_windows(
                 conn,
                 selected_chunks,
                 before=int(context_cfg.get("before", 1)),
                 after=int(context_cfg.get("after", 1)),
-                max_total_chunks=int(context_cfg.get("max_total_chunks", 30)),
+                max_total_chunks=ctx_max_total,
             )
 
-            log.info(
-                "[CTX_EXPAND] expanded context chunks=%d before=%s after=%s",
-                len(selected_chunks),
-                context_cfg.get("before", 1),
-                context_cfg.get("after", 1),
-            )
+            log.info("[CTX_EXPAND] expanded context chunks=%d before=%s after=%s", len(selected_chunks), context_cfg.get("before", 1), context_cfg.get("after", 1))
 
         context = build_context(selected_chunks)
         prompt = textwrap.dedent(f"""
