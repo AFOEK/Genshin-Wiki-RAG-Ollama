@@ -158,11 +158,12 @@ SELECT
     COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NOT NULL THEN c.chunk_id END) AS embedded_active_chunk_count,
     COUNT(DISTINCT CASE WHEN c.is_active = 1 AND e.chunk_id IS NULL THEN c.chunk_id END) AS missing_embedding_count,
     COUNT(DISTINCT CASE
-        WHEN NOT EXISTS (
-            SELECT 1
-            FROM chunks c2
-            WHERE c2.doc_id = d.doc_id
-              AND c2.is_active = 1
+    WHEN COALESCE(d.status, 1) = 1
+     AND NOT EXISTS (
+        SELECT 1
+        FROM chunks c2
+        WHERE c2.doc_id = d.doc_id
+        AND c2.is_active = 1
         )
         THEN d.doc_id
     END) AS docs_with_no_active_chunks
@@ -196,7 +197,8 @@ FROM docs d
 LEFT JOIN chunks c
     ON c.doc_id = d.doc_id
    AND c.is_active = 1
-WHERE c.chunk_id IS NULL;
+WHERE c.chunk_id IS NULL
+  AND COALESCE(d.status, 1) = 1;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     chunk_id UNINDEXED,
@@ -231,7 +233,7 @@ def init_db(path: str) -> None:
     finally:
         conn.close()
 
-def connect(path: str) -> sqlite3.Connection:
+def connect(path: str, init_schema: bool = False) -> sqlite3.Connection:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -239,7 +241,7 @@ def connect(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
 
-    if init_db:
+    if init_schema:
         conn.executescript(SCHEMA)
 
     log.info(f"[INFO] Connected to sqlite db at {p}")
