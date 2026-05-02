@@ -10,6 +10,7 @@ def mark_parent_dirty_doc(
     doc_id: int,
     reason: str = "chunks_changed",
 ) -> None:
+    log.info("[PARENT] Marking dirty parent docs")
     conn.execute(
         """
         INSERT INTO parent_dirty_docs(doc_id, reason, marked_at)
@@ -37,6 +38,7 @@ def mark_all_active_docs_parent_dirty(
     """, (reason,))
     n = int(cur.rowcount or 0)
     conn.commit()
+    log.info("[PARENT] Dirty docs counts %d", n)
     return n
 
 def rebuild_parent_for_doc(
@@ -130,6 +132,7 @@ def rebuild_parent_for_doc(
     maps_inserted = int(cur.rowcount or 0)
 
     cur.execute("DROP TABLE IF EXISTS temp_parent_doc_chunks")
+    log.info("[PARENT] parents_inserted: %d, maps_inserted: %d", parents_inserted, maps_inserted)
 
     return parents_inserted, maps_inserted
 
@@ -147,7 +150,7 @@ def sync_dirty_parent_docs(
     total_docs = 0
     total_parents = 0
     total_maps = 0
-
+    log.info("[PARENT] Syncing dirty parent docs")
     while True:
         rows = cur.execute(
             """
@@ -206,7 +209,7 @@ def sync_dirty_parent_docs(
 def rebuild_parent_map(conn: sqlite3.Connection, *, childern_per_parent: int= 4) -> dict:
     childern_per_parent = max(1, childern_per_parent)
     cur = conn.cursor()
-
+    log.info("[PARENT] Rebuild parent-child map")
     cur.execute("BEGIN IMMEDIATE")
     try:
         cur.execute("DELETE FROM chunk_parent_map")

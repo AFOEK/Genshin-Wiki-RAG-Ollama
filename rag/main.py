@@ -210,6 +210,7 @@ def main():
                 n = mark_all_active_docs_dirty(conn, reason="initial")
                 log.info("[FTS5] marked active docs dirty count=%d", n)
 
+            log.info("[FTS5] Start to syncing dirty chunks")
             rep = sync_dirty_chunks_fts(conn, batch_size=fts_batch_size)
             log.info(
                 "[FTS5] sync done dirty_docs=%d inserted_rows=%d",
@@ -262,10 +263,7 @@ def main():
         try:
             parent_cfg = cfg.get("parent_child", {}) or {}
             children_per_parent = int(parent_cfg.get("children_per_parent", 4))
-            rep = rebuild_parent_map(
-                conn,
-                children_per_parent=children_per_parent,
-            )
+            rep = rebuild_parent_map(conn, children_per_parent=children_per_parent)
 
             log.info(
                 "[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d",
@@ -284,21 +282,12 @@ def main():
                     conn,
                     reason="initial_parent_build",
                 )
-                log.info("[PARENT] marked active docs dirty count=%d", n)
 
             rep = sync_dirty_parent_docs(
                 conn,
                 children_per_parent=int(parent_cfg.get("children_per_parent", 4)),
                 batch_size=int(parent_cfg.get("batch_size", 500)),
             )
-
-            log.info(
-                "[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",
-                rep["dirty_docs_synced"],
-                rep["parents_inserted"],
-                rep["mapped_chunks"],
-            )
-
         finally:
             conn.close()
     
