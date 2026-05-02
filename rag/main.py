@@ -1,5 +1,5 @@
 import yaml, re, logging, queue, threading, argparse
-from core.db import connect
+from core.db import connect, init_db
 from core.embed import embed
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
@@ -75,7 +75,8 @@ def main():
     log = logging.getLogger(__name__)
     log.info("[INFO] Logging initialized")
     db_path = resolve_db_path(cfg)
-    log.info("[INFO] Database initialized at %s", db_path)
+    init_db(db_path)
+    log.info("[INFO] Database init at %s", db_path)
 
     def embed_fn(text_or_texts):
         return embed(cfg, text_or_texts, backend=args.BACKEND)

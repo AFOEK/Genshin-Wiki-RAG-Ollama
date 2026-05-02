@@ -5,6 +5,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SCHEMA = """
+PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
 PRAGMA wal_autocheckpoint=2000;
 PRAGMA synchronous=NORMAL;
@@ -110,7 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_active ON chunks(doc_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
 CREATE INDEX IF NOT EXISTS idx_chunk_parents_doc ON chunk_parents(doc_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_parent_map_parent ON chunk_parent_map(parent_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_doc_active_parent ON chunks(doc_id, is_active, chunk_index)
+CREATE INDEX IF NOT EXISTS idx_chunks_doc_active_parent ON chunks(doc_id, is_active, chunk_index);
 
 CREATE VIEW IF NOT EXISTS v_docs_by_source AS
 SELECT
@@ -207,16 +208,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 );
 """
 
-def connect(path: str) -> sqlite3.Connection:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), timeout=60.0, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON;")
-    conn.executescript(SCHEMA)
-    log.info(f"[INFO] Connected to sqlite db at {p}")
-    return conn
-
 def read_only_connect(path: str) -> sqlite3.Connection:
     p = Path(path)
     if not p.exists():
@@ -224,4 +215,32 @@ def read_only_connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     log.info(f"[INFO] Read-only sqlite db connected at {p}")
+    return conn
+
+def init_db(path: str) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(p), timeout=120.0, isolation_level=None)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON;")
+        conn.executescript(SCHEMA)
+
+        log.info(f"[INFO] Initialized sqlite db schema at {p}")
+    finally:
+        conn.close()
+
+def connect(path: str) -> sqlite3.Connection:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(p), timeout=60.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON;")
+
+    if init_db:
+        conn.executescript(SCHEMA)
+
+    log.info(f"[INFO] Connected to sqlite db at {p}")
     return conn
