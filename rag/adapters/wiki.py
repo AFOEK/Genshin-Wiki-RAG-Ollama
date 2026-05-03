@@ -8,9 +8,7 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from urllib.parse import quote
-from requests.exceptions import RequestException, Timeout, ConnectionError, HTTPError
-from utils.clean_fandom import clean_fandom_text
-
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}

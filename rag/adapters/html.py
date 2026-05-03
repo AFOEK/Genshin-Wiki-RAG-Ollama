@@ -44,7 +44,7 @@ def drop_game8_comment(soup: BeautifulSoup) -> None:
     
     for h in soup.select("h1, h2, h3, h4"):
         txt = h.get_text(" ", strip=True).lower()
-        if txt in {"commment", "comments"}:
+        if txt in {"comment", "comments"}:
             parent = h.find_parent(["section", "div"])
             if parent:
                 parent.decompose()

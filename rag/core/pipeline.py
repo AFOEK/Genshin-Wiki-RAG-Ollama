@@ -169,8 +169,6 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 )
                 cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
                 mark_fts_dirty_docs(conn, existing_doc_id, reason="no_chunks")
-
-                cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
                 mark_parent_dirty_doc(conn, existing_doc_id, reason="no_chunks")
 
                 cur.execute(

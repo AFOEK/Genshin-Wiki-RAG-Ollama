@@ -177,7 +177,7 @@ def build_faiss_from_sqlite(
 
     if isinstance(index, faiss.IndexIVF):
         if not trained:
-            raise RuntimeError(f"[FAISS] IVF index never got enough training vectors")
+            raise RuntimeError("[FAISS] IVF index never got enough training vectors")
         index.nprobe = int(faiss_cfg.get("nprobe", 16))
     
     faiss.write_index(index, str(index_path))

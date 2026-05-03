@@ -1,6 +1,6 @@
 from pathlib import Path
 import shutil, logging
-from git import Repo, InvalidGitRepositoryError, GitCommandError
+from git import Repo, InvalidGitRepositoryError
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def ensure_repo(repo_path: str, repo_url: str) -> tuple[bool, str]:
         Repo.clone_from(repo_url, repo_path, depth=1)
         repo = Repo(repo_path)
         head = repo.head.commit.hexsha
-        log.warning(f"[KQM] Re-cloned invalid repo %s @ %s", repo_url, head[:7])
+        log.warning("[KQM] Re-cloned invalid repo %s @ %s", repo_url, head[:7])
         return True, head
         
     origin = repo.remotes.origin

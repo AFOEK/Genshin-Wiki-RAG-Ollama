@@ -65,6 +65,6 @@ def expand_context_windows(conn: sqlite3.Connection, seed_chunks: list[dict], *,
             expanded.append(item)
             seen_chunks_ids.add(cid)
             if len(expanded) >= max_total_chunks:
-                log.info("[CTX_EXPAND] Reaced max_total_chunks=%d", max_total_chunks)
+                log.info("[CTX_EXPAND] Reached max_total_chunks=%d", max_total_chunks)
                 return expanded
     return expanded

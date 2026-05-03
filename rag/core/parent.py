@@ -198,6 +198,8 @@ def sync_dirty_parent_docs(
         except Exception:
             conn.rollback()
             raise
+    
+    log.info("[PARENT] Sync done dirty_docs=%d parents=%d mapped_chunks=%d", total_docs, total_parents, total_maps)
 
     return {
         "dirty_docs_synced": total_docs,
@@ -219,7 +221,7 @@ def rebuild_parent_map(conn: sqlite3.Connection, *, childern_per_parent: int= 4)
         cur.execute("""
         CREATE TEMP TABLE temp_parent_active AS
         SELECT
-            c.chunk_id
+            c.chunk_id,
             c.doc_id,
             c.chunk_index,
             CAST(c.chunk_index / ? AS INTEGER) AS parent_index

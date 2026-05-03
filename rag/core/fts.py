@@ -95,10 +95,10 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
                     total_inserted += inserted
 
                 cur.execute("DELETE FROM fts_dirty_docs WHERE doc_id=?", (doc_id,))
-                conn.commit()
-                total_docs += len(docs_ids)
-
-                log.info("[FTS5] Synced dirty docs batch=%d total_docs=%d total_inserted=%d", len(docs_ids), total_docs, total_inserted)
+                
+            conn.commit()
+            total_docs += len(docs_ids)
+            log.info("[FTS5] Synced dirty docs batch=%d total_docs=%d total_inserted=%d", len(docs_ids), total_docs, total_inserted)
         except Exception:
             conn.rollback()
             raise
