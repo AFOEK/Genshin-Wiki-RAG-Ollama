@@ -5,6 +5,7 @@ from utils.hashing import sha256_text
 from utils.textproc import normalize, chunk_text
 from utils.codec import zstd_compress_text
 from utils.clean_fandom import clean_fandom_text
+from utils.versioning import extract_version_signal
 from core.parent import mark_parent_dirty_doc
 
 from core.fts import mark_fts_dirty_docs
@@ -33,6 +34,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
     try:
         cur.execute("BEGIN IMMEDIATE")
         raw_hash = sha256_text(raw_text)
+        version_label, version_ord = extract_version_signal(title, raw_text, config)
         doc_changed = False
         cur.execute("SELECT doc_id, raw_hash FROM docs WHERE url=?", (url,))
         row = cur.fetchone()
@@ -50,10 +52,18 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 cur.execute(
                     """
                     UPDATE docs
-                    SET url=?, title=?, fetched_at=?, tier=?, weight=?, last_modified=?, etag=?
+                    SET url=?,
+                        title=?,
+                        fetched_at=?,
+                        tier=?,
+                        weight=?,
+                        last_modified=?,
+                        etag=?,
+                        version_label=?,
+                        version_ord=?
                     WHERE doc_id=?
                     """,
-                    (url, title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing),
+                    (url, title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, version_label, version_ord, doc_id_existing),
                 )
                 mark_fts_dirty_docs(conn, doc_id_existing, reason="url_moved_metadata")
                 row = (doc_id_existing, old_hash_raw)
@@ -81,9 +91,9 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                             WHERE doc_id=?
                             """,
                             (title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing))
+                        mark_fts_dirty_docs(conn, doc_id_existing, reason="metadata_refresh")
                         conn.commit()
                         log.info("SKIP %s (doc+chunks+embeddings already complete)", url)
-                        mark_fts_dirty_docs(conn, doc_id_existing, reason="metadata_refresh")
                         return []
                     log.warning("Embeddings missing for %d chunks, embedding-only pass for %s", missing_emb, url)
 
@@ -183,6 +193,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                         weight=?,
                         last_modified=?,
                         etag=?,
+                        version_label=?,
+                        version_ord=?,
                         raw_zst=?,
                         raw_len=?,
                         raw_zst_len=?
@@ -197,6 +209,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                         weight,
                         last_modified,
                         etag,
+                        version_label,
+                        version_ord,
                         raw_zst,
                         raw_len,
                         raw_zst_len,
@@ -211,8 +225,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
 
         cur.execute(
             """
-            INSERT INTO docs(source, url, title, fetched_at, raw_hash, norm_hash, tier, weight, last_modified, etag, raw_zst, raw_len, raw_zst_len)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO docs(source, url, title, fetched_at, raw_hash, norm_hash, tier, weight, last_modified, etag, version_label, version_ord, raw_zst, raw_len, raw_zst_len)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(url) DO UPDATE SET
                 title=excluded.title,
                 fetched_at=excluded.fetched_at,
@@ -222,6 +236,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 weight=excluded.weight,
                 last_modified=excluded.last_modified,
                 etag=excluded.etag,
+                version_label=excluded.version_label,
+                version_ord=excluded.version_ord,
                 raw_zst=excluded.raw_zst,
                 raw_len=excluded.raw_len,
                 raw_zst_len=excluded.raw_zst_len,
@@ -238,6 +254,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 weight,
                 last_modified,
                 etag,
+                version_label,
+                version_ord,
                 raw_zst,
                 raw_len,
                 raw_zst_len,

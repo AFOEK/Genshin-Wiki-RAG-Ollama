@@ -17,7 +17,12 @@ def fetch_chunks(conn: sqlite3.Connection, chunk_ids: list[int]) -> list[dict]:
             d.url,
             d.title,
             d.tier,
-            d.weight
+            d.weight,
+            d.version_label,
+            d.version_ord,
+            d.published_at,
+            d.fetched_at,
+            d.last_modified
         FROM chunks c
         JOIN docs d ON d.doc_id = c.doc_id
         WHERE c.chunk_id IN ({placeholders})
