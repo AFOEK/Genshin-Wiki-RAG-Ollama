@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool, get_kqm_news_fetch_version_baseline
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -199,8 +199,15 @@ def answer_question(
         max_per_doc = max(dedup_max_per_doc, 2)
     chunks = dedupe_chunks(chunks, initial_scores, max_per_doc=max_per_doc)
 
+    baseline_label, baseline_ord = get_kqm_news_fetch_version_baseline(conn)
+    log.info(
+        "[QNA] current version baseline from kqm_news: label=%s ord=%s",
+        baseline_label,
+        baseline_ord,
+    )
+
     if reranker_mode in ("feature", "cross_encoder"):
-        chunks = rerank_chunks(question, chunks, initial_scores)
+        chunks = rerank_chunks(question, chunks, initial_scores, baseline_ord)
     
     if reranker_mode == "cross_encoder":
         chunks = cross_encoder_rerank(

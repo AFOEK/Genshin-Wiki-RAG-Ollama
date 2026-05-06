@@ -48,6 +48,23 @@ parent_child:
   children_per_parent: 4
   max_parents: 6
   max_total_chunks: 24
+
+versioning:
+  aliases:
+    luna 1: 600
+    luna i: 600
+    luna 2: 601
+    luna ii: 601
+    luna 3: 603
+    luna iii: 603
+    luna 4: 604
+    luna iv: 604
+    luna 5: 605
+    luna v: 605
+    luna 6: 606
+    luna vi: 606
+    luna 7: 607
+    luna vii: 607
   
 runtime:
   embedding_provider: ollama  #ollama | llamacpp

@@ -353,13 +353,18 @@ def detect_intent(question: str) -> str:
         "relationship", "affiliated with", "affiliation", "vision holder",
         "from where", "hometown", "nationality", "occupation", "bio",
         "profile", "voiceline", "voiced by", "height",
-]
+    ]
 
+    RECENCY_MARKERS = [
+        "recent", "latest", "current", "currently", "now", "new", "updated", "update", "patch", "version", "meta", 
+        "this patch", "this version", "new build", "current build", "latest build", "best build", "today",
+    ]
     build_hits = sum(1 for m in BUILD_MARKERS if m in q)
     lore_hits = sum(1 for m in LORE_MARKERS if m in q)
     mechanics_hits = sum(1 for m in MECHANICS_MARKERS if m in q)
     location_hits = sum(1 for m in LOCATION_MARKERS if m in q)
     biography_hits = sum(1 for m in BIOGRAPHY_MARKERS if m in q)
+    recency_hits = sum(1 for m in RECENCY_MARKERS if m in q)
 
     scores = {
         "build":     build_hits,
@@ -367,13 +372,31 @@ def detect_intent(question: str) -> str:
         "mechanic":  mechanics_hits,
         "location":  location_hits,
         "biography": biography_hits,
+        "renceny": recency_hits,
     }
     best = max(scores, key=scores.get)
     if scores[best] == 0:
         return "general"
     return best
 
-def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict]) -> list[dict]:
+def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection) -> tuple[str | None, int | None]:
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT version_label, version_ord
+        FROM docs
+        WHERE source = 'kqm_news'
+            AND version_ord is NOT NULL
+            AND COALESCE(status, 1) = 1
+        ORDER BY version_ord DESC, fetched_at DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    if not row:
+        return None, None
+    
+    return row["version_label"], int(row["version_ord"])
+
+def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict], current_version_ord: int | None = None) -> list[dict]:
     q_terms = tokenize(question)
     intent  = detect_intent(question)
     profile = INTENT_PROFILES[intent]
@@ -482,6 +505,37 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         # elif source not in required and source not in priority.get("preferred", []):
         #     penalty += 0.25
 
+        recency_bonus = 0.0
+        recency_penalty = 0.0
+
+        recency_explicit = profile.get("recency") or ""
+        receny_active =  recency_explicit or intent in {"build", "mechanic", "lore"}
+
+        if receny_active and current_version_ord is not None:
+            row_version_ord = row.get("version_ord")
+            if row_version_ord is not None:
+                try:
+                    row_version_ord = int(row_version_ord)
+                    distance = current_version_ord - row_version_ord
+
+                    if distance <= 0:
+                        recency_bonus += 0.15 if recency_explicit else 0.08
+
+                    elif distance <= 1:
+                        recency_bonus += 0.08 if recency_explicit else 0.04
+
+                    elif distance <= 3:
+                        recency_bonus += 0.03 if recency_explicit else 0.01
+                    else:
+                        recency_penalty += min(0.25, 0.04 * distance) if recency_explicit else min(0.12, 0.02 * distance)
+
+                except Exception:
+                    pass
+
+            else:
+                if recency_explicit:
+                    recency_penalty += 0.04
+
         final_score = (
             weighted_base
             + lexical_bonus
@@ -489,6 +543,8 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             + intent_source_bonus
             + intent_title_boost
             + retrieval_bonus
+            + recency_bonus
+            - recency_penalty
             - penalty
         )
 
