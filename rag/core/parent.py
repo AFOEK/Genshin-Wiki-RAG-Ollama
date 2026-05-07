@@ -208,8 +208,8 @@ def sync_dirty_parent_docs(
         "children_per_parent": children_per_parent,
     }
 
-def rebuild_parent_map(conn: sqlite3.Connection, *, childern_per_parent: int= 4) -> dict:
-    childern_per_parent = max(1, childern_per_parent)
+def rebuild_parent_map(conn: sqlite3.Connection, *, children_per_parent: int= 4) -> dict:
+    children_per_parent = max(1, children_per_parent)
     cur = conn.cursor()
     log.info("[PARENT] Rebuild parent-child map")
     cur.execute("BEGIN IMMEDIATE")
@@ -229,7 +229,7 @@ def rebuild_parent_map(conn: sqlite3.Connection, *, childern_per_parent: int= 4)
         JOIN docs d ON d.doc_id = c.doc_id
         WHERE c.is_active = 1
         AND COALESCE(d.status, 1) = 1
-        """, (childern_per_parent,))
+        """, (children_per_parent,))
 
         cur.execute("""
             INSERT INTO chunk_parents(
@@ -267,12 +267,12 @@ def rebuild_parent_map(conn: sqlite3.Connection, *, childern_per_parent: int= 4)
         cur.execute("DROP TABLE IF EXISTS temp_parent_active")
         conn.commit()
 
-        log.info("[PARENT] Rebuild parent map parents=%d, mapped_chunks=%d, children_per_parents=%d", parent_count, map_count, childern_per_parent)
+        log.info("[PARENT] Rebuild parent map parents=%d, mapped_chunks=%d, children_per_parents=%d", parent_count, map_count, children_per_parent)
 
         return{
             "parents": parent_count,
             "mapped_chunks": map_count,
-            "childern_per_parent": childern_per_parent
+            "children_per_parent": children_per_parent
         }
     except Exception:
         conn.rollback()

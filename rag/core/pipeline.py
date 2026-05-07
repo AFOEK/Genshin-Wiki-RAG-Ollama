@@ -34,7 +34,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
     try:
         cur.execute("BEGIN IMMEDIATE")
         raw_hash = sha256_text(raw_text)
-        version_label, version_ord = extract_version_signal(title, raw_text, config)
+        version_label, version_ord = extract_version_signal(title, raw_text, config, source=source)
         doc_changed = False
         cur.execute("SELECT doc_id, raw_hash FROM docs WHERE url=?", (url,))
         row = cur.fetchone()

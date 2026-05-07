@@ -7,7 +7,7 @@ session = requests.Session()
 def ollama_generate(base_url: str, model: str, prompt: str, retries:int = 3, keep_alive: str = "10m", timeout:int = 300) -> str:
     for attempt in range(retries):
         try:
-            r = requests.post(
+            r = session.post(
                 f"{base_url}/api/generate",
                 json={
                     "model": model,

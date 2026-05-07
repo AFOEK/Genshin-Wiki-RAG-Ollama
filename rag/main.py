@@ -264,7 +264,7 @@ def main():
         try:
             parent_cfg = cfg.get("parent_child", {}) or {}
             children_per_parent = int(parent_cfg.get("children_per_parent", 4))
-            rep = rebuild_parent_map(conn, childern_per_parent=children_per_parent)
+            rep = rebuild_parent_map(conn, children_per_parent=children_per_parent)
 
             log.info(
                 "[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d",

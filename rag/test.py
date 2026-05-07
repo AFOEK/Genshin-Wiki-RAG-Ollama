@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import yaml
 
 from qna.utils import load_cfg
 from qna.engine import answer_question

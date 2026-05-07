@@ -75,6 +75,7 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
     except Exception as e:
         if len(prepared_jobs) == 1:
             job, cur_txt = prepared_jobs[0]
+            log.warning("[EMBED-%d] non-retryable failure chunk_id=%s err=%s", worker_id, job.chunk_id, e)
             return [EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None)]
 
         mid = len(prepared_jobs) // 2
