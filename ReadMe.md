@@ -205,16 +205,19 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FTS_SYNC=True
 --FTS_INIT=False
 --FTS_REBUILD=False
+--PARENT_REBUILD=False
+--PARENT_SYNC=False
+--PARENT_INIT=False
 --BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume taht previous run don't has `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records and `--BACKENDS` it will pick backend type according user input.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
 
 > [!WARNING]
 Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
 
 ```
 # Crawl + DB Audit
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
 ```
 ```
 # Migrate + Audit FAISS
@@ -222,7 +225,7 @@ python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAI
 ```
 ```
 # DB Repair + DB Audit
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
 ```
 ```
 # Full pipeline
@@ -253,6 +256,7 @@ Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml
 - `cross_encoder`
 - `context_expansion`
 - `retrieval`
+- `parent_child`
 The values can be changed, it will control the behavior of the retrievers.
 
 > [!INFO]
@@ -312,7 +316,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [x] Dense similarity search.
 - [x] Hybrid BM25 and FAISS reranker.
 - [ ] Recency weighting.
-- [ ] Parent-child retriever.
+- [x] Parent-child retriever.
 - [ ] Cache layer retriever.
 
 ## Footenote
