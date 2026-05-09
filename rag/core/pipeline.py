@@ -87,10 +87,10 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                         cur.execute(
                             """
                             UPDATE docs
-                            SET title=?, fetched_at=?, tier=?, weight=?, last_modified=?, etag=?
+                            SET title=?, fetched_at=?, tier=?, weight=?, last_modified=?, etag=?, version_label=?, version_ord=?
                             WHERE doc_id=?
                             """,
-                            (title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, doc_id_existing))
+                            (title, datetime.now(timezone.utc).isoformat(), tier, weight, last_modified, etag, version_label, version_ord, doc_id_existing))
                         mark_fts_dirty_docs(conn, doc_id_existing, reason="metadata_refresh")
                         conn.commit()
                         log.info("SKIP %s (doc+chunks+embeddings already complete)", url)

@@ -320,6 +320,7 @@ def main():
         )
         log.info("[FAISS_AUDIT] All requested stages completed successfully")
         
+    log.info("[ALL] DONE!")
     # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}
     # for source, url, title, text in TEST_DOCS:
     #     tier, weight = source_meta.get(source, ("primary", 1.0))
