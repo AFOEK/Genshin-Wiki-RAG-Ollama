@@ -66,7 +66,7 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
         FROM fts_dirty_docs
         ORDER BY marked_at
         LIMIT ?
-        """, (batch_size)).fetchall()
+        """, (batch_size,)).fetchall()
 
         if not dirty:
             break

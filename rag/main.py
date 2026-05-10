@@ -207,16 +207,40 @@ def main():
     elif do_fts_init or do_fts_sync or do_crawl or do_db_repair:
         conn = connect(str(db_path))
         try:
+            cur = conn.cursor()
+
+            cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
+            dirty_before = int(cur.fetchone()[0] or 0)
+
+            cur.execute("SELECT COUNT(*) FROM chunks_fts")
+            fts_before = int(cur.fetchone()[0] or 0)
+
+            log.info(
+                "[FTS5] before sync dirty_docs=%d fts_rows=%d batch_size=%d",
+                dirty_before,
+                fts_before,
+                fts_batch_size,
+            )
+
             if do_fts_init:
                 n = mark_all_active_docs_dirty(conn, reason="initial")
                 log.info("[FTS5] marked active docs dirty count=%d", n)
 
             log.info("[FTS5] Start to syncing dirty chunks")
             rep = sync_dirty_chunks_fts(conn, batch_size=fts_batch_size)
+
+            cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
+            dirty_after = int(cur.fetchone()[0] or 0)
+
+            cur.execute("SELECT COUNT(*) FROM chunks_fts")
+            fts_after = int(cur.fetchone()[0] or 0)
+
             log.info(
-                "[FTS5] sync done dirty_docs=%d inserted_rows=%d",
+                "[FTS5] sync done dirty_docs_synced=%d inserted_rows=%d dirty_after=%d fts_rows_after=%d",
                 rep["dirty_docs_synced"],
                 rep["fts_rows_inserted"],
+                dirty_after,
+                fts_after,
             )
         finally:
             conn.close()
