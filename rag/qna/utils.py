@@ -13,10 +13,14 @@ log = logging.getLogger(__name__)
 INTENT_PROFILES = {
     "build": {
         "source_bonus": {"kqm_tcl": 0.15, "game8": 0.15, "genshin_gg":0.08},
-        "source_penalty": {"kqm_news": 0.15},
+        "source_penalty": {"kqm_news": 0.15, "genshin_wiki": 0.15},
         "title_penalize": ["storyline", "voice", "voice-over", "story quest", "archon quest",
-                           "world quest", "character card", "genius invokation",
-                           "lore", "dialogue", "comments"],
+                           "world quest", "character card", "genius invokation", "comments",
+                           "lore", "dialogue", "comments", "normal attack", "utility passive", "constellation",
+                           "skill", "burst", "storyline", "voice", "quest", "character card", "genius invokation",
+                           "elemental skill", "elemental burst"],
+        "title_boost": ["build", "guide", "weapon", "weapons", "artifact", "artifacts", "recommended", "signature weapon"],
+        "title_boost_v": 0.20,
         "text_require_any": ["weapon", "polearm", "sword", "bow", "catalyst",
                              "claymore", "artifact", "set bonus", "recommended",
                              "signature weapon", "bis weapon", "4pc", "2pc", 
@@ -24,9 +28,9 @@ INTENT_PROFILES = {
                              "elemental mastery", "em", "cr", "crit dmg", "cr%", "def%", "hp%",
                              "atk%", "staff"],
         "text_require_penalty": 0.30,
-        "source_priority":{
-            "required": ["kqm_tcl", "genshin_gg", "honey", "genshin_wiki"],
-            "preferred": ["game8"],
+        "source_priority": {
+            "required": ["kqm_tcl", "genshin_gg", "game8"],
+            "preferred": ["honey"],
             "excluded": ["kqm_news"]
         },
     },
@@ -203,10 +207,10 @@ def build_hybrid_signal(faiss_results: list[tuple[int, float]], bm25_results: li
     return signals
 
 def make_fts5_query(user_query: str) -> str:
-    tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
+    raw_tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
 
-    cleaned = []
-    for t in tokens:
+    tokens = []
+    for t in raw_tokens:
         t = t.strip("'")
         if not t:
             continue
@@ -214,14 +218,29 @@ def make_fts5_query(user_query: str) -> str:
             continue
         if len(t) < 2:
             continue
-
         t = t.replace('"', '""')
-        cleaned.append(f'"{t}"')
+        tokens.append(t)
 
-    if not cleaned:
+    if not tokens:
         return ""
 
-    return " OR ".join(cleaned)
+    parts = []
+
+    if 1 <= len(tokens) <= 4:
+        phrase = " ".join(tokens)
+        parts.append(f'"{phrase}"')
+
+    parts.extend(f'"{t}"' for t in tokens)
+
+    seen = set()
+    uniq = []
+    for p in parts:
+        if p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+
+    return " OR ".join(uniq)
 
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     if not chunk_ids:
@@ -361,8 +380,8 @@ def detect_intent(question: str) -> str:
         "normal attack", "attack", "defense", "level"
     ]
     LORE_MARKERS = [
-        "lore", "story", "history", "background", "who is", "who was",
-        "past", "origin", "archon", "god", "nation", "region",
+        "lore", "story", "history", "background", "past",
+        "origin", "archon", "god", "nation", "region",
         "what happened", "mythology", "legend", "tale",
     ]
     MECHANICS_MARKERS = [
@@ -386,50 +405,119 @@ def detect_intent(question: str) -> str:
         "relationship", "affiliated with", "affiliation", "vision holder",
         "from where", "hometown", "nationality", "occupation", "bio",
         "profile", "voiceline", "voiced by", "height", "who are", "comes from",
-        "come from", "who was", "where is she from", "where is he from", "where are they form"
+        "come from", "who was", "where is she from", "where is he from", "where are they from"
     ]
+
+    if any(m in q for m in BIOGRAPHY_MARKERS):
+        return "biography"
+    if any(m in q for m in LOCATION_MARKERS):
+        return "location"
+    if any(m in q for m in MECHANICS_MARKERS):
+        return "mechanic"
+    if any(m in q for m in BUILD_MARKERS):
+        return "build"
+    if any(m in q for m in LORE_MARKERS):
+        return "lore"
+
+    return "general"
+
+def is_recency_sensitive_question(question: str) -> bool:
+    q = question.lower()
 
     RECENCY_MARKERS = [
-        "recent", "latest", "current", "currently", "now", "new", "updated", "update", "patch", "version", "meta", 
-        "this patch", "this version", "new build", "current build", "latest build", "best build", "today",
+        "recent", "latest", "current",
+        "currently", "now", "new",
+        "updated", "update", "patch",
+        "version", "meta", "this patch",
+        "this version", "new build", "current build",
+        "latest build", "best build", "today",
     ]
 
-    build_hits = sum(1 for m in BUILD_MARKERS if m in q)
-    lore_hits = sum(1 for m in LORE_MARKERS if m in q)
-    mechanics_hits = sum(1 for m in MECHANICS_MARKERS if m in q)
-    location_hits = sum(1 for m in LOCATION_MARKERS if m in q)
-    biography_hits = sum(1 for m in BIOGRAPHY_MARKERS if m in q)
-    recency_hits = sum(1 for m in RECENCY_MARKERS if m in q)
+    return any(m in q for m in RECENCY_MARKERS)
 
-    scores = {
-        "build":     build_hits,
-        "lore":      lore_hits,
-        "mechanic":  mechanics_hits,
-        "location":  location_hits,
-        "biography": biography_hits,
-        "renceny": recency_hits,
-    }
-    best = max(scores, key=scores.get)
-    if scores[best] == 0:
-        return "general"
-    return best
-
-def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection) -> tuple[str | None, int | None]:
+def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection, max_version_ord: int | None = None) -> tuple[str | None, int | None]:
     cur = conn.cursor()
+
+    if max_version_ord is None:
+        max_version_ord = 699
+
     cur.execute("""
         SELECT version_label, version_ord
         FROM docs
         WHERE source = 'kqm_news'
-            AND version_ord is NOT NULL
+            AND version_ord IS NOT NULL
+            AND version_ord <= ?
             AND COALESCE(status, 1) = 1
         ORDER BY version_ord DESC, fetched_at DESC
         LIMIT 1
-    """)
+    """, (max_version_ord,))
+
     row = cur.fetchone()
     if not row:
         return None, None
-    
+
     return row["version_label"], int(row["version_ord"])
+
+def extract_entity_terms(question: str) -> list[str]:
+    q = question.strip()
+
+    patterns = [
+        r"\bwho\s+is\s+([A-Za-z][A-Za-z' -]{1,40})",
+        r"\bwho\s+was\s+([A-Za-z][A-Za-z' -]{1,40})",
+        r"\bwhat\s+is\s+([A-Za-z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature|weapon|build|artifact)",
+        r"\bwhat\s+are\s+([A-Za-z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature|weapons|builds|artifacts)",
+        r"\bbest\s+(?:weapon|artifact|build|team)\s+for\s+([A-Za-z][A-Za-z' -]{1,40})",
+        r"\brecommended\s+(?:weapon|artifact|build|team)\s+for\s+([A-Za-z][A-Za-z' -]{1,40})",
+        r"\b([A-Z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature)\s+(?:weapon|artifact|build|team)",
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, q, re.I)
+        if not m:
+            continue
+
+        ent = m.group(1)
+        ent = re.split(r"\?|,|\.|\band\b|\bwhere\b|\bwhat\b", ent, flags=re.I)[0]
+        ent = ent.strip().lower()
+        ent = re.sub(r"'s\b", "", ent).strip()
+        ent = re.sub(r"\b(recommended|best|signature|weapon|weapons|build|artifact|artifacts)$", "", ent).strip()
+
+        if ent:
+            return [ent] + ent.split()
+
+    return []
+
+def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int = 3) -> list[dict]:
+    terms = extract_entity_terms(question)
+    if not terms:
+        return chunks
+    
+    main_entity = terms[0]
+    sub_terms = terms[1:]
+
+    strong = []
+    weak = []
+    rest = []
+
+    for row in chunks:
+        title = (row.get("title") or "").lower()
+        text = (row.get("text") or "").lower()
+        hay = f"{title}\n{text[:2500]}"
+
+        if main_entity in hay:
+            strong.append(row)
+        elif sub_terms and any(t in hay for t in sub_terms):
+            weak.append(row)
+        else:
+            rest.append(row)
+
+    if len(strong) >= min_keep:
+        return strong + weak + rest
+
+    if strong:
+        return strong + weak + rest
+
+    return chunks
 
 def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict], current_version_ord: int | None = None) -> list[dict]:
     q_terms = tokenize(question)
@@ -440,6 +528,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
     priority = profile.get("source_priority", {})
     required = set(priority.get("required", []))
     excluded = set(priority.get("excluded", []))
+    entity_terms = extract_entity_terms(question)
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
@@ -543,8 +632,8 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         recency_bonus = 0.0
         recency_penalty = 0.0
 
-        recency_explicit = profile.get("recency") or ""
-        recency_active =  recency_explicit or intent in {"build", "mechanic"}
+        recency_explicit = is_recency_sensitive_question(question)
+        recency_active = recency_explicit or intent in {"build", "mechanic"}
 
         if recency_active and current_version_ord is not None:
             row_version_ord = row.get("version_ord")
@@ -570,16 +659,38 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             else:
                 if recency_explicit:
                     recency_penalty += 0.04
+        
+        entity_bonus = 0.0
+
+        if entity_terms:
+            main_entity =  entity_terms[0]
+            title_norm = re.sub(r"[^a-z0-9]+", " ", title_l).strip()
+
+            if title_norm == main_entity:
+                entity_bonus += 0.4
+            elif title_norm.startswith(main_entity + " "):
+                entity_bonus += 0.3
+            elif main_entity in title_l:
+                entity_bonus += 0.15
+
+            if intent == "biography":
+                bad_profile_titles = [
+                    "avatar", "namecard", "fan art contest", "quest item",
+                    "normal attack", "constellation", "utility passive",
+                    "taking pictures", "change history"]
+                if any(x in title_l for x in bad_profile_titles):
+                    entity_bonus -= 0.20
 
         final_score = (
             weighted_base
             + lexical_bonus
+            + entity_bonus
             + tier_bonus
             + intent_source_bonus
             + intent_title_boost
             + retrieval_bonus
-            + recency_bonus
-            - recency_penalty
+            # + recency_bonus
+            # - recency_penalty
             - penalty
         )
 

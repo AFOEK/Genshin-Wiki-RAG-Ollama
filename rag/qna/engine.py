@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool, get_kqm_news_fetch_version_baseline
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -122,33 +122,45 @@ def answer_question(
         faiss_results = faiss_ret.search(q_vec, k)
         bm25_results = bm25_ret.search(question.lower(), k)
 
-        return rrf_fuse(faiss_results, bm25_results, k=rrf_k)
+        signals = build_hybrid_signal(
+            faiss_results,
+            bm25_results,
+            rrf_k=rrf_k,
+            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)),
+        )
+
+        results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
+
+        return results, signals
 
     retriever_name = retriever_name.strip().lower()
     if retriever_name == "sql":
         retriever_name = "sqlite"
 
+    retriever_signals = None
+
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
         retriever = get_faiss_ret()
-        results = search_embedding_retriever(retriever, candidate_k)
+        retrieval_signals = search_embedding_retriever(retriever, candidate_k)
     elif retriever_name == "sqlite":
         log.info("[QNA] using SQLite brute-force retriever")
         retriever = SqliteEmbeddingRetriever(conn)
-        results = search_embedding_retriever(retriever, candidate_k)
+        retrieval_signals = search_embedding_retriever(retriever, candidate_k)
     elif retriever_name == "bm25":
         log.info("[QNA] using SQLite BM25 retriever")
         retriever = get_bm25_ret()
-        results = retriever.search(question.lower(), candidate_k)
+        retrieval_signals = retriever.search(question.lower(), candidate_k)
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
         retriever = None
-        results = search_hybrid(candidate_k)
+        results, retrieval_signals = search_hybrid(candidate_k)
     else:
         raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
     chunk_ids = [cid for cid, score in results]
-    initial_scores = {cid: score for cid, score in results}
+    rank_scores = {cid: (float(sig.get("rrf_score", 0.0)) if isinstance(sig, dict) else float(sig)) for cid, sig in retrieval_signals.items()}
+    initial_scores = rank_scores
 
     filtered_ids = filter_by_intent_source(
         conn,
@@ -163,13 +175,13 @@ def answer_question(
         log.info("[QNA] intent filter returned too few chunks; deep search k=%d", deep_k)
 
         if retriever_name == "faiss":
-            deep_results = search_embedding_retriever(retriever, deep_k)
+            deep_results, retrieval_signals = search_embedding_retriever(retriever, deep_k)
         elif retriever_name == "sqlite":
-            deep_results = search_embedding_retriever(retriever, deep_k)
+            deep_results, retrieval_signals = search_embedding_retriever(retriever, deep_k)
         elif retriever_name == "bm25":
-            deep_results = retriever.search(question.lower(), deep_k)
+            deep_results, retrieval_signals = retriever.search(question.lower(), deep_k)
         elif retriever_name == "hybrid":
-            deep_results = search_hybrid(deep_k)
+            deep_results, retrieval_signals = search_hybrid(deep_k)
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -182,10 +194,10 @@ def answer_question(
             max_fallback=40,
         )
 
-        deep_scores = {cid: score for cid, score in deep_results}
+        deep_scores = {cid: (float(sig.get("rrf_score", 0.0)) if isinstance(sig, dict) else float(sig)) for cid, sig in retrieval_signals.items()}
         results = [(cid, deep_scores[cid]) for cid in filtered_ids if cid in deep_scores]
         chunk_ids = [cid for cid, _ in results]
-        initial_scores = {cid: score for cid, score in results}
+        initial_scores = deep_scores
 
     else:
         id_set = set(filtered_ids)
@@ -207,7 +219,7 @@ def answer_question(
     )
 
     if reranker_mode in ("feature", "cross_encoder"):
-        chunks = rerank_chunks(question, chunks, initial_scores, baseline_ord)
+        chunks = rerank_chunks(question, chunks, retrieval_signals, baseline_ord)
     
     if reranker_mode == "cross_encoder":
         chunks = cross_encoder_rerank(
@@ -242,6 +254,9 @@ def answer_question(
         ctx_enabled = as_bool(context_cfg.get("enabled", False))
 
         selected_chunks = chunks[:direct_top_k]
+        if intent in ("biography", "location"):
+            selected_chunks = prefer_entity_seed_chunks(question, selected_chunks, min_keep=3)
+            selected_chunks = selected_chunks[:direct_top_k]
 
         parent_cfg = cfg.get("parent_child", {}) or {}
         parent_enabled = as_bool(parent_cfg.get("enabled", False))
