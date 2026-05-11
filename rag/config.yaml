@@ -10,7 +10,7 @@ ollama:
   embedding_model: all-minilm:latest #snowflake-arctic-embed:xs
   qa_model: llama3.2:3b
   qa_keep_alive: "10m"
-  timeout: 180
+  timeout: 600
   embed_keep_alive: "15s"
 
 llamacpp:
@@ -40,14 +40,14 @@ context_expansion:
   enabled: true
   before: 1
   after: 1
-  max_total_chunks: 24
+  max_total_chunks: 8
   direct_only: true
 
 parent_child:
   enabled: true
   children_per_parent: 4
-  max_parents: 6
-  max_total_chunks: 24
+  max_parents: 4
+  max_total_chunks: 8
 
 versioning:
   aliases:

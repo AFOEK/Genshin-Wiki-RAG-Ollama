@@ -24,9 +24,9 @@ def extract_numeric_versions(s: str) -> list[tuple[str, int]]:
         major = int(m.group(1))
         minor = int(m.group(2))
 
-        if major < 1 or major > 20:
+        if major < 1 or major > 9:
             continue
-        if minor < 0 or minor > 20:
+        if minor < 0 or minor > 9:
             continue
 
         label = f"{major}.{minor}"

@@ -6,7 +6,7 @@ import faiss
 import logging
 import numpy as np
 
-from .utils import normalize_vec_from_blob
+from .utils import normalize_vec_from_blob, make_fts5_query
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +99,10 @@ class BM25Retriever:
         self.dims = None
 
     def search(self, query: str, top_k: int):
+        fts_query = make_fts5_query(query)
+        if not fts_query:
+            return []
+        
         cur = self.conn.cursor()
         cur.execute("""
             SELECT
@@ -108,5 +112,5 @@ class BM25Retriever:
             WHERE chunks_fts MATCH ?
             ORDER BY bm25(chunks_fts)
             LIMIT ?
-        """, (query, top_k))
+        """, (fts_query, top_k))
         return [(int(row[0]), float(row[1])) for row in cur.fetchall()]

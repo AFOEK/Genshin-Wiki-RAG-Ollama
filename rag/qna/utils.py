@@ -126,8 +126,8 @@ INTENT_PROFILES = {
         "text_require_penalty": 0.15,
         "source_priority":{
             "required": ["genshin_wiki"],
-            "preferred": [],
-            "excluded": ["kqm_tcl", "game8", "genshin_gg"]
+            "preferred": ["honey", "game8", "genshin_gg"],
+            "excluded": ["kqm_tcl", "kqm_news"]
         },
     },
     "general": {
@@ -144,6 +144,15 @@ INTENT_PROFILES = {
             "excluded": []
         },
     },
+}
+
+BM25_STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been",
+    "who", "what", "when", "where", "why", "how",
+    "i", "you", "he", "she", "it", "they", "we",
+    "of", "to", "in", "on", "for", "from", "with", "and", "or",
+    "does", "do", "did", "can", "could", "would", "should",
+    "come", "comes",
 }
 
 def rrf_fuse(*result_lists, k: int = 60) -> list[tuple[int, float]]:
@@ -193,7 +202,31 @@ def build_hybrid_signal(faiss_results: list[tuple[int, float]], bm25_results: li
 
     return signals
 
+def make_fts5_query(user_query: str) -> str:
+    tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
+
+    cleaned = []
+    for t in tokens:
+        t = t.strip("'")
+        if not t:
+            continue
+        if t in BM25_STOPWORDS:
+            continue
+        if len(t) < 2:
+            continue
+
+        t = t.replace('"', '""')
+        cleaned.append(f'"{t}"')
+
+    if not cleaned:
+        return ""
+
+    return " OR ".join(cleaned)
+
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
+    if not chunk_ids:
+        return []
+    
     profile = INTENT_PROFILES.get(intent, INTENT_PROFILES["general"])
     priority = profile.get("source_priority", {})
 
@@ -340,11 +373,11 @@ def detect_intent(question: str) -> str:
     ]
 
     LOCATION_MARKERS = [
-    "where is", "where are", "where can i find", "location of",
-    "how to get to", "how do i get to", "map", "region", "nation",
-    "area", "domain", "dungeon", "explore", "exploration",
-    "directions", "waypoint", "teleport", "near", "coordinates",
-    "liyue", "mondstadt", "inazuma", "sumeru", "fontaine", "natlan", "enkanomiya"
+        "where is", "where are", "where can i find", "location of",
+        "how to get to", "how do i get to", "map", "region", "nation",
+        "area", "domain", "dungeon", "explore", "exploration",
+        "directions", "waypoint", "teleport", "near", "coordinates",
+        "liyue", "mondstadt", "inazuma", "sumeru", "fontaine", "natlan", "enkanomiya"
     ]
 
     BIOGRAPHY_MARKERS = [
@@ -352,13 +385,15 @@ def detect_intent(question: str) -> str:
         "related to", "family", "sibling", "parent", "friend of",
         "relationship", "affiliated with", "affiliation", "vision holder",
         "from where", "hometown", "nationality", "occupation", "bio",
-        "profile", "voiceline", "voiced by", "height",
+        "profile", "voiceline", "voiced by", "height", "who are", "comes from",
+        "come from", "who was", "where is she from", "where is he from", "where are they form"
     ]
 
     RECENCY_MARKERS = [
         "recent", "latest", "current", "currently", "now", "new", "updated", "update", "patch", "version", "meta", 
         "this patch", "this version", "new build", "current build", "latest build", "best build", "today",
     ]
+
     build_hits = sum(1 for m in BUILD_MARKERS if m in q)
     lore_hits = sum(1 for m in LORE_MARKERS if m in q)
     mechanics_hits = sum(1 for m in MECHANICS_MARKERS if m in q)
@@ -509,9 +544,9 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         recency_penalty = 0.0
 
         recency_explicit = profile.get("recency") or ""
-        receny_active =  recency_explicit or intent in {"build", "mechanic", "lore"}
+        recency_active =  recency_explicit or intent in {"build", "mechanic"}
 
-        if receny_active and current_version_ord is not None:
+        if recency_active and current_version_ord is not None:
             row_version_ord = row.get("version_ord")
             if row_version_ord is not None:
                 try:
