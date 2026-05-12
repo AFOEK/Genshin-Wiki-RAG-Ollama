@@ -50,27 +50,28 @@ parent_child:
   max_total_chunks: 8
 
 versioning:
+  current: 605
   aliases:
     luna 1: 600
     luna i: 600
     luna 2: 601
     luna ii: 601
-    luna 3: 603
-    luna iii: 603
-    luna 4: 604
-    luna iv: 604
-    luna 5: 605
-    luna v: 605
-    luna 6: 606
-    luna vi: 606
-    luna 7: 607
-    luna vii: 607
-    luna 8: 608
-    luna viii: 608
-    luna 9: 609
-    luna ix: 609
-    luna 10: 610
-    luna x: 610
+    luna 3: 602
+    luna iii: 602
+    luna 4: 603
+    luna iv: 603
+    luna 5: 604
+    luna v: 604
+    luna 6: 605
+    luna vi: 605
+    luna 7: 606
+    luna vii: 606
+    luna 8: 607
+    luna viii: 607
+    luna 9: 608
+    luna ix: 608
+    luna 10: 609
+    luna x: 609
   
 runtime:
   embedding_provider: ollama  #ollama | llamacpp
@@ -88,13 +89,13 @@ kaggle:
   batch_size: 256
   max_text_chars: 1200
   use_fp16: true
-  gpu_type: nvidiaTeslaT4    # nvidiaTeslaT4 | nvidiaTeslaP100
+  gpu_type: nvidiaTeslaT4   # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
-    index_mode: hnsw  # flat_ip | ivf_flat | hnsw
+    index_mode: hnsw        # flat_ip | ivf_flat | hnsw
     metric: cosine          # cosine | ip | l2
-    hnsw_m: 32
-    hnsw_ef_construction: 150
-    hnsw_ef_search: 32
+    hnsw_m: 64
+    hnsw_ef_construction: 200
+    hnsw_ef_search: 64
 
     ivf_nlist: 2048
     ivf_nprobe: 64
