@@ -65,6 +65,12 @@ versioning:
     luna vi: 606
     luna 7: 607
     luna vii: 607
+    luna 8: 608
+    luna viii: 608
+    luna 9: 609
+    luna ix: 609
+    luna 10: 610
+    luna x: 610
   
 runtime:
   embedding_provider: ollama  #ollama | llamacpp
@@ -86,9 +92,9 @@ kaggle:
   faiss:
     index_mode: hnsw  # flat_ip | ivf_flat | hnsw
     metric: cosine          # cosine | ip | l2
-    hnsw_m: 40
-    hnsw_ef_construction: 300
-    hnsw_ef_search: 40
+    hnsw_m: 32
+    hnsw_ef_construction: 150
+    hnsw_ef_search: 32
 
     ivf_nlist: 2048
     ivf_nprobe: 64
