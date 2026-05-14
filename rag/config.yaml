@@ -88,7 +88,7 @@ kaggle:
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
   batch_size: 256
   max_text_chars: 1200
-  use_fp16: true
+  use_fp16: false
   gpu_type: nvidiaTeslaT4   # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
     index_mode: hnsw        # flat_ip | ivf_flat | hnsw
@@ -101,11 +101,13 @@ kaggle:
     ivf_nprobe: 64
 
 faiss:
-  index_mode: flat_ip      # flat_ip | ivf_flat | hnsw
+  index_mode: ivf_sqfp16      # flat_ip | ivf_flat | hnsw | ivf_sqfp16
   metric: cosine           # cosine | ip | l2
   # IVF only
-  nlist: 256
-  nprobe: 16
+  nlist: 8192
+  nprobe: 64
+  train_size: 320000
+  batch_add: 1000
   # HNSW only
   hnsw_m: 32
   hnsw_ef_construction: 200
