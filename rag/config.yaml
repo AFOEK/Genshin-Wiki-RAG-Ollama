@@ -93,16 +93,16 @@ kaggle:
   faiss:
     index_mode: ivf_sq      # flat_ip | ivf_flat | hnsw | ivf_sq
     metric: cosine          # cosine | ip | l2
-    sq_type: sq8         # sq8 | sq6 | sq4 | sqfp16
+    sq_type: sqfp16         # sq8 | sq6 | sq4 | sqfp16
 
     hnsw_m: 64
     hnsw_ef_construction: 200
     hnsw_ef_search: 64
 
     ivf_nlist: 2048
-    ivf_nprobe: 32
+    ivf_nprobe: 64
 
-    train_size: 50000
+    train_size: 550000
     batch_add: 2500
 
 faiss:
