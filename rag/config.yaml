@@ -91,23 +91,26 @@ kaggle:
   use_fp16: false
   gpu_type: nvidiaTeslaT4   # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
-    index_mode: hnsw        # flat_ip | ivf_flat | hnsw
+    index_mode: ivf_sq      # flat_ip | ivf_flat | hnsw | ivf_sq
     metric: cosine          # cosine | ip | l2
+    sq_type: sq8         # sq8 | sq6 | sq4 | sqfp16
+
     hnsw_m: 64
     hnsw_ef_construction: 200
     hnsw_ef_search: 64
 
     ivf_nlist: 2048
-    ivf_nprobe: 64
+    ivf_nprobe: 32
+
+    train_size: 50000
+    batch_add: 2500
 
 faiss:
-  index_mode: ivf_sqfp16      # flat_ip | ivf_flat | hnsw | ivf_sqfp16
+  index_mode: flat_ip      # flat_ip | ivf_flat | hnsw | ivf_sqfp16
   metric: cosine           # cosine | ip | l2
   # IVF only
   nlist: 8192
   nprobe: 64
-  train_size: 320000
-  batch_add: 1000
   # HNSW only
   hnsw_m: 32
   hnsw_ef_construction: 200
