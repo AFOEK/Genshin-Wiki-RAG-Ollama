@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 rag/data/repos/*
+rag/chunks_kaggle
 *.db
 *.db-*
 *.log
