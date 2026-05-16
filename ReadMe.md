@@ -2,9 +2,9 @@
 
 ## Introduction
 With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
-- Python 3.14.5
+- Python 3.13.5
 - Sqlite3 3.46.1
-- FAISS (Facebook AI Similarity Search)
+- FAISS (Facebook AI Similarity Search) 1.13.2
 
 This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scraping.
 
