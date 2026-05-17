@@ -88,7 +88,7 @@ kaggle:
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
   batch_size: 256
   max_text_chars: 1200
-  use_fp16: false
+  use_fp16: true
   gpu_type: nvidiaTeslaT4   # nvidiaTeslaT4 | nvidiaTeslaP100
   faiss:
     index_mode: ivf_sq      # flat_ip | ivf_flat | hnsw | ivf_sq
