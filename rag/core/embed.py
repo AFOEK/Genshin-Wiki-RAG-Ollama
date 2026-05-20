@@ -2,12 +2,76 @@ import requests
 import struct
 import time
 import logging
+from typing import Literal
 
 log = logging.getLogger(__name__)
 session = requests.Session()
 
 class NonRetryableEmbedError(RuntimeError):
     pass
+
+def embedding_model_name(cfg: dict, backend: str | None = None) -> str:
+    provider = (backend or cfg.get("runtime", {}).get("embedding_provider", "ollama")).strip().lower()
+    if provider == "llama.cpp" or provider == "llamacpp":
+        return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
+    
+    return str(cfg.get("ollama", {}).get("embedding_model", ""))
+
+def auto_embedding_profile(model_name: str) -> str:
+    m = model_name.lower()
+
+    if "e5" in m:
+        return "e5"
+    if "bge" in m:
+        return "bge"
+    if "nomic" in m:
+        return "nomic"
+    if "octen" in m:
+        return "octen"
+    if "snowflake" in m or "arctic" in m:
+        return "snowflake"
+    if "embeddinggemma" in m or "embedding-gemma" in m or "gemma" in m:
+        return "embeddinggemma"
+    if "minilm" in m or "all-minilm" in m:
+        return "none"
+
+    return "none"
+
+def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str | None = None):
+    prompt_cfg = cfg.get("embedding_prompts", {}) or {}
+
+    enabled = str(prompt_cfg.get("enabled", True)).strip().lower() in ("1", "true", "yes", "y", "on")
+    if not enabled:
+        return text_or_texts
+
+    model_name = embedding_model_name(cfg, backend)
+    profile_name = str(prompt_cfg.get("profile", "auto")).strip().lower()
+
+    if profile_name == "auto":
+        profile_name = auto_embedding_profile(model_name)
+
+    profiles = prompt_cfg.get("profiles", {}) or {}
+    profile = profiles.get(profile_name, profiles.get("none", {})) or {}
+
+    if mode == "query":
+        prefix = str(profile.get("query_prefix", ""))
+    elif mode in ("passage", "document", "doc"):
+        prefix = str(profile.get("passage_prefix", ""))
+    else:
+        prefix = ""
+
+    if not prefix:
+        return text_or_texts
+
+    def one(x: str) -> str:
+        x = x or ""
+        if x.startswith(prefix):
+            return x
+        return prefix + x
+    
+    if isinstance(text_or_texts, (list, tuple)):
+        return [one(str(x)) for x in text_or_texts]
+    return one(str(text_or_texts))
 
 def pack_vec(vec: list[float]) -> tuple[bytes, int]:
     return struct.pack(f"<{len(vec)}f", *vec), len(vec)
@@ -77,10 +141,10 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, timeout: int):
         return pack_vec(rows[0])
     return [pack_vec(vec) for vec in rows]
 
-def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 10, backoff_s: float = 1.0):
+def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 10, backoff_s: float = 1.0, mode: Literal["passage", "query"] = "passage"):
     runtime = cfg.get("runtime", {})
     provider = normalize_backend_name(backend if backend is not None else runtime.get("embedding_provider", "ollama"))
-
+    text_or_texts = apply_embedding_prompt(cfg, text_or_texts, mode=mode, backend=backend)
     last_err =  None
     for attempt in range(retries):
         try:

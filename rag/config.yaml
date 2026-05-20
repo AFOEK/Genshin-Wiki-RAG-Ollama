@@ -85,6 +85,9 @@ kaggle:
   # Snowflake/snowflake-arctic-embed-m: 110M params, 768-dim, retrieval specialist
   # Snowflake/snowflake-arctic-embed-m-v2.0: 305M params, 768-dim, newer model from previous version
   # Snowflake/snowflake-arctic-embed-l-v2.0: 568M params, 1024-dim, bigger model
+  # Octen/Octen-Embedding-0.6B: 600M params, 1024-dim, lightweight resource constrained device
+  # Octen/Octen-Embedding-4B: 4B params, 2560-dim, balanced performance and efficiency
+  # google/embeddinggemma-300m: 300M params, 768-dims
   embedding_model: intfloat/e5-large-v2
   dataset_slug: afoek88/genshin-rag-chunks  #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
@@ -130,6 +133,39 @@ threading:
   embed_workers: 1
   embed_batch_size: 32
   document_queue_size: 120
+
+embedding_prompts:
+  enabled: true
+  profile: auto
+
+  profiles:
+    none:
+      query_prefix: ""
+      passage_prefix: ""
+    
+    e5:
+      query_prefix: "query: "
+      passage_prefix: "passage: "
+    
+    bge:
+      query_prefix: "Represent this sentence for searching relevant passages: "
+      passage_prefix: ""
+
+    nomic:
+      query_prefix: "search_query: "
+      passage_prefix: "search_document: "
+
+    snowflake:
+      query_prefix: "Represent this sentence for searching relevant passages: "
+      passage_prefix: ""
+
+    embeddinggemma:
+      query_prefix: "task: search result | query: "
+      passage_prefix: "title: none | text: "
+
+    octen:
+      query_prefix: ""
+      passage_prefix: ""
 
 filters:
   deny_url_regex: "(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|woff|woff2|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"

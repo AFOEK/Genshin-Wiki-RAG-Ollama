@@ -78,8 +78,8 @@ def main():
     init_db(db_path)
     log.info("[INFO] Database init at %s", db_path)
 
-    def embed_fn(text_or_texts):
-        return embed(cfg, text_or_texts, backend=args.BACKEND)
+    def embed_fn(text_or_texts, mode: str = "passage"):
+        return embed(cfg, text_or_texts, backend=args.BACKEND, mode=mode)
     
     def make_source_filters(s: dict) -> Filters:
         merged_deny_url = merge_regex(

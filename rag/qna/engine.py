@@ -15,15 +15,7 @@ from .parent_child import fetch_parent_context_chunks
 
 log = logging.getLogger(__name__)
 
-def answer_question(
-    cfg: dict,
-    question: str,
-    *,
-    retriever_name: str = "hybrid",
-    direct_top_k: int = 12,
-    broad_top_k: int = 60,
-    summarize_batch_size: int = 8,
-    backend: str | None = None) -> str:
+def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
     conn = read_only_connect(str(db_path))
@@ -71,7 +63,7 @@ def answer_question(
         nonlocal q_vec_cache, q_dims_cache
 
         if q_vec_cache is None:
-            q_blob, q_dims = embed(cfg, question, backend=backend)
+            q_blob, q_dims = embed(cfg, question, backend=backend, mode="query")
 
             if q_dims != ret.dims:
                 raise RuntimeError(
