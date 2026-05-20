@@ -6,7 +6,7 @@ import faiss
 import logging
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, expected_faiss_model_from_cfg, check_faiss_model_match
 
 log = logging.getLogger(__name__)
 
@@ -21,8 +21,10 @@ class FaissRetriever:
             faiss_retriever_cache[key] = instance
         return faiss_retriever_cache[key]
 
-    def __init__(self, faiss_dir: Path):
+    def __init__(self, faiss_dir: Path, *, expected_model: str | None = None, mismatch_policy: str = "error"):
         if self._initialized:
+            if expected_model:
+                check_faiss_model_match(actual_model=self.model, expected_model=expected_model, policy=mismatch_policy)
             return
         current = faiss_dir / "current"
         self.index_path = current / "index.faiss"
@@ -37,6 +39,8 @@ class FaissRetriever:
         self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         self.dims = int(self.meta["dims"])
         self.model = self.meta.get("embedding_model", "unknown")
+        if expected_model:
+            check_faiss_model_match(actual_model=self.model, expected_model=expected_model, policy=mismatch_policy)
         log.info("[FAISS] loaded index dims=%d model=%s ntotal=%d",
              self.dims, self.model, self.index.ntotal)
         self._initialized = True

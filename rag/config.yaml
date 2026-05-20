@@ -74,9 +74,11 @@ versioning:
     luna x: 609
   
 runtime:
-  embedding_provider: ollama  #ollama | llamacpp
-  qa_provider: ollama         #ollama | llamacpp
-  accelerator: auto           #auto | cpu | vulkan | opencl
+  embedding_provider: ollama   #ollama | llamacpp
+  qa_provider: ollama          #ollama | llamacpp
+  accelerator: auto            #auto | cpu | vulkan | opencl
+  faiss_model_mismatch: error  # error | warn | ignore
+  faiss_expected_model: kaggle # kaggle | runtime | ollama | llamacpp
 
 kaggle:
   # intfloat/e5-large-v2: 335M params, 1024-dim, strong retrieval quality
@@ -89,7 +91,7 @@ kaggle:
   # Octen/Octen-Embedding-4B: 4B params, 2560-dim, balanced performance and efficiency
   # google/embeddinggemma-300m: 300M params, 768-dims
   embedding_model: intfloat/e5-large-v2
-  dataset_slug: afoek88/genshin-rag-chunks  #Change this to your kaggle account
+  dataset_slug: afoek88/genshin-rag-chunks    #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
   batch_size: 256
   max_text_chars: 1200
@@ -164,7 +166,11 @@ embedding_prompts:
       passage_prefix: "title: none | text: "
 
     octen:
-      query_prefix: ""
+      query_prefix: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+      passage_prefix: ""
+
+    qwen3:
+      query_prefix: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
       passage_prefix: ""
 
 filters:

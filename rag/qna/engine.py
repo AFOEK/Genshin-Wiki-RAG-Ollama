@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, textwrap
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, rrf_fuse, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_faiss_model_from_cfg
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -81,13 +81,14 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
         return q_vec_cache
 
-
+    expected_faiss_model = expected_faiss_model_from_cfg(cfg, backend=backend)
+    faiss_mismatch_policy = str(retrieval_cfg.get("faiss_model_mismatch", "error")).strip().lower()
+    
     def get_faiss_ret():
         nonlocal faiss_ret_cache
 
         if faiss_ret_cache is None:
-            faiss_ret_cache = FaissRetriever(faiss_dir)
-
+            faiss_ret_cache = FaissRetriever(faiss_dir, expected_model=expected_faiss_model, mismatch_policy=faiss_mismatch_policy)
         return faiss_ret_cache
 
 
@@ -134,15 +135,18 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
         retriever = get_faiss_ret()
-        retrieval_signals = search_embedding_retriever(retriever, candidate_k)
+        results = search_embedding_retriever(retriever, candidate_k)
+        retrieval_signals = {cid: score for cid, score in results}
     elif retriever_name == "sqlite":
         log.info("[QNA] using SQLite brute-force retriever")
         retriever = SqliteEmbeddingRetriever(conn)
-        retrieval_signals = search_embedding_retriever(retriever, candidate_k)
+        results = search_embedding_retriever(retriever, candidate_k)
+        retrieval_signals = {cid: score for cid, score in results}
     elif retriever_name == "bm25":
         log.info("[QNA] using SQLite BM25 retriever")
         retriever = get_bm25_ret()
-        retrieval_signals = retriever.search(question.lower(), candidate_k)
+        results = retriever.search(question.lower(), candidate_k)
+        retrieval_signals = {cid: score for cid, score in results}
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
         retriever = None
@@ -167,11 +171,14 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         log.info("[QNA] intent filter returned too few chunks; deep search k=%d", deep_k)
 
         if retriever_name == "faiss":
-            deep_results, retrieval_signals = search_embedding_retriever(retriever, deep_k)
+            deep_results = search_embedding_retriever(retriever, deep_k)
+            retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "sqlite":
-            deep_results, retrieval_signals = search_embedding_retriever(retriever, deep_k)
+            deep_results = search_embedding_retriever(retriever, deep_k)
+            retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "bm25":
-            deep_results, retrieval_signals = retriever.search(question.lower(), deep_k)
+            deep_results = retriever.search(question.lower(), deep_k)
+            retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "hybrid":
             deep_results, retrieval_signals = search_hybrid(deep_k)
         else:

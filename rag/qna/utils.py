@@ -159,6 +159,89 @@ BM25_STOPWORDS = {
     "come", "comes",
 }
 
+def normalize_model_name(x) -> str:
+    if x is None:
+        return ""
+
+    if isinstance(x, (list, tuple, set)):
+        x = next(iter(x), "")
+    elif isinstance(x, dict):
+        x = x.get("name") or x.get("model") or x.get("embedding_model") or ""
+
+    s = str(x).strip().lower()
+    s = s.replace("\\", "/")
+
+    if "/" in s and not s.startswith(("http://", "https://")):
+        parts = s.split("/")
+        if len(parts) > 2 or s.startswith("/"):
+            s = parts[-1]
+
+    if s.endswith(":latest"):
+        s = s[:-7]
+
+    return s
+
+
+def expected_faiss_model_from_cfg(cfg: dict, backend: str | None = None) -> str:
+    retrieval_cfg = cfg.get("retrieval", {}) or {}
+    source = str(retrieval_cfg.get("faiss_expected_model", "runtime")).strip().lower()
+
+    runtime = cfg.get("runtime", {}) or {}
+    provider = (backend or runtime.get("embedding_provider", "ollama")).strip().lower()
+    if provider == "llama.cpp":
+        provider = "llamacpp"
+
+    if source == "kaggle":
+        return str(cfg.get("kaggle", {}).get("embedding_model", ""))
+
+    if source == "ollama":
+        return str(cfg.get("ollama", {}).get("embedding_model", ""))
+
+    if source in ("llamacpp", "llama.cpp"):
+        return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
+
+    if provider == "llamacpp":
+        return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
+
+    return str(cfg.get("ollama", {}).get("embedding_model", ""))
+
+
+def check_faiss_model_match(*, actual_model, expected_model, policy: str = "error") -> None:
+    actual_n = normalize_model_name(actual_model)
+    expected_n = normalize_model_name(expected_model)
+
+    if not actual_n or not expected_n:
+        log.warning(
+            "[FAISS] cannot fully validate embedding model: actual=%r expected=%r",
+            actual_model,
+            expected_model,
+        )
+        return
+
+    if actual_n == expected_n:
+        return
+
+    msg = (
+        "[FAISS] embedding model mismatch: "
+        f"meta.json={actual_model!r} config_expected={expected_model!r}. "
+        "Rebuild/query with the same embedding model, or switch retrieval.faiss_expected_model."
+    )
+
+    policy = str(policy or "error").strip().lower()
+
+    if policy == "error":
+        raise RuntimeError(msg)
+
+    if policy == "warn":
+        log.warning(msg)
+        return
+
+    if policy == "ignore":
+        log.warning("[FAISS] ignoring model mismatch by config: %s", msg)
+        return
+
+    raise RuntimeError(f"Unknown retrieval.faiss_model_mismatch policy: {policy}")
+
 def rrf_fuse(*result_lists, k: int = 60) -> list[tuple[int, float]]:
     scores: dict[int, float] = {}
 
