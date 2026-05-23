@@ -18,23 +18,38 @@ ROMAN = {
     "x": 10
 }
 
-def extract_numeric_versions(s: str) -> list[tuple[str, int]]:
-    out = []
-    for m in VERSION_RE.finditer(s or ""):
+def extract_numeric_versions(s: str, cfg: dict | None  =  None) -> list[tuple[str, int]]:
+    cfg = cfg or {}
+    versioning_cfg = cfg.get("versioning", {}) or {}
+    max_major = int(versioning_cfg.get("max_major", 6))
+    max_minor = int(versioning_cfg.get("max_minor", 9))
+
+    out: list[tuple[str, int]] = []
+
+    if not s:
+        return out
+
+    for m in VERSION_RE.finditer(s):
         major = int(m.group(1))
         minor = int(m.group(2))
 
-        if major < 1 or major > 9:
+        if major < 1 or major > max_major:
             continue
-        if minor < 0 or minor > 9:
+        if minor < 0 or minor > max_minor:
             continue
 
         label = f"{major}.{minor}"
         out.append((label, version_ord_from_major_minor(major, minor)))
 
+    return out
+
 def extract_luna_versions(s: str, aliases: dict[str, int]) -> list[tuple[str, int]]:
-    out = []
-    for m in LUNA_RE.finditer(s or ""):
+    out: list[tuple[str, int]] = []
+
+    if not s:
+        return out
+
+    for m in LUNA_RE.finditer(s):
         raw = f"luna {m.group(1)}"
         key = normalize_version_alias_key(raw)
 
@@ -59,35 +74,38 @@ def normalize_version_alias_key(s: str) -> str:
 
 def extract_version_signal(title: str, text: str = "", cfg: dict | None = None, source: str | None = None) -> tuple[str | None, int | None]:
     cfg = cfg or {}
-    versioning_cfg = cfg.get("versioning", {}) or {}
     source = (source or "").strip().lower()
+
+    versioning_cfg = cfg.get("versioning", {}) or {}
     aliases = {
-        normalize_version_alias_key(k): int(v) for k, v in (versioning_cfg.get("aliases", {}) or {}).items()
+        normalize_version_alias_key(k): int(v)
+        for k, v in (versioning_cfg.get("aliases", {}) or {}).items()
     }
+
     title = title or ""
     text = text or ""
 
-    title_candidates = []
+    title_candidates: list[tuple[str, int]] = []
     title_candidates.extend(extract_luna_versions(title, aliases))
-    title_candidates.extend(extract_numeric_versions(title))
+    title_candidates.extend(extract_numeric_versions(title, cfg))
 
     if title_candidates:
         title_candidates.sort(key=lambda x: x[1], reverse=True)
         return title_candidates[0]
 
     early_text = text[:800]
-    early_candidates = []
+    early_candidates: list[tuple[str, int]] = []
     early_candidates.extend(extract_luna_versions(early_text, aliases))
-    early_candidates.extend(extract_numeric_versions(early_text))
+    early_candidates.extend(extract_numeric_versions(early_text, cfg))
 
     if early_candidates:
         early_candidates.sort(key=lambda x: x[1], reverse=True)
         return early_candidates[0]
 
     body_text = text[:3000]
-    body_candidates = []
+    body_candidates: list[tuple[str, int]] = []
     body_candidates.extend(extract_luna_versions(body_text, aliases))
-    body_candidates.extend(extract_numeric_versions(body_text))
+    body_candidates.extend(extract_numeric_versions(body_text, cfg))
 
     if not body_candidates:
         return None, None
