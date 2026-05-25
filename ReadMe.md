@@ -17,7 +17,7 @@ After that clone this github:
 ```
 git clone https://github.com/AFOEK/Genshin-Wiki-RAG-Ollama.git && cd Genshin-Wiki-RAG-Ollama
 ```
-setup python3 virtual environment:
+setup python3 virtual environment using venv:
 ```
 python3 -m venv .venv
 ```
@@ -28,6 +28,18 @@ source .venv/bin/activate
 With python venv already activated install all python requirements by running:
 ```
 pip install -r requirements.txt
+```
+or setup python3 virtuak environment using conda:
+```
+conda create -n rag python=3.13
+```
+and start conda environment:
+```
+conda activate rag
+```
+With python conda environment activated, install all python requirements by running:
+```
+conda install --file requirements.txt
 ```
 
 ### Ollama server setup
