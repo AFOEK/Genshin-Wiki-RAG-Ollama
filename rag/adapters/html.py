@@ -36,18 +36,86 @@ def drop_game8_comment(soup: BeautifulSoup) -> None:
         ".replies",
         ".discussion",
         ".message-board",
+        "img[src^='data:image']",
+        "[class*='member']",
+        "[class*='Member']",
+        "[class*='premium']",
+        "[class*='Premium']",
+        "[class*='login']",
+        "[class*='Login']",
+        "[class*='signup']",
+        "[class*='Signup']",
+        "[class*='register']",
+        "[class*='Register']",
+        "[id*='member']",
+        "[id*='premium']",
+        "[id*='login']",
+        "[id*='signup']",
+        "[id*='register']",
     ]
 
     for sel in selectors:
         for node in soup.select(sel):
             node.decompose()
     
+    bad_phrases = [
+        "what can you do as a free member",
+        "create your free account today",
+        "site interface",
+        "article watchlist",
+        "game bookmarks",
+        "cross-device sync",
+        "light/dark theme",
+        "user profiles",
+        "direct feedback",
+        "comment rating",
+        "premium articles",
+        "map tool feature",
+        "free member",
+        "guest",
+    ]
+
     for h in soup.select("h1, h2, h3, h4"):
         txt = h.get_text(" ", strip=True).lower()
         if txt in {"comment", "comments"}:
             parent = h.find_parent(["section", "div"])
             if parent:
                 parent.decompose()
+
+    for node in list(soup.find_all(["section", "div", "article", "aside"])):
+        txt = node.get_text(" ", strip=True).lower()
+        if not txt:
+            continue
+
+        hits = sum(1 for p in bad_phrases if p in txt)
+        if hits >=2:
+            node.decompose()
+
+
+def is_low_value_game8_text(text: str) -> bool:
+    t = (text or "").lower()
+    if len(t.strip()) < 800:
+        return True
+    
+    bad_phrases = [
+        "what can you do as a free member",
+        "create your free account today",
+        "site interface",
+        "article watchlist",
+        "game bookmarks",
+        "cross-device sync",
+        "comment rating",
+        "premium articles",
+    ]
+    hits = sum(1 for p in bad_phrases if p in t)
+
+    if hits >= 2:
+        return True
+    
+    if t.count("data:image") >= 5:
+        return True
+    
+    return False
 
 def drop_honey_comment(soup: BeautifulSoup) -> None:
     selectors = [
@@ -131,6 +199,14 @@ def html_to_text(html: str, url: str | None = None) -> str:
     except Exception as e:
         log.warning("[WARN] html_to_text: markdownify failed (%s); falling back to get_text()", type(e).__name__)
         return soup_text_fallback(main)
+    
+    if url:
+        host = urlparse(url).netloc.lower()
+        if "game8.co" in host and is_low_value_game8_text(text):
+            log.warning("[GAME8] low-value extracted text skipped url=%s len=%d", url, len(text or ""))
+            return ""
+
+    return text
 
 def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
     q = deque(seeds)

@@ -226,8 +226,8 @@ sources:
     base_url: https://game8.co/games/Genshin-Impact
     seeds:
       - "https://game8.co/games/Genshin-Impact/"
-    allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/archives/\\d+)?/?$"
-    deny_url_regex: "([?&]c_page=\\d+)"
+    allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/?|/archives/\\d+/?)(?:[?#].*)?$"
+    deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
     deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\\s*\\d+|post details)"
     max_pages: null
     rate_limit_s: 3.0
