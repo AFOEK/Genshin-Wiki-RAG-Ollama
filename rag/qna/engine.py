@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging, textwrap
+
+from pathlib import Path
+
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_faiss_model_from_cfg
-from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg
+from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
 from .generators import generate
@@ -18,6 +21,9 @@ log = logging.getLogger(__name__)
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
+    tv_cfg = cfg.get("turbovec", {}) or {}
+    tv_raw = Path(str(tv_cfg.get("path", "data/turbovec")))
+    turbovec_dir = tv_raw if tv_raw.is_absolute() else db_path.parent.parent / tv_raw
     conn = read_only_connect(str(db_path))
 
     runtime = cfg.get("runtime", {})
@@ -56,6 +62,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
     faiss_ret_cache = None
     bm25_ret_cache = None
+    turbovec_ret_cache = None
     q_vec_cache = None
     q_dims_cache = None
 
@@ -81,7 +88,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
         return q_vec_cache
 
-    expected_faiss_model = expected_faiss_model_from_cfg(cfg, backend=backend)
+    expected_faiss_model = expected_model_from_cfg(cfg, backend=backend)
     faiss_mismatch_policy = str(retrieval_cfg.get("faiss_model_mismatch", "error")).strip().lower()
     
     def get_faiss_ret():
@@ -101,6 +108,17 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         return bm25_ret_cache
 
 
+    def get_turbovec_ret():
+        nonlocal turbovec_ret_cache
+
+        if turbovec_ret_cache is None:
+            tv_cfg = cfg.get("turbovec", {}) or {}
+            expected_model = expected_model_from_cfg(cfg, backend=backend, source=str(tv_cfg.get("model_source", "runtime")))
+
+            turbovec_ret_cache = TurboVecRetriever(turbovec_dir, expected_model=expected_model, mismatch_policy=str(tv_cfg.get("model_mismatch", "error")))
+
+        return turbovec_ret_cache
+
     def search_embedding_retriever(ret, k: int):
         q_vec = get_q_vec(ret)
         return ret.search(q_vec, k)
@@ -115,12 +133,22 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         faiss_results = faiss_ret.search(q_vec, k)
         bm25_results = bm25_ret.search(question.lower(), k)
 
-        signals = build_hybrid_signal(
-            faiss_results,
-            bm25_results,
-            rrf_k=rrf_k,
-            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)),
-        )
+        signals = build_hybrid_signal(faiss_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
+
+        results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
+
+        return results, signals
+
+    def search_hybrid_turbovec(k: int):
+        tv_ret = get_turbovec_ret()
+        bm25_ret = get_bm25_ret()
+
+        q_vec = get_q_vec(tv_ret)
+
+        tv_results = tv_ret.search(q_vec, k)
+        bm25_results = bm25_ret.search(question.lower(), k)
+
+        signals = build_hybrid_signal(tv_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
 
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
 
@@ -151,6 +179,15 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
         retriever = None
         results, retrieval_signals = search_hybrid(candidate_k)
+    elif retriever_name == "turbovec":
+        log.info("[QNA] using TurboVec retriever")
+        retriever = get_turbovec_ret()
+        results = search_embedding_retriever(retriever, candidate_k)
+        retrieval_signals = {cid: score for cid, score in results}
+    elif retriever_name == "hybrid_turbovec":
+        log.info("[QNA] using HYBRID retriever (TurboVec + BM25)")
+        retriever = None
+        results, retrieval_signals = search_hybrid_turbovec(candidate_k)
     else:
         raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -181,6 +218,11 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
             retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "hybrid":
             deep_results, retrieval_signals = search_hybrid(deep_k)
+        elif retriever_name == "turbovec":
+            deep_results = search_embedding_retriever(retriever, deep_k)
+            retrieval_signals = {cid: score for cid, score in deep_results}
+        elif retriever_name == "hybrid_turbovec":
+            deep_results, retrieval_signals = search_hybrid_turbovec(deep_k)
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 

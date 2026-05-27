@@ -5,9 +5,10 @@ from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
 from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_chunks_fts
 from core.parent import rebuild_parent_map, sync_dirty_parent_docs, mark_all_active_docs_parent_dirty
+from core.turbovec import build_turbovec_from_sqlite
 
 from utils.filters import Filters
-from utils.audit import audit_integrity, audit_faiss_against_sqlite
+from utils.audit import audit_integrity, audit_faiss_against_sqlite, audit_turbovec_against_sqlite
 from utils.logging_setup import setup_logging
 from utils.thread import producer, ingest_consumer
 from utils.repair import repair_database
@@ -42,6 +43,9 @@ def main():
     ap.add_argument("--FAISS_MIGRATE", default="False")
     ap.add_argument("--FAISS_AUDIT", default="False")
     ap.add_argument("--FAISS_OVERWRITE", default="False")
+    ap.add_argument("--TURBOVEC_MIGRATE", default="False")
+    ap.add_argument("--TURBOVEC_AUDIT", default="False")
+    ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
     ap.add_argument("--DB_REPAIR", default="False")
     ap.add_argument("--FTS_SYNC", default="False")
     ap.add_argument("--FTS_INIT", default="False")
@@ -56,6 +60,9 @@ def main():
     do_db_audit = parse_bool(args.DB_AUDIT)
     do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
     do_faiss_audit = parse_bool(args.FAISS_AUDIT)
+    do_turbovec_migrate = parse_bool(args.TURBOVEC_MIGRATE)
+    turbovec_overwrite = parse_bool(args.TURBOVEC_OVERWRITE)
+    do_turbovec_audit = parse_bool(args.TURBOVEC_AUDIT)
     do_db_repair = parse_bool(args.DB_REPAIR)
     faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
     do_fts_sync = parse_bool(args.FTS_SYNC)
@@ -320,6 +327,11 @@ def main():
         log.info("[MIGRATE] FAISS migrate from SQLite3 starting")
         build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
 
+    if do_turbovec_migrate:
+        log.info("[TURBOVEC] migrate from SQLite3 starting")
+        meta = build_turbovec_from_sqlite(cfg, overwrite=turbovec_overwrite, backend=args.BACKEND)
+        log.info("[TURBOVEC] migrate done count=%d dims=%d bit_width=%d model=%s", meta["count"], meta["dims"], meta["bit_width"], meta["embedding_model"])
+
     if do_faiss_audit:
         log.info("[FAISS_AUDIT] FAISS audit starting")
         frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
@@ -342,7 +354,30 @@ def main():
             "[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d",
             frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims
         )
-        log.info("[FAISS_AUDIT] All requested stages completed successfully")
+
+    if do_turbovec_audit:
+        log.info("[TURBOVEC_AUDIT] TurboVec audit starting")
+
+        trep = audit_turbovec_against_sqlite(cfg, sample_self_test=200, backend=args.BACKEND)
+
+        if trep.failures:
+            log.error("[TURBOVEC_AUDIT] failed with %d problems", len(trep.failures))
+
+            by_reason = {}
+            for msg in trep.failures:
+                reason = msg.split(":", 1)[0].strip()
+                by_reason[reason] = by_reason.get(reason, 0) + 1
+
+            for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                log.error("  %s: %d", reason, n)
+
+            for msg in trep.failures[:20]:
+                log.error("[TURBOVEC_AUDIT] Example failure: %s", msg)
+
+            raise RuntimeError(f"[TURBOVEC_AUDIT] failed: {len(trep.failures)} problems")
+
+        log.info(
+            "[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
         
     log.info("[ALL] DONE!")
     # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}

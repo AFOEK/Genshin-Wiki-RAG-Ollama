@@ -2,7 +2,7 @@
 
 ## Introduction
 With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
-- Python 3.13.5
+- Python 3.13.13
 - Sqlite3 3.46.1
 - FAISS (Facebook AI Similarity Search) 1.13.2
 
@@ -31,15 +31,11 @@ pip install -r requirements.txt
 ```
 or setup python3 virtuak environment using conda:
 ```
-conda create -n rag python=3.13
+conda env create -f environment.yml
 ```
 and start conda environment:
 ```
-conda activate rag
-```
-With python conda environment activated, install all python requirements by running:
-```
-conda install --file requirements.txt
+conda activate genshin_rag
 ```
 
 ### Ollama server setup
@@ -327,6 +323,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [x] Reranker support.
 - [x] Dense similarity search.
 - [x] Hybrid BM25 and FAISS reranker.
+- [x] TurboVec reranked support
 - [ ] Recency weighting.
 - [x] Parent-child retriever.
 - [ ] Cache layer retriever.

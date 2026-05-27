@@ -2,11 +2,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from turbovec import IdMapIndex
 import faiss
 import logging
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, expected_faiss_model_from_cfg, check_faiss_model_match
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, expected_model_from_cfg, check_faiss_model_match
 
 log = logging.getLogger(__name__)
 
@@ -118,3 +119,63 @@ class BM25Retriever:
             LIMIT ?
         """, (fts_query, top_k))
         return [(int(row[0]), float(row[1])) for row in cur.fetchall()]
+    
+class TurboVecRetriever:
+    def __init__(self, turbovec_dir: Path, *, expected_model: str | None = None, mismatch_policy: str = "error"):
+        current = turbovec_dir / "current"
+        self.index_path = current / "index.tvim"
+        self.meta_path = current / "meta.json"
+
+        if not (self.index_path.exists() and self.meta_path.exists()):
+            raise FileNotFoundError(f"TurboVec bundle missing under {current}")
+
+        self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        self.dims = int(self.meta["dims"])
+        self.model = self.meta.get("embedding_model", "unknown")
+        self.count = int(self.meta.get("count", 0))
+
+        if expected_model:
+            actual = normalize_model_name(self.model)
+            expected = normalize_model_name(expected_model)
+
+            if actual and expected and actual != expected:
+                msg = (
+                    "[TURBOVEC] embedding model mismatch: "
+                    f"meta.json={self.model!r} config_expected={expected_model!r}"
+                )
+
+                policy = str(mismatch_policy or "error").strip().lower()
+                if policy == "error":
+                    raise RuntimeError(msg)
+                if policy == "warn":
+                    log.warning(msg)
+                elif policy == "ignore":
+                    log.warning("[TURBOVEC] ignoring model mismatch: %s", msg)
+                else:
+                    raise RuntimeError(f"Unknown TurboVec mismatch policy: {policy}")
+
+        self.index = IdMapIndex.load(str(self.index_path))
+
+        log.info("[TURBOVEC] loaded index dims=%d model=%s count=%d path=%s", self.dims, self.model, self.count, self.index_path)
+
+    def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
+        if k <= 0:
+            return []
+        
+        q = query_vec.astype(np.float32, copy=False)
+
+        try:
+            log.info("[TURBOVEC] 2D index search")
+            scores, ids = self.index.search(q, k=k)
+        except Exception:
+            log.info("[TURBOVEC] 1D index search")
+            scores, ids = self.index.search(q.reshape(-1), k=k)
+
+        scores = np.asarray(scores).reshape(-1)
+        ids = np.asarray(ids).reshape(-1)
+
+        out = []
+        for cid, score in zip(ids, scores):
+            out.append((int(cid), float(score)))
+
+        return out

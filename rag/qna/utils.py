@@ -182,9 +182,8 @@ def normalize_model_name(x) -> str:
     return s
 
 
-def expected_faiss_model_from_cfg(cfg: dict, backend: str | None = None) -> str:
-    retrieval_cfg = cfg.get("retrieval", {}) or {}
-    source = str(retrieval_cfg.get("faiss_expected_model", "runtime")).strip().lower()
+def expected_model_from_cfg(cfg: dict, backend: str | None = None, source: str = "runtime") -> str:
+    source = str(source or "runtime").strip().lower()
 
     runtime = cfg.get("runtime", {}) or {}
     provider = (backend or runtime.get("embedding_provider", "ollama")).strip().lower()

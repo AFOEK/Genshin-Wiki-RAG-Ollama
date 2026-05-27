@@ -65,6 +65,69 @@ class FaissAuditReport:
     dims: int
     failures: list[str]
 
+@dataclass
+class TurboVecAuditReport:
+    index_total: int
+    sqlite_active_embeds: int
+    dims: int
+    failures: list[str]
+
+def normalize_model_name(x) -> str:
+    if x is None:
+        return ""
+
+    if isinstance(x, (list, tuple, set)):
+        x = next(iter(x), "")
+    elif isinstance(x, dict):
+        x = x.get("name") or x.get("model") or x.get("embedding_model") or ""
+
+    s = str(x).strip().lower().replace("\\", "/")
+
+    if s.endswith(":latest"):
+        s = s[:-7]
+
+    if s.startswith("/") or s.count("/") > 1:
+        s = s.split("/")[-1]
+
+    return s
+
+
+def expected_embedding_model_from_cfg(
+    cfg: dict, *, backend: str | None = None, source: str = "runtime") -> str:
+    source = str(source or "runtime").strip().lower()
+
+    runtime = cfg.get("runtime", {}) or {}
+    provider = (backend or runtime.get("embedding_provider", "ollama")).strip().lower()
+
+    if provider == "llama.cpp":
+        provider = "llamacpp"
+
+    if source == "kaggle":
+        return str(cfg.get("kaggle", {}).get("embedding_model", ""))
+
+    if source == "ollama":
+        return str(cfg.get("ollama", {}).get("embedding_model", ""))
+
+    if source in ("llamacpp", "llama.cpp"):
+        return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
+
+    if provider == "llamacpp":
+        return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
+
+    return str(cfg.get("ollama", {}).get("embedding_model", ""))
+
+
+def resolve_turbovec_dir(cfg: dict) -> Path:
+    db_path = resolve_db_path(cfg)
+    tv_cfg = cfg.get("turbovec", {}) or {}
+
+    raw_path = Path(str(tv_cfg.get("path", "data/turbovec")))
+
+    if raw_path.is_absolute():
+        return raw_path
+
+    return db_path.parent.parent / raw_path
+
 def sample(rows: list, samples: Optional[int], rng: random.Random) -> list:
     if samples is None:
         return rows
@@ -409,6 +472,189 @@ def audit_faiss_against_sqlite(cfg: dict, *, index_dir: str | None = None, sampl
     return FaissAuditReport(
         index_total=int(index.ntotal),
         ids_total=int(len(ids)),
+        sqlite_active_embeds=sqlite_active_embeds,
+        dims=int(d or sqlite_d or 0),
+        failures=failures,
+    )
+
+def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sample_self_test: int = 200, self_test_k: int = 10, backend: str | None = None) -> TurboVecAuditReport:
+    failures: list[str] = []
+
+    try:
+        from turbovec import IdMapIndex
+    except Exception as e:
+        return TurboVecAuditReport(
+            index_total=0,
+            sqlite_active_embeds=0,
+            dims=0,
+            failures=[f"turbovec_import_failed: {type(e).__name__}: {e}"],
+        )
+
+    db_path = resolve_db_path(cfg)
+    tv_root = Path(index_dir) if index_dir else (resolve_turbovec_dir(cfg) / "current")
+
+    index_path = tv_root / "index.tvim"
+    meta_path = tv_root / "meta.json"
+
+    for p in (index_path, meta_path):
+        if not p.exists():
+            failures.append(f"missing_file: {p}")
+
+    if failures:
+        return TurboVecAuditReport(
+            index_total=0,
+            sqlite_active_embeds=0,
+            dims=0,
+            failures=failures,
+        )
+
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return TurboVecAuditReport(
+            index_total=0,
+            sqlite_active_embeds=0,
+            dims=0,
+            failures=[f"meta_read_failed: {type(e).__name__}: {e}"],
+        )
+
+    d = int(meta.get("dims", 0) or 0)
+    meta_count = int(meta.get("count", 0) or 0)
+
+    if d <= 0:
+        failures.append("meta_dims_invalid")
+
+    if meta_count <= 0:
+        failures.append("meta_count_invalid")
+
+    tv_cfg = cfg.get("turbovec", {}) or {}
+    expected_model = expected_embedding_model_from_cfg(
+        cfg,
+        backend=backend,
+        source=str(tv_cfg.get("model_source", "runtime")),
+    )
+
+    actual_model = str(meta.get("embedding_model", ""))
+
+    actual_n = normalize_model_name(actual_model)
+    expected_n = normalize_model_name(expected_model)
+
+    if actual_n and expected_n and actual_n != expected_n:
+        failures.append(
+            f"embedding_model_mismatch: meta={actual_model!r} expected={expected_model!r}"
+        )
+
+    try:
+        index = IdMapIndex.load(str(index_path))
+    except Exception as e:
+        return TurboVecAuditReport(
+            index_total=meta_count,
+            sqlite_active_embeds=0,
+            dims=d,
+            failures=failures + [f"index_load_failed: {type(e).__name__}: {e}"],
+        )
+
+    conn = read_only_connect(str(db_path))
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT e.dims AS dims
+        FROM embeddings e
+        JOIN chunks c ON c.chunk_id = e.chunk_id
+        JOIN docs d ON d.doc_id = c.doc_id
+        WHERE c.is_active=1
+          AND COALESCE(d.status, 1)=1
+        LIMIT 1
+    """)
+    r = cur.fetchone()
+
+    if r is None:
+        failures.append("sqlite_has_no_active_embeddings")
+        sqlite_d = 0
+    else:
+        sqlite_d = int(r["dims"])
+        if d and sqlite_d != d:
+            failures.append(f"dims_mismatch: sqlite={sqlite_d} meta={d}")
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM embeddings e
+        JOIN chunks c ON c.chunk_id = e.chunk_id
+        JOIN docs d ON d.doc_id = c.doc_id
+        WHERE c.is_active=1
+          AND COALESCE(d.status, 1)=1
+    """)
+    sqlite_active_embeds = int(cur.fetchone()[0] or 0)
+
+    if meta_count != sqlite_active_embeds:
+        failures.append(
+            f"count_mismatch: sqlite_active={sqlite_active_embeds} turbovec_meta={meta_count}"
+        )
+
+    if sqlite_active_embeds > 0 and d > 0 and sample_self_test > 0:
+        cur.execute("""
+            SELECT e.chunk_id, e.dims, e.vector
+            FROM embeddings e
+            JOIN chunks c ON c.chunk_id = e.chunk_id
+            JOIN docs d ON d.doc_id = c.doc_id
+            WHERE c.is_active=1
+              AND COALESCE(d.status, 1)=1
+            ORDER BY RANDOM()
+            LIMIT ?
+        """, (int(sample_self_test),))
+
+        rows = cur.fetchall()
+
+        for row in rows:
+            chunk_id = int(row["chunk_id"])
+            dims = int(row["dims"])
+            blob = row["vector"]
+
+            if dims != d:
+                failures.append(
+                    f"sample_dims_mismatch: chunk_id={chunk_id} sqlite_dims={dims} meta_dims={d}"
+                )
+                break
+
+            q = np.frombuffer(blob, dtype=np.float32)
+
+            if q.size != d:
+                failures.append(
+                    f"sample_vector_size_mismatch: chunk_id={chunk_id} expected={d} got={q.size}"
+                )
+                break
+
+            q = q.astype(np.float32, copy=False)
+
+            norm = np.linalg.norm(q)
+            if norm > 0:
+                q = q / norm
+
+            try:
+                try:
+                    scores, ids = index.search(q.reshape(1, -1), k=int(self_test_k))
+                except Exception:
+                    scores, ids = index.search(q.reshape(-1), k=int(self_test_k))
+
+                ids = np.asarray(ids).reshape(-1)
+                got_ids = [int(x) for x in ids]
+
+                if chunk_id not in got_ids:
+                    failures.append(
+                        f"self_test_failed: chunk_id={chunk_id} not_in_top_{self_test_k} got={got_ids[:10]}"
+                    )
+                    break
+
+            except Exception as e:
+                failures.append(
+                    f"self_test_exception: chunk_id={chunk_id} err={type(e).__name__}: {e}"
+                )
+                break
+
+    conn.close()
+
+    return TurboVecAuditReport(
+        index_total=meta_count,
         sqlite_active_embeds=sqlite_active_embeds,
         dims=int(d or sqlite_d or 0),
         failures=failures,
