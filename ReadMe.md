@@ -174,7 +174,7 @@ Make sure that `conda` is recognized by the powershell by running:
 ```
 Then create virtual environment using `conda`:
 ```
-conda create -n rag python=3.12.4
+conda create -n rag python=3.13.4
 ```
 activate the virtual environment:
 ```
@@ -210,6 +210,9 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
 --FAISS_OVERWRITE=False
+--TURBOVEC_MIGRATE=False
+--TURBOVEC_AUDIT=False
+--TURBOVEC_OVERWRITE=False
 --FTS_SYNC=True
 --FTS_INIT=False
 --FTS_REBUILD=False
@@ -225,19 +228,23 @@ Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days
 
 ```
 # Crawl + DB Audit
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=False --TURBOVEC_OVERWRITE=False --TURBOVEC_AUDIT=False --PARENT_SYNC=True --BACKEND=ollama
 ```
 ```
 # Migrate + Audit FAISS
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True --BACKEND=ollama
 ```
 ```
+# Migrate + Audit TurboVec
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True
+```
+```
 # DB Repair + DB Audit
-python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --BACKEND=ollama
 ```
 ```
 # Full pipeline
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --FTS_INIT=True --BACKEND=ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND ollama
 ```
 
 ## QnA Test
@@ -248,7 +255,7 @@ python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
 It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
 ```
 --config rag/config.yaml                        #default value: rag/config.yaml
---retriever {sqlite, faiss, bm25, and hybrid}   #default value: hybrid
+--retriever {sqlite, faiss, bm25, hybrid, turbovec, hybrid_turbovec}   #default value: hybrid
 --direct_top_k 8-32                             #default value: 12
 --board_top_k 50-80                             #default value: 60
 --summarize_batch_size 4-16                     #default value: 8
@@ -311,7 +318,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
 - [x] Add Vulkan and other accelerator support.
 - [x] Llama.cpp support.
-- [ ] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
+- [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
 - [x] Embedding using Kaggle.
 - [x] Adding cron jobs updates.
 - [x] Pulling from sources.
@@ -324,10 +331,11 @@ Since current project state is on crawling and embedding all the game data, isn'
 - [x] Dense similarity search.
 - [x] Hybrid BM25 and FAISS reranker.
 - [x] TurboVec reranked support
-- [ ] Recency weighting.
+- [x] Recency weighting. [^3]
 - [x] Parent-child retriever.
 - [ ] Cache layer retriever.
 
 ## Footenote
 [^1]: It's get processed on Kaggle
 [^2]: ARM architectures only
+[^3]: Partial need more testing
