@@ -48,6 +48,27 @@ def resolve_faiss_dir(cfg: dict) -> Path:
     log.info(f"[INFO] FAISS directory resolved at {faiss_dir}")
     return faiss_dir
 
+def resolve_turbovec_dir(cfg: dict) -> Path:
+    root = resolve_storage_root(cfg)
+
+    tv_cfg = cfg.get("turbovec", {}) or {}
+    tv_rel = tv_cfg.get("path", "data/turbovec")
+
+    tv_dir = expand_path(Path(str(tv_rel)))
+
+    if not tv_dir.is_absolute():
+        tv_dir = (root / tv_dir).resolve()
+
+    if tv_dir.suffix in {".db", ".sqlite", ".sqlite3"}:
+        raise RuntimeError(
+            f"Invalid TurboVec path: {tv_dir}. "
+            "TurboVec path must be a directory, e.g. data/turbovec"
+        )
+
+    tv_dir.mkdir(parents=True, exist_ok=True)
+    log.info(f"[INFO] TurboVec directory resolved at {tv_dir}")
+    return tv_dir
+
 def resolve_faiss_paths(cfg: dict):
     d = resolve_faiss_dir(cfg)
     return (

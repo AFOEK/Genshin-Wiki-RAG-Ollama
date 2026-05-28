@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 
-from core.paths import resolve_db_path
+from core.paths import resolve_db_path, resolve_turbovec_dir
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def build_turbovec_from_sqlite(cfg: dict, *, overwrite: bool = False, backend: s
     db_path = resolve_db_path(cfg)
     tv_cfg = cfg.get("turbovec", {}) or {}
     
-    out_dir = resolve_db_path(cfg)
+    out_dir = resolve_turbovec_dir(cfg)
     current = out_dir / "current"
     current.mkdir(parents=True, exist_ok=True)
 
