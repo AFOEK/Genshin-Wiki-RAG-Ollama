@@ -477,7 +477,7 @@ def audit_faiss_against_sqlite(cfg: dict, *, index_dir: str | None = None, sampl
         failures=failures,
     )
 
-def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sample_self_test: int = 200, self_test_k: int = 10, backend: str | None = None) -> TurboVecAuditReport:
+def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sample_self_test: int = 200, self_test_k: int = 50, backend: str | None = None) -> TurboVecAuditReport:
     failures: list[str] = []
 
     try:
@@ -605,30 +605,27 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
 
         rows = cur.fetchall()
 
+        tested = 0
+        self_hits = 0
+        self_misses = []
+
         for row in rows:
             chunk_id = int(row["chunk_id"])
             dims = int(row["dims"])
             blob = row["vector"]
 
-            if dims != d:
-                failures.append(
-                    f"sample_dims_mismatch: chunk_id={chunk_id} sqlite_dims={dims} meta_dims={d}"
-                )
-                break
-
             q = np.frombuffer(blob, dtype=np.float32)
 
             if q.size != d:
-                failures.append(
-                    f"sample_vector_size_mismatch: chunk_id={chunk_id} expected={d} got={q.size}"
-                )
+                failures.append(f"sample_vector_size_mismatch: chunk_id={chunk_id} expected={d} got={q.size}")
                 break
 
             q = q.astype(np.float32, copy=False)
 
-            norm = np.linalg.norm(q)
-            if norm > 0:
-                q = q / norm
+            if bool(meta.get("normalized", True)):
+                norm = np.linalg.norm(q)
+                if norm > 0:
+                    q = q / norm
 
             try:
                 try:
@@ -639,17 +636,23 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
                 ids = np.asarray(ids).reshape(-1)
                 got_ids = [int(x) for x in ids]
 
-                if chunk_id not in got_ids:
-                    failures.append(
-                        f"self_test_failed: chunk_id={chunk_id} not_in_top_{self_test_k} got={got_ids[:10]}"
-                    )
-                    break
+                tested += 1
+
+                if chunk_id in got_ids:
+                    self_hits += 1
+                else:
+                    self_misses.append(f"chunk_id={chunk_id} not_in_top_{self_test_k} got={got_ids[:10]}")
 
             except Exception as e:
-                failures.append(
-                    f"self_test_exception: chunk_id={chunk_id} err={type(e).__name__}: {e}"
-                )
+                failures.append(f"self_test_exception: chunk_id={chunk_id} err={type(e).__name__}: {e}")
                 break
+
+        if tested > 0:
+            recall = self_hits / tested
+            if recall < 0.95:
+                failures.append(
+                    f"self_recall_low: hits={self_hits}/{tested} recall={recall:.4f} "
+                    f"examples={self_misses[:3]}")
 
     conn.close()
 

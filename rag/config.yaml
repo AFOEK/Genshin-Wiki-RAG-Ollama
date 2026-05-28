@@ -109,7 +109,7 @@ kaggle:
     ivf_nlist: 2048
     ivf_nprobe: 64
 
-    train_size: 550000
+    train_size: 1550000
     batch_add: 2500
 
 faiss:
@@ -125,7 +125,7 @@ faiss:
 
 turbovec:
   path: data/turbovec
-  bit_width: 4
+  bit_width: 8
   batch_size: 4096
   model_source: runtime   # runtime | kaggle | ollama | llamacpp
   model_mismatch: error   # error | warn | ignore

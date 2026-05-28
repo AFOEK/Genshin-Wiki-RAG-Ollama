@@ -137,6 +137,10 @@ def build_turbovec_from_sqlite(cfg: dict, *, overwrite: bool = False, backend: s
             return
 
         vectors = np.vstack(vecs_batch).astype(np.float32, copy=False)
+
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        vectors = np.divide(vectors, norms, out=np.zeros_like(vectors, dtype=np.float32), where=norms > 0)
+
         ids = np.asarray(ids_batch, dtype=np.uint64)
 
         index.add_with_ids(vectors, ids)
