@@ -7,7 +7,7 @@ import faiss
 import logging
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, expected_model_from_cfg, check_faiss_model_match
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match
 
 log = logging.getLogger(__name__)
 

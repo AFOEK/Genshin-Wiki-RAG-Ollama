@@ -54,17 +54,6 @@ def embedding_model_from_cfg(cfg: dict, *, backend: str | None = None, source: s
 
     return str(cfg.get("ollama", {}).get("embedding_model", ""))
 
-
-def resolve_turbovec_dir(cfg: dict) -> Path:
-    db_path = resolve_db_path(cfg)
-    tv_cfg = cfg.get("turbovec", {}) or {}
-    raw_path = Path(str(tv_cfg.get("path", "data/turbovec")))
-
-    if raw_path.is_absolute():
-        return raw_path
-
-    return db_path.parent.parent / raw_path
-
 def build_turbovec_from_sqlite(cfg: dict, *, overwrite: bool = False, backend: str | None = None) -> dict:
     db_path = resolve_db_path(cfg)
     tv_cfg = cfg.get("turbovec", {}) or {}

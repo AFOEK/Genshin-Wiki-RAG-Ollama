@@ -158,8 +158,6 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     if retriever_name == "sql":
         retriever_name = "sqlite"
 
-    retriever_signals = None
-
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
         retriever = get_faiss_ret()

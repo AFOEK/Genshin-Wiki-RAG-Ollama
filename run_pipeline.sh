@@ -184,7 +184,7 @@ log "Activating virtual environment"
 source .venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND ollama
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
 log "Crawling, repair, audit, FAISS, FTS5, and parent-child records builds. Done"
 
 log "Compressing compact SQLite DB snapshot"

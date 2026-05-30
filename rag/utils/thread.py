@@ -125,6 +125,7 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
         try:
             if first_job is STOP:
                 return
+
             while len(jobs) < batch_size:
                 try:
                     nxt = embed_q.get_nowait()
@@ -135,17 +136,33 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
                 except queue.Empty:
                     break
 
-            prepared_jobs = []
-            batch_texts = []
+            prepared_jobs: list[tuple[EmbedJob, str]] = []
             for job in jobs:
                 assert isinstance(job, EmbedJob)
-                txt = job.text
+                txt = job.text or ""
                 safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
                 safe_txt = defang_tables(safe_txt)
                 prepared_jobs.append((job, safe_txt))
 
-            results = embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id)
+            if len(prepared_jobs) > 1:
+                batch_texts = [txt for _, txt in prepared_jobs]
+                try:
+                    batch_result = embed_fn(batch_texts)
+                    if isinstance(batch_result, list) and len(batch_result) == len(prepared_jobs):
+                        for (job, _), (blob, dims) in zip(prepared_jobs, batch_result):
+                            res_q.put(EmbedResult(
+                                chunk_id=job.chunk_id,
+                                dims=dims,
+                                vec=blob,
+                            ))
+                        log.debug("[EMBED-%d] batch ok size=%d", worker_id, len(prepared_jobs))
+                        return
 
+                    log.warning("[EMBED-%d] batch returned unexpected shape expected=%d got=%s, falling back", worker_id, len(prepared_jobs), len(batch_result) if isinstance(batch_result, list) else type(batch_result).__name__)
+                except Exception as e:
+                    log.warning("[EMBED-%d] batch embed failed (%s), falling back to per-item", worker_id, type(e).__name__)
+
+            results = embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id)
             for res in results:
                 res_q.put(res)
 

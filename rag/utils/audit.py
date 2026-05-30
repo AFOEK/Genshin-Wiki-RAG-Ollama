@@ -613,9 +613,11 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
             chunk_id = int(row["chunk_id"])
             dims = int(row["dims"])
             blob = row["vector"]
+            if dims != d:
+                failures.append(f"embedding_dims_mismatch: chunk_id={chunk_id} faiss={d} db={dims}")
+                continue
 
             q = np.frombuffer(blob, dtype=np.float32)
-
             if q.size != d:
                 failures.append(f"sample_vector_size_mismatch: chunk_id={chunk_id} expected={d} got={q.size}")
                 break

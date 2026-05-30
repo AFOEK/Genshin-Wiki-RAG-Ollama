@@ -182,10 +182,6 @@ def maybe_quantization_config(train_cfg: dict):
 
 
 def main() -> None:
-    setup_logging(
-        cfg.get("logging", {}).get("file"),
-        cfg.get("logging", {}).get("level", "INFO")
-    )
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="rag/config.yaml")
     ap.add_argument("--mode", default=None)
@@ -197,6 +193,11 @@ def main() -> None:
 
     cfg = load_cfg(args.config)
     train_cfg = cfg.get("peft_training", {}) or {}
+
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
 
     if not as_bool(train_cfg.get("enabled"), True):
         log.info("[PEFT] peft_training.enabled=false; exiting")

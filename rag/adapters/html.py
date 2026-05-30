@@ -192,18 +192,18 @@ def html_to_text(html: str, url: str | None = None) -> str:
     )
 
     try:
-        return md(str(main))
+        text = md(str(main))
     except RecursionError:
-        log.warning("[WARN] html_to_text: RecursionError in markdownify; falling back to get_text()")
-        return soup_text_fallback(main)
+        log.warning("[WARN] html_to_text: RecursionError in markdownify; falling back")
+        text = soup_text_fallback(main)
     except Exception as e:
-        log.warning("[WARN] html_to_text: markdownify failed (%s); falling back to get_text()", type(e).__name__)
-        return soup_text_fallback(main)
-    
+        log.warning("[WARN] html_to_text: markdownify failed (%s); falling back", type(e).__name__)
+        text = soup_text_fallback(main)
+
     if url:
         host = urlparse(url).netloc.lower()
         if "game8.co" in host and is_low_value_game8_text(text):
-            log.warning("[GAME8] low-value extracted text skipped url=%s len=%d", url, len(text or ""))
+            log.warning("[GAME8] low-value text skipped url=%s len=%d", url, len(text))
             return ""
 
     return text

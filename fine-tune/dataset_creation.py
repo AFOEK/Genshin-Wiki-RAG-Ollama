@@ -610,10 +610,6 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
 
 def main() -> None:
-    setup_logging(
-        cfg.get("logging", {}).get("file"),
-        cfg.get("logging", {}).get("level", "INFO")
-    )
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--config", default="rag/config.yaml")
@@ -641,6 +637,10 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
     ds_cfg = cfg.get("dataset_creation", {}) or {}
     ollama_cfg = cfg.get("ollama", {}) or {}
 
@@ -673,6 +673,8 @@ def main() -> None:
     args.easy_negatives = cfg_int(args.easy_negatives, cfg_int(ds_cfg.get("easy_negatives"), 2))
     args.negative_pool_size = cfg_int(args.negative_pool_size, cfg_int(ds_cfg.get("negative_pool_size"), 120))
     args.negative_text_chars = cfg_int(args.negative_text_chars, cfg_int(ds_cfg.get("negative_text_chars"), 1200))
+
+    sources = cfg_sources(args.sources, ds_cfg.get("sources", "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"))
 
     if not sources:
         raise RuntimeError("[LORA_DATASET] No dataset sources configured.")
