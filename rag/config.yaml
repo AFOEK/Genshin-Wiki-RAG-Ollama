@@ -125,10 +125,50 @@ faiss:
 
 turbovec:
   path: data/turbovec
-  bit_width: 8
+  bit_width: 4
   batch_size: 4096
   model_source: runtime   # runtime | kaggle | ollama | llamacpp
   model_mismatch: error   # error | warn | ignore
+
+dataset_creation:
+  db_path: null # null = resolve using storage.primary_root + db_path
+
+  out_dir: data/training
+  lora_out: genshin_lora_candidates.jsonl
+  retrieval_pairs_out: genshin_retrieval_pairs.jsonl
+  sft_negative_out: genshin_sft_negative_answerability.jsonl
+
+  ollama_url: http://localhost:11434
+  model: llama3.2:3b
+
+  limit: 1000
+  qa_per_chunk: 2
+  min_chars: 500
+  max_chars: 2500
+  seed: 1137
+  sleep: 0.5
+
+  sources:
+    - genshin_wiki
+    - kqm_tcl
+    - kqm_news
+    - honey
+    - genshin_gg
+    - game8
+
+  make_negative: true
+  hard_negative: 3
+  easy_negative: 2
+  negative_pool_size: 120
+  negative_text_chars: 1200
+
+dataset_split:
+  enabled: true
+  src: data/training/genshin_lora_candidates.jsonl
+  train_out: data/training/genshin_lora_train.jsonl
+  val_out: data/training/genshin_lora_val.jsonl
+  val_ratio: 0.05
+  seed: 1337
 
 pipeline:
   chunk_size: 600

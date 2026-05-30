@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-import argparse, json, random, re, sqlite3, time, requests
+import argparse, json, random, re, sqlite3, time, requests, os, yaml, sys, logging
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
+
+from utils.logging_setup import setup_logging
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RAG_DIR   = REPO_ROOT / "rag"
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a Genshin Impact assistant. "
@@ -64,6 +73,91 @@ STOPWORDS = {
 def tokenize(s: str) -> set[str]:
     return set(re.findall(r"[A-Za-z0-9_']+", (s or "").lower())) - STOPWORDS
 
+def load_cfg(path: str | None) -> dict:
+    if not path:
+        return {}
+
+    p = Path(path)
+
+    if not p.is_absolute() and not p.exists():
+        p = REPO_ROOT / path
+
+    if not p.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with p.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def expand_path(x) -> Path:
+    return Path(os.path.expandvars(str(x))).expanduser()
+
+
+def resolve_db_path_from_cfg(cfg: dict) -> Path:
+    storage = cfg.get("storage", {}) or {}
+    db_rel = cfg.get("db_path", "data/genshin_rag.db")
+
+    candidates = []
+
+    primary = storage.get("primary_root")
+    if primary:
+        candidates.append((expand_path(primary) / db_rel).resolve())
+
+    secondary = storage.get("secondary_root")
+    if secondary:
+        candidates.append((expand_path(secondary) / db_rel).resolve())
+
+    for p in candidates:
+        if p.exists():
+            return p
+
+    if candidates:
+        return candidates[0]
+
+    return Path(db_rel).resolve()
+
+
+def resolve_output_path(path_value: str, cfg: dict) -> Path:
+    p = expand_path(path_value)
+
+    if p.is_absolute():
+        return p
+
+    storage = cfg.get("storage", {}) or {}
+    primary = storage.get("primary_root")
+
+    if primary:
+        return (expand_path(primary) / p).resolve()
+
+    return p.resolve()
+
+
+def cfg_bool(x, default: bool = False) -> bool:
+    if x is None:
+        return default
+    return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def cfg_int(x, default: int) -> int:
+    if x is None:
+        return default
+    return int(x)
+
+
+def cfg_float(x, default: float) -> float:
+    if x is None:
+        return default
+    return float(x)
+
+
+def cfg_sources(x, default: str) -> list[str]:
+    if x is None:
+        x = default
+
+    if isinstance(x, list):
+        return [str(s).strip() for s in x if str(s).strip()]
+
+    return [s.strip() for s in str(x).split(",") if s.strip()]
 
 def make_fts5_query(user_query: str) -> str:
     raw_tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
@@ -370,7 +464,7 @@ def preflight_for_negatives(conn: sqlite3.Connection) -> None:
     fts_rows = get_count(conn, "SELECT COUNT(*) FROM chunks_fts")
     active_chunks = get_count(conn, "SELECT COUNT(*) FROM chunks WHERE is_active=1")
 
-    print(f"[PREFLIGHT] active_chunks={active_chunks} fts_rows={fts_rows}")
+    log.info(f"[PREFLIGHT] active_chunks={active_chunks} fts_rows={fts_rows}")
 
     if active_chunks <= 0:
         raise RuntimeError("No active chunks found. Cannot create training dataset.")
@@ -420,12 +514,7 @@ def make_negative_sft_record(base_id: str, question: str, negative: dict) -> dic
         },
     }
 
-def ollama_generate(
-    base_url: str,
-    model: str,
-    prompt: str,
-    timeout: int = 300,
-) -> str:
+def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300) -> str:
     r = requests.post(
         f"{base_url.rstrip('/')}/api/generate",
         json={
@@ -489,15 +578,7 @@ Context:
 {text}
 """.strip()
 
-def fetch_chunks(
-    conn: sqlite3.Connection,
-    *,
-    sources: list[str],
-    limit: int,
-    min_chars: int,
-    max_chars: int,
-    seed: int,
-) -> list[sqlite3.Row]:
+def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, min_chars: int, max_chars: int, seed: int) -> list[sqlite3.Row]:
     source_placeholders = ",".join("?" for _ in sources)
 
     cur = conn.cursor()
@@ -529,35 +610,82 @@ def fetch_chunks(
 
 
 def main() -> None:
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", required=True)
-    ap.add_argument("--out", default="lora_dataset.jsonl")
-    ap.add_argument("--ollama-url", default="http://localhost:11434")
-    ap.add_argument("--model", default="llama3.2:3b")
-    ap.add_argument("--limit", type=int, default=1000)
-    ap.add_argument("--qa-per-chunk", type=int, default=2)
-    ap.add_argument("--min-chars", type=int, default=500)
-    ap.add_argument("--max-chars", type=int, default=2500)
-    ap.add_argument("--seed", type=int, default=1337)
-    ap.add_argument("--sources", default="genshin_wiki,kqm_tcl,kqm_news,honey,genshin_gg,game8", help="Comma-separated source names")
-    ap.add_argument("--sleep", type=float, default=0.0)
 
-    ap.add_argument("--make-negatives", action="store_true")
-    ap.add_argument("--retrieval-pairs-out", default="genshin_retrieval_pairs.jsonl")
-    ap.add_argument("--sft-negative-out", default="genshin_sft_negative_answerability.jsonl")
-    ap.add_argument("--hard-negatives", type=int, default=3)
-    ap.add_argument("--easy-negatives", type=int, default=2)
-    ap.add_argument("--negative-pool-size", type=int, default=120)
-    ap.add_argument("--negative-text-chars", type=int, default=1200)
+    ap.add_argument("--config", default="rag/config.yaml")
+
+    ap.add_argument("--db", default=None)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--ollama-url", default=None)
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--qa-per-chunk", type=int, default=None)
+    ap.add_argument("--min-chars", type=int, default=None)
+    ap.add_argument("--max-chars", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--sources", default=None)
+    ap.add_argument("--sleep", type=float, default=None)
+
+    ap.add_argument("--make-negatives", action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument("--retrieval-pairs-out", default=None)
+    ap.add_argument("--sft-negative-out", default=None)
+    ap.add_argument("--hard-negatives", type=int, default=None)
+    ap.add_argument("--easy-negatives", type=int, default=None)
+    ap.add_argument("--negative-pool-size", type=int, default=None)
+    ap.add_argument("--negative-text-chars", type=int, default=None)
 
     args = ap.parse_args()
 
-    db_path = Path(args.db)
-    out_path = Path(args.out)
-    retrieval_pairs_path = Path(args.retrieval_pairs_out)
-    sft_negative_path = Path(args.sft_negative_out)
+    cfg = load_cfg(args.config)
+    ds_cfg = cfg.get("dataset_creation", {}) or {}
+    ollama_cfg = cfg.get("ollama", {}) or {}
 
-    sources = [s.strip() for s in args.sources.split(",") if s.strip()]
+    db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg))
+
+    out_dir = resolve_output_path(ds_cfg.get("out_dir", "data/training"), cfg)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = (resolve_output_path(args.out, cfg) if args.out else out_dir / ds_cfg.get("lora_out", "genshin_lora_candidates.jsonl"))
+    retrieval_pairs_path = (resolve_output_path(args.retrieval_pairs_out, cfg) if args.retrieval_pairs_out else out_dir / ds_cfg.get("retrieval_pairs_out", "genshin_retrieval_pairs.jsonl"))
+    sft_negative_path = (resolve_output_path(args.sft_negative_out, cfg) if args.sft_negative_out else out_dir / ds_cfg.get("sft_negative_out", "genshin_sft_negative_answerability.jsonl"))
+    
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    retrieval_pairs_path.parent.mkdir(parents=True, exist_ok=True)
+    sft_negative_path.parent.mkdir(parents=True, exist_ok=True)
+
+    args.ollama_url = args.ollama_url or ds_cfg.get("ollama_url") or ollama_cfg.get("base_url", "http://localhost:11434")
+    args.model = args.model or ds_cfg.get("model") or ollama_cfg.get("qa_model", "llama3.2:3b")
+
+    args.limit = cfg_int(args.limit, cfg_int(ds_cfg.get("limit"), 1000))
+    args.qa_per_chunk = cfg_int(args.qa_per_chunk, cfg_int(ds_cfg.get("qa_per_chunk"), 2))
+    args.min_chars = cfg_int(args.min_chars, cfg_int(ds_cfg.get("min_chars"), 500))
+    args.max_chars = cfg_int(args.max_chars, cfg_int(ds_cfg.get("max_chars"), 2500))
+    args.seed = cfg_int(args.seed, cfg_int(ds_cfg.get("seed"), 1337))
+    args.sleep = cfg_float(args.sleep, cfg_float(ds_cfg.get("sleep"), 0.0))
+
+    args.make_negatives = (args.make_negatives if args.make_negatives is not None else cfg_bool(ds_cfg.get("make_negatives"), False))
+
+    args.hard_negatives = cfg_int(args.hard_negatives, cfg_int(ds_cfg.get("hard_negatives"), 3))
+    args.easy_negatives = cfg_int(args.easy_negatives, cfg_int(ds_cfg.get("easy_negatives"), 2))
+    args.negative_pool_size = cfg_int(args.negative_pool_size, cfg_int(ds_cfg.get("negative_pool_size"), 120))
+    args.negative_text_chars = cfg_int(args.negative_text_chars, cfg_int(ds_cfg.get("negative_text_chars"), 1200))
+
+    if not sources:
+        raise RuntimeError("[LORA_DATASET] No dataset sources configured.")
+
+    sources = cfg_sources(args.sources, ds_cfg.get("sources", "genshin_wiki,kqm_tcl,kqm_news,honey,genshin_gg"))
+
+    log.info(f"[LORA_CONFIG] db={db_path}")
+    log.info(f"[LORA_CONFIG] out={out_path}")
+    log.info(f"[LORA_CONFIG] model={args.model}")
+    log.info(f"[LORA_CONFIG] sources={sources}")
+    log.info(f"[LORA_CONFIG] make_negatives={args.make_negatives}")
+    log.info(f"[LORA_CONFIG] retrieval_pairs_out={retrieval_pairs_path}")
+    log.info(f"[LORA_CONFIG] sft_negative_out={sft_negative_path}")
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -583,7 +711,7 @@ def main() -> None:
             seed=args.seed,
         )
 
-        print(f"Loaded candidate chunks: {len(rows)}")
+        log.info(f"[LORA_DATASET] Loaded candidate chunks: {len(rows)}")
 
         if args.make_negatives:
             pair_f = retrieval_pairs_path.open("w", encoding="utf-8")
@@ -608,7 +736,7 @@ def main() -> None:
                     raw = ollama_generate(args.ollama_url, args.model, prompt)
                     items = extract_json_array(raw)
                 except Exception as e:
-                    print(f"[WARN] failed chunk_id={chunk_id} err={type(e).__name__}: {e}")
+                    log.warning(f"[LORA_DATASET] failed chunk_id={chunk_id} err={type(e).__name__}: {e}")
                     skipped += 1
                     continue
 
@@ -710,8 +838,8 @@ def main() -> None:
                             written_sft_neg += 1
 
                 if written % 100 == 0 and written > 0:
-                    print(
-                        f"written={written} skipped={skipped} "
+                    log.info(
+                        f"[LORA_DATASET] written={written} skipped={skipped} "
                         f"retrieval_pairs={written_neg_pairs} "
                         f"sft_negatives={written_sft_neg}"
                     )
@@ -726,11 +854,11 @@ def main() -> None:
             sft_neg_f.close()
         conn.close()
 
-    print(f"Done. written={written} skipped={skipped} out={out_path}")
+    log.info(f"[LORA_DATASET] Done. written={written} skipped={skipped} out={out_path}")
 
     if args.make_negatives:
-        print(f"Retrieval pairs written={written_neg_pairs} out={retrieval_pairs_path}")
-        print(f"SFT negatives written={written_sft_neg} out={sft_negative_path}")
+        log.info(f"[LORA_DATASET] Retrieval pairs written={written_neg_pairs} out={retrieval_pairs_path}")
+        log.info(f"[LORA_DATASET] SFT negatives written={written_sft_neg} out={sft_negative_path}")
 
 if __name__ == "__main__":
     main()
