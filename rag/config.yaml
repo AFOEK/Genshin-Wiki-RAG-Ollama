@@ -156,11 +156,96 @@ dataset_creation:
     - genshin_gg
     - game8
 
-  make_negative: true
-  hard_negative: 3
-  easy_negative: 2
+  make_negatives: true
+  hard_negatives: 3
+  easy_negatives: 2
   negative_pool_size: 120
   negative_text_chars: 1200
+
+peft:
+  method: lora    #lora | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft
+  base_model: llama3.2:3b
+  output_dir: data/training/adapters/genshin_lora
+  train_file: data/training/genshin_lora_train.jsonl
+  val_file: data/training/genshin_lora_val.jsonl
+  max_seq_length: 2048
+  packing: false
+
+  quantization:
+    enabled: false    # auto-enabled for qlora / qdora
+    load_in_4bit: true
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_use_double_quant: true
+
+  training:
+    epochs: 100
+    learning_rate: 0.0002
+    batch_size: 50
+    gradient_accumulation_steps: 8
+    warmup_ratio: 0.03
+    weight_decay: 0.0
+    logging_steps: 10
+    save_steps: 250
+    eval_steps: 250
+    save_total_limit: 2
+    gradient_checkpointing: true
+    fp16: false
+    bf16: true
+
+  target_modules:
+    llama_mlp_attention:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_profile: llama_mlp_attention
+
+  dora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_profile: llama_mlp_attention
+
+  vera:
+    r: 256
+    dropout: 0.05
+    projection_prng_key: 0
+    save_projection: true
+    target_profile: llama_mlp_attention
+
+  ia3:
+    target_profile: llama_mlp_attention
+    feedforward_modules:
+      - gate_proj
+      - up_proj
+      - down_proj
+
+  adalora:
+    init_r: 12
+    target_r: 8
+    beta1: 0.85
+    beta2: 0.85
+    tinit: 200
+    tfinal: 1000
+    delta_t: 10
+    alpha: 32
+    dropout: 0.05
+    target_profile: llama_mlp_attention
+
+  dvora:
+    enabled: false
+    note: "Placeholder. Implement only if you have a DVoRA PEFT class or custom adapter code."
 
 dataset_split:
   enabled: true
