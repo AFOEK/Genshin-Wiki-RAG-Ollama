@@ -150,14 +150,9 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
                     batch_result = embed_fn(batch_texts)
                     if isinstance(batch_result, list) and len(batch_result) == len(prepared_jobs):
                         for (job, _), (blob, dims) in zip(prepared_jobs, batch_result):
-                            res_q.put(EmbedResult(
-                                chunk_id=job.chunk_id,
-                                dims=dims,
-                                vec=blob,
-                            ))
+                            res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=blob))
                         log.debug("[EMBED-%d] batch ok size=%d", worker_id, len(prepared_jobs))
                         return
-
                     log.warning("[EMBED-%d] batch returned unexpected shape expected=%d got=%s, falling back", worker_id, len(prepared_jobs), len(batch_result) if isinstance(batch_result, list) else type(batch_result).__name__)
                 except Exception as e:
                     log.warning("[EMBED-%d] batch embed failed (%s), falling back to per-item", worker_id, type(e).__name__)

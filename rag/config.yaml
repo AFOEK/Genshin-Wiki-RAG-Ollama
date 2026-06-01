@@ -134,7 +134,7 @@ dataset_creation:
   db_path: null # null = resolve using storage.primary_root + db_path
 
   out_dir: data/training
-  lora_out: genshin_lora_candidates.jsonl
+  lora_out: genshin_{mode}_candidates.jsonl
   retrieval_pairs_out: genshin_retrieval_pairs.jsonl
   sft_negative_out: genshin_sft_negative_answerability.jsonl
 
@@ -163,11 +163,11 @@ dataset_creation:
   negative_text_chars: 1200
 
 peft:
-  method: lora    #lora | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft
-  base_model: llama3.2:3b
-  output_dir: data/training/adapters/genshin_lora
-  train_file: data/training/genshin_lora_train.jsonl
-  val_file: data/training/genshin_lora_val.jsonl
+  mode: lora    #lora | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft
+  base_model: meta-llama/Llama-3.2-3B-Instruct
+  output_dir: data/training/adapters/genshin_{mode}
+  train_file: data/training/genshin_{mode}_train.jsonl
+  val_file: data/training/genshin_{mode}_val.jsonl
   max_seq_length: 2048
   packing: false
 
@@ -179,9 +179,9 @@ peft:
     bnb_4bit_use_double_quant: true
 
   training:
-    epochs: 100
+    epochs: 25
     learning_rate: 0.0002
-    batch_size: 50
+    batch_size: 16
     gradient_accumulation_steps: 8
     warmup_ratio: 0.03
     weight_decay: 0.0
@@ -244,14 +244,20 @@ peft:
     target_profile: llama_mlp_attention
 
   dvora:
-    enabled: false
-    note: "Placeholder. Implement only if you have a DVoRA PEFT class or custom adapter code."
+    r: 256
+    alpha: 32
+    eps: 1.0e-6
+    seed: 1337
+    target_profile: llama_mlp_attention
+    init_b: 0.0
+    init_d: 1.0
+    save_adapter_only: true
 
 dataset_split:
   enabled: true
-  src: data/training/genshin_lora_candidates.jsonl
-  train_out: data/training/genshin_lora_train.jsonl
-  val_out: data/training/genshin_lora_val.jsonl
+  src: data/training/genshin_{mode}_candidates.jsonl
+  train_out: data/training/genshin_{mode}_train.jsonl
+  val_out: data/training/genshin_{mode}_val.jsonl
   val_ratio: 0.05
   seed: 1337
 
