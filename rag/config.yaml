@@ -163,7 +163,7 @@ dataset_creation:
   negative_text_chars: 1200
 
 peft:
-  mode: lora    #lora | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft
+  mode: lora    #lora | loraplus | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft | xlora
   base_model: meta-llama/Llama-3.2-3B-Instruct
   output_dir: data/training/adapters/genshin_{mode}
   train_file: data/training/genshin_{mode}_train.jsonl
@@ -209,6 +209,34 @@ peft:
     dropout: 0.05
     bias: none
     target_profile: llama_mlp_attention
+
+    loraplus:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_profile: llama_mlp_attention
+
+    optimizer: adam8bit   # adamw | adam8bit
+    lr_ratio: 16
+
+  xlora:
+    adapters:
+      genshin_lora: data/training/adapters/genshin_lora
+      # lore_lora: data/training/adapters/genshin_lore_lora
+      # build_lora: data/training/adapters/genshin_build_lora
+
+    xlora_depth: 1
+    xlora_size: 2048
+    xlora_dropout_p: 0.2
+
+    enable_softmax: true
+    enable_softmax_topk: false
+    top_k_lora: null
+    layerwise_scalings: false
+    softmax_temperature: 1.0
+    global_scaling_weight: 1.0
+    use_trainable_adapters: false
 
   dora:
     r: 16

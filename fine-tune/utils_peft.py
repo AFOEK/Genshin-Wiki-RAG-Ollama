@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from pathlib import Path
 from transformers import BitsAndBytesConfig
-from peft import LoraConfig, VeraConfig, IA3Config, AdaLoraConfig, LoHaConfig, LoKrConfig, OFTConfig, BOFTConfig, RandLoraConfig, PveraConfig
+from peft import LoraConfig, VeraConfig, IA3Config, AdaLoraConfig, LoHaConfig, LoKrConfig, OFTConfig, BOFTConfig, RandLoraConfig, PveraConfig, XLoraConfig
 
 log = logging.getLogger(__name__)
 
