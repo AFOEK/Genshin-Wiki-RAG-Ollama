@@ -253,6 +253,71 @@ peft:
     init_d: 1.0
     save_adapter_only: true
 
+    pvera:
+    r: 256
+    dropout: 0.05
+    projection_prng_key: 0
+    save_projection: true
+    sample_at_inference: false
+    target_profile: llama_mlp_attention
+
+  loha:
+    r: 16
+    alpha: 32
+    rank_dropout: 0.0
+    module_dropout: 0.0
+    init_weights: true
+    target_profile: llama_mlp_attention
+
+  lokr:
+    r: 16
+    alpha: 32
+    rank_dropout: 0.0
+    module_dropout: 0.0
+    decompose_both: false
+    decompose_factor: -1
+    rank_dropout_scale: false
+    init_weights: true
+    target_profile: llama_mlp_attention
+
+  randlora:
+    r: 32
+    alpha: 640
+    dropout: 0.0
+    projection_prng_key: 0
+    save_projection: true
+    sparse: false
+    very_sparse: false
+    bias: none
+    target_profile: llama_mlp_attention
+
+  oft:
+    r: 0
+    oft_block_size: 32
+    module_dropout: 0.0
+    bias: none
+    coft: false
+    eps: 0.00006
+    block_share: false
+    target_profile: llama_mlp_attention
+
+  boft:
+    boft_block_size: 4
+    boft_block_num: 0
+    boft_n_butterfly_factor: 1
+    boft_dropout: 0.0
+    bias: none
+    target_profile: llama_mlp_attention
+
+  bora:
+    r: 16
+    alpha: 32
+    eps: 1.0e-6
+    seed: 1337
+    target_profile: llama_mlp_attention
+    init_col_scale: 1.0
+    save_adapter_only: true
+
 dataset_split:
   enabled: true
   src: data/training/genshin_{mode}_candidates.jsonl
