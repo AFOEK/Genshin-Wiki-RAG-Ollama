@@ -6,7 +6,9 @@ import torch.nn as nn
 
 from pathlib import Path
 from transformers import BitsAndBytesConfig
-from peft import LoraConfig, VeraConfig, IA3Config, AdaLoraConfig, LoHaConfig, LoKrConfig, OFTConfig, BOFTConfig, RandLoraConfig, PveraConfig, XLoraConfig
+from peft import LoraConfig, VeraConfig, IA3Config, AdaLoraConfig, LoHaConfig, LoKrConfig, OFTConfig, BOFTConfig, RandLoraConfig, PveraConfig, XLoraConfig, get_peft_model
+from peft.optimizers import create_loraplus_optimizer
+import bitsandbytes as bnb
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +80,21 @@ def get_torch_dtype(name: str):
         return torch.float32
 
     return None
+
+def get_optimizer_cls(name: str):
+    name = str(name or "adamw").strip().lower()
+
+    if name in ("adamw", "torch_adamw"):
+        return torch.optim.AdamW
+
+    if name in ("adam8bit", "bnb_adam8bit", "bitsandbytes_adam8bit"):
+        if bnb is None:
+            raise RuntimeError(
+                "bitsandbytes is required for adam8bit. Install with: pip install bitsandbytes"
+            )
+        return bnb.optim.Adam8bit
+
+    raise RuntimeError(f"Unknown LoRA+ optimizer: {name}")
 
 def build_peft_config(train_cfg: dict):
     mode = str(train_cfg.get("mode", "lora")).strip().lower()
@@ -216,10 +233,60 @@ def build_peft_config(train_cfg: dict):
             task_type="CAUSAL_LM",
         )
 
+    if mode in ("loraplus", "lora_plus"):
+        c = train_cfg.get("loraplus", {}) or train_cfg.get("lora", {}) or {}
+        return LoraConfig(
+            r=int(c.get("r", 16)),
+            lora_alpha=int(c.get("alpha", 32)),
+            lora_dropout=float(c.get("dropout", 0.05)),
+            bias=str(c.get("bias", "none")),
+            target_modules=get_target_modules(train_cfg, c),
+            task_type="CAUSAL_LM",
+            use_dora=False,
+        )
+
     if mode in ("dvora", "bora"):
         return None
 
     raise RuntimeError(f"Unknown peft_training.mode: {mode}")
+
+def build_xlora_config(train_cfg: dict, cfg: dict, model_config) -> XLoraConfig:
+    c = train_cfg.get("xlora", {}) or {}
+
+    adapters_raw = c.get("adapters", {}) or {}
+    if not adapters_raw:
+        raise RuntimeError("[X-LoRA] peft.xlora.adapters is empty")
+
+    adapters = {}
+    for name, path in adapters_raw.items():
+        adapter_path = resolve_template_path(path, cfg, method="lora")
+        if not adapter_path.exists():
+            raise FileNotFoundError(f"[X-LoRA] adapter not found: {name} -> {adapter_path}")
+        adapters[str(name)] = str(adapter_path)
+
+    hidden_size = getattr(model_config, "hidden_size", None)
+    if hidden_size is None:
+        raise RuntimeError("[X-LoRA] Could not infer model.config.hidden_size")
+
+    top_k_lora = c.get("top_k_lora", None)
+    if str(top_k_lora).lower() in ("none", "null", ""):
+        top_k_lora = None
+
+    return XLoraConfig(
+        task_type="CAUSAL_LM",
+        hidden_size=int(hidden_size),
+        adapters=adapters,
+        enable_softmax=as_bool(c.get("enable_softmax"), True),
+        enable_softmax_topk=as_bool(c.get("enable_softmax_topk"), False),
+        layerwise_scalings=as_bool(c.get("layerwise_scalings"), False),
+        xlora_depth=int(c.get("xlora_depth", 1)),
+        xlora_size=int(c.get("xlora_size", 2048)),
+        xlora_dropout_p=float(c.get("xlora_dropout_p", 0.2)),
+        use_trainable_adapters=as_bool(c.get("use_trainable_adapters"), False),
+        softmax_temperature=float(c.get("softmax_temperature", 1.0)),
+        top_k_lora=top_k_lora,
+        global_scaling_weight=float(c.get("global_scaling_weight", 1.0)),
+    )
 
 def maybe_quantization_config(train_cfg: dict):
     qcfg = train_cfg.get("quantization", {}) or {}

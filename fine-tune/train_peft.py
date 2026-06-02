@@ -13,7 +13,7 @@ from trl import SFTConfig, SFTTrainer
 
 from .custom_peft.DVoRA import apply_dvora_adapters, save_dvora_adapter
 from .custom_peft.BoRA import apply_bora_adapters, save_bora_adapter
-from .utils_peft import as_bool, resolve_template_path, load_cfg, resolve_existing_or_fallback, maybe_quantization_config, build_peft_config
+from .utils_peft import as_bool, resolve_template_path, load_cfg, resolve_existing_or_fallback, maybe_quantization_config, build_peft_config, build_xlora_config, get_peft_model, get_optimizer_cls, create_loraplus_optimizer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
 
@@ -88,12 +88,34 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(base_model, torch_dtype=torch_dtype, quantization_config=quant_config, device_map="auto")
     model.config.use_cache = False
 
+    custom_optimizer = None
+
     if mode == "dvora":
         model = apply_dvora_adapters(model, train_cfg)
         peft_config = None
+
     elif mode == "bora":
         model = apply_bora_adapters(model, train_cfg)
         peft_config = None
+
+    elif mode == "xlora":
+        peft_config = build_xlora_config(train_cfg, cfg, model.config)
+
+    elif mode in ("loraplus", "lora_plus"):
+        peft_config = build_peft_config(train_cfg)
+        model = get_peft_model(model, peft_config)
+        peft_config = None
+
+        lp_cfg = train_cfg.get("loraplus", {}) or {}
+        optimizer_cls = get_optimizer_cls(lp_cfg.get("optimizer", "adamw"))
+
+        custom_optimizer = create_loraplus_optimizer(
+            model=model,
+            optimizer_cls=optimizer_cls,
+            lr=float(tcfg.get("learning_rate", 2e-4)),
+            loraplus_lr_ratio=float(lp_cfg.get("lr_ratio", 16)),
+        )
+
     else:
         peft_config = build_peft_config(train_cfg)
 
@@ -123,7 +145,7 @@ def main() -> None:
         report_to="none",
     )
 
-    trainer = SFTTrainer(
+    trainer_kwargs = dict(
         model=model,
         args=sft_args,
         train_dataset=dataset["train"],
@@ -132,6 +154,10 @@ def main() -> None:
         processing_class=tokenizer,
     )
 
+    if custom_optimizer is not None:
+        trainer_kwargs["optimizers"] = (custom_optimizer, None)
+
+    trainer = SFTTrainer(**trainer_kwargs)
     trainer.train()
 
     trainer.save_model(str(output_dir))
