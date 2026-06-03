@@ -67,6 +67,9 @@ def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str 
         x = x or ""
         if x.startswith(prefix):
             return x
+        
+        if "{text}" in prefix:
+            return prefix.replace("{title}", "").replace("{text}", x)
         return prefix + x
     
     if isinstance(text_or_texts, (list, tuple)):

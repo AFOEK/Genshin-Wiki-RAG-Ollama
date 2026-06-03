@@ -27,6 +27,8 @@ fts5:
 retrieval:
   candidate_k: 85
   deep_candidate_multiplier: 5
+  rrf_k: 60
+  rrf_scale: 10.0
   dedup_max_per_doc: 2
 
 reranker:

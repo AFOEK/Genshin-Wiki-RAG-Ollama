@@ -320,6 +320,11 @@ def main():
                 children_per_parent=int(parent_cfg.get("children_per_parent", 4)),
                 batch_size=int(parent_cfg.get("batch_size", 500)),
             )
+            log.info("[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",
+                rep["dirty_docs_synced"],
+                rep["parents_inserted"],
+                rep["mapped_chunks"],
+            )
         finally:
             conn.close()
     

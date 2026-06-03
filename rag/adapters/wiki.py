@@ -13,8 +13,8 @@ from requests.exceptions import RequestException, Timeout, ConnectionError
 log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
-def sleep_backoff(attemp: int, base: float = 1.0, cap: float = 60.0) -> None:
-    delay = min(cap, base * (2 ** attemp))
+def sleep_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> None:
+    delay = min(cap, base * (2 ** attempt))
     delay *= (0.75 + random.random() * 0.6)
     time.sleep(delay)
 
