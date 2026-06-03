@@ -96,13 +96,8 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def main() -> None:
-    setup_logging(
-        cfg.get("logging", {}).get("file"),
-        cfg.get("logging", {}).get("level", "INFO")
-    )
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="rag/config.yaml")
-
     ap.add_argument("--src", default=None)
     ap.add_argument("--train-out", default=None)
     ap.add_argument("--val-out", default=None)
@@ -115,6 +110,10 @@ def main() -> None:
     cfg = load_cfg(args.config)
     split_cfg = cfg.get("dataset_split", {}) or {}
 
+    setup_logging(
+        cfg.get("logging", {}).get("file"),
+        cfg.get("logging", {}).get("level", "INFO")
+    )
     enabled = (args.enabled if args.enabled is not None else cfg_bool(split_cfg.get("enabled"), True))
 
     if not enabled:

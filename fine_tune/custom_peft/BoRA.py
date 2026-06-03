@@ -8,7 +8,7 @@ import logging
 
 from pathlib import Path
 
-from ..utils_peft import get_target_modules, freeze_all_parameters, get_parent_module
+from fine_tune.utils_peft import get_target_modules, freeze_all_parameters, get_parent_module
 
 log = logging.getLogger(__name__)
 

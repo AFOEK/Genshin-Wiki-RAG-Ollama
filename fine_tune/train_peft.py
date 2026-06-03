@@ -93,29 +93,18 @@ def main() -> None:
     if mode == "dvora":
         model = apply_dvora_adapters(model, train_cfg)
         peft_config = None
-
     elif mode == "bora":
         model = apply_bora_adapters(model, train_cfg)
         peft_config = None
-
     elif mode == "xlora":
         peft_config = build_xlora_config(train_cfg, cfg, model.config)
-
     elif mode in ("loraplus", "lora_plus"):
         peft_config = build_peft_config(train_cfg)
         model = get_peft_model(model, peft_config)
         peft_config = None
-
         lp_cfg = train_cfg.get("loraplus", {}) or {}
         optimizer_cls = get_optimizer_cls(lp_cfg.get("optimizer", "adamw"))
-
-        custom_optimizer = create_loraplus_optimizer(
-            model=model,
-            optimizer_cls=optimizer_cls,
-            lr=float(tcfg.get("learning_rate", 2e-4)),
-            loraplus_lr_ratio=float(lp_cfg.get("lr_ratio", 16)),
-        )
-
+        custom_optimizer = create_loraplus_optimizer(model=model, optimizer_cls=optimizer_cls, lr=float(tcfg.get("learning_rate", 2e-4)), loraplus_lr_ratio=float(lp_cfg.get("lr_ratio", 16)))
     else:
         peft_config = build_peft_config(train_cfg)
 

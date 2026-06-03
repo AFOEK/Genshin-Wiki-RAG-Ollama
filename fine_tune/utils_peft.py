@@ -89,12 +89,10 @@ def get_optimizer_cls(name: str):
 
     if name in ("adam8bit", "bnb_adam8bit", "bitsandbytes_adam8bit"):
         if bnb is None:
-            raise RuntimeError(
-                "bitsandbytes is required for adam8bit. Install with: pip install bitsandbytes"
-            )
+            raise RuntimeError("[LoRA+] bitsandbytes is required for adam8bit. Install with: pip install bitsandbytes")
         return bnb.optim.Adam8bit
 
-    raise RuntimeError(f"Unknown LoRA+ optimizer: {name}")
+    raise RuntimeError(f"[LoRA+] Unknown LoRA+ optimizer: {name}")
 
 def build_peft_config(train_cfg: dict):
     mode = str(train_cfg.get("mode", "lora")).strip().lower()
