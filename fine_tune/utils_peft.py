@@ -36,11 +36,11 @@ def freeze_all_parameters(model: nn.Module) -> None:
     for p in model.parameters():
         p.requires_grad = False
 
-def format_template_path(value: str | Path, *, method: str) -> str:
-    return str(value).format(method=method, method_name=method)
+def format_template_path(value: str | Path, *, mode: str) -> str:
+    return str(value).format(method=mode, method_name=mode)
 
-def resolve_template_path(root: str| Path, value: str | Path, cfg: dict, *, method: str) -> Path:
-    return resolve_path(root, format_template_path(value, method=method), cfg)
+def resolve_template_path(value: str | Path, cfg: dict, *, method: str) -> Path:
+    return resolve_path(format_template_path(value, method=method), cfg)
 
 def expand_path(x) -> Path:
     return Path(os.path.expandvars(str(x))).expanduser()
