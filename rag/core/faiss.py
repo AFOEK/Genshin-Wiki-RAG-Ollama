@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, time, logging, shutil
+import json, time, logging, shutil, os
 import faiss
 
 from pathlib import Path
@@ -23,7 +23,7 @@ def atomic_promote(build_dir: Path, current_dir: Path):
 def build_faiss_from_sqlite(
         cfg: dict, *, batch: int = 5000,
         add_batch: int = 2000, log_every: int = 20000,
-        threads: int = 4, overwrite: bool = False
+        threads: int | None = None, overwrite: bool = False
 ) -> Path:
     db_path = resolve_db_path(cfg)
     faiss_root = resolve_faiss_dir(cfg)
@@ -95,10 +95,19 @@ def build_faiss_from_sqlite(
     else:
         raise RuntimeError(f"[FAISS] unsupported index_mode={index_mode}")
 
+    max_threads = faiss.omp_get_max_threads()
+    
+    if threads is None:
+        physical = os.cpu_count() or 1
+        use_threads = min(physical, max_threads)
+    else:
+        use_threads = min(threads, max_threads)
+    
     try:
-        faiss.omp_set_num_threads(min(threads, faiss.omp_get_max_threads()))
+        faiss.omp_set_num_threads(use_threads)
+        log.info("[FAISS] OMP threads=%d (max_available=%d)", use_threads, max_threads)
     except Exception:
-        pass
+        log.warning("[FAISS] Could not set OMP threads")
 
     ids: list[int] = []
     total = 0
