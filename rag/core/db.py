@@ -116,6 +116,8 @@ CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
 CREATE INDEX IF NOT EXISTS idx_chunk_parents_doc ON chunk_parents(doc_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_parent_map_parent ON chunk_parent_map(parent_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_active_parent ON chunks(doc_id, is_active, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_chunks_doc_active ON chunks(doc_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_fts_dirty_marked ON fts_dirty_docs(marked_at, doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_version_ord ON docs(version_ord);
 CREATE INDEX IF NOT EXISTS idx_docs_source_version_ord ON docs(source, version_ord);
 CREATE INDEX IF NOT EXISTS idx_docs_published_at ON docs(published_at);

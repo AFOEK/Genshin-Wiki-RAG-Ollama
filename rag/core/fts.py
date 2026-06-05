@@ -23,7 +23,7 @@ def rebuild_chunks_fts(conn: sqlite3.Connection) -> dict:
             WHERE c.is_active = 1
               AND COALESCE(d.status, 1) = 1
         """)
-        inserted = cur.rowcount if cur.rowcount is not None else 0
+        inserted = int(cur.execute("SELECT changes()").fetchone()[0])
         cur.execute("DELETE FROM fts_dirty_docs")
         conn.commit()
         return {"fts_rows_inserted": int(inserted or 0)}
@@ -50,7 +50,7 @@ def mark_all_active_docs_dirty(conn: sqlite3.Connection, reason:str = "initial")
     JOIN chunks c ON c.doc_id = d.doc_id
     WHERE c.is_active = 1 AND COALESCE(d.status, 1) = 1            
     """, (reason,))
-    n = cur.rowcount if cur.rowcount is not None else 0
+    n = int(cur.execute("SELECT changes()").fetchone()[0])
     log.info("[FTS5] %d row marked dirty", n)
     conn.commit()
     return int(n or 0)
@@ -59,26 +59,55 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
     cur = conn.cursor()
     total_docs = 0
     total_inserted = 0
+    total_deleted = 0
+
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    
+    cur.execute("""
+        CREATE TEMP TABLE IF NOT EXISTS temp_fts_dirty_docs (
+            doc_id INTEGER PRIMARY KEY)
+    """)
 
     while True:
-        dirty = cur.execute("""
-        SELECT doc_id
-        FROM fts_dirty_docs
-        ORDER BY marked_at
-        LIMIT ?
-        """, (batch_size,)).fetchall()
-
-        if not dirty:
-            break
-
-        docs_ids = [int(r[0]) for r in dirty]
         cur.execute("BEGIN IMMEDIATE")
         try:
-            for doc_id in docs_ids:
-                cur.execute("DELETE FROM chunks_fts WHERE doc_id=?", (doc_id,))
+            dirty = cur.execute("""
+                SELECT doc_id
+                FROM fts_dirty_docs
+                ORDER BY marked_at, doc_id
+                LIMIT ?
+            """, (batch_size,)).fetchall()
 
-                cur.execute("""
-                INSERT INTO chunks_fts(rowid, chunk_id, doc_id, source, title, text)
+            if not dirty:
+                conn.commit()
+                break
+            
+            docs_ids = [int(r[0]) for r in dirty]
+            cur.execute("DELETE FROM temp_fts_dirty_docs")
+            cur.executemany(
+                "INSERT INTO temp_fts_dirty_docs(doc_id) VALUES (?)",
+                [(doc_id,) for doc_id in docs_ids],
+            )
+            cur.execute("""
+                DELETE FROM chunks_fts
+                WHERE rowid IN (
+                    SELECT c.chunk_id
+                    FROM chunks c
+                    JOIN temp_fts_dirty_docs t
+                    ON t.doc_id = c.doc_id
+            )""")
+            deleted = int(cur.execute("SELECT changes()").fetchone()[0])
+            total_deleted += deleted
+            cur.execute("""
+                INSERT INTO chunks_fts(
+                    rowid,
+                    chunk_id,
+                    doc_id,
+                    source,
+                    title,
+                    text
+                )
                 SELECT
                     c.chunk_id,
                     c.chunk_id,
@@ -87,23 +116,32 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
                     d.title,
                     c.text
                 FROM chunks c
-                JOIN docs d on d.doc_id = c.doc_id
-                WHERE c.doc_id = ? AND c.is_active = 1 AND COALESCE(d.status, 1) = 1
-                """, (doc_id,))
-                inserted = cur.rowcount
-                if inserted and inserted > 0:
-                    total_inserted += inserted
-
-                cur.execute("DELETE FROM fts_dirty_docs WHERE doc_id=?", (doc_id,))
-                
+                JOIN docs d
+                ON d.doc_id = c.doc_id
+                JOIN temp_fts_dirty_docs t
+                ON t.doc_id = c.doc_id
+                WHERE c.is_active = 1
+                AND COALESCE(d.status, 1) = 1
+            """)
+            inserted = int(cur.execute("SELECT changes()").fetchone()[0])
+            total_inserted += inserted
+            cur.execute("""
+                DELETE FROM fts_dirty_docs
+                WHERE doc_id IN (
+                    SELECT doc_id
+                    FROM temp_fts_dirty_docs
+                )
+            """)
             conn.commit()
             total_docs += len(docs_ids)
             log.info("[FTS5] Synced dirty docs batch=%d total_docs=%d total_inserted=%d", len(docs_ids), total_docs, total_inserted)
+
         except Exception:
             conn.rollback()
             raise
     
     return {
         "dirty_docs_synced": total_docs,
+        "fts_rows_deleted": total_deleted,
         "fts_rows_inserted": total_inserted,
     }
