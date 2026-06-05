@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 faiss_retriever_cache: dict[str, FaissRetriever] = {}
 
 class FaissRetriever:
-    def __new__(cls, faiss_dir: Path):
+    def __new__(cls, faiss_dir: Path, *, expected_model: str | None = None, mismatch_policy:str = "error"):
         key = str(faiss_dir)
         if key not in faiss_retriever_cache:
             instance = super().__new__(cls)
