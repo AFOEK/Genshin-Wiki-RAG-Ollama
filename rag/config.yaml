@@ -22,7 +22,7 @@ llamacpp:
   n_gpu_layers: 99
 
 fts5:
-  batch_size: 500
+  batch_size: 2000
 
 retrieval:
   candidate_k: 85
@@ -130,7 +130,7 @@ turbovec:
   bit_width: 4
   batch_size: 4096
   model_source: runtime   # runtime | kaggle | ollama | llamacpp
-  model_mismatch: error   # error | warn | ignore
+  model_mismatch: warn   # error | warn | ignore
 
 dataset_creation:
   db_path: null # null = resolve using storage.primary_root + db_path
