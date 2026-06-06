@@ -133,22 +133,28 @@ turbovec:
   model_mismatch: warn   # error | warn | ignore
 
 dataset_creation:
-  db_path: null # null = resolve using storage.primary_root + db_path
-
+  db_path: null
   out_dir: data/training
-  lora_out: genshin_{mode}_candidates.jsonl
-  retrieval_pairs_out: genshin_retrieval_pairs.jsonl
-  sft_negative_out: genshin_sft_negative_answerability.jsonl
+
+  sft_out: genshin_rag_sft_candidates.jsonl
+  rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
   model: llama3.2:3b
 
-  limit: 1000
+  retriever: hybrid
+  backend: ollama
+  direct_top_k: 10
+  require_positive_document: true
+
+  limit: 10
   qa_per_chunk: 2
   min_chars: 500
   max_chars: 2500
-  seed: 1137
-  sleep: 0.5
+  seed: 1337
+  sleep: 0.0
+
+  make_negatives: false
 
   sources:
     - genshin_wiki
@@ -157,12 +163,6 @@ dataset_creation:
     - honey
     - genshin_gg
     - game8
-
-  make_negatives: true
-  hard_negatives: 3
-  easy_negatives: 2
-  negative_pool_size: 120
-  negative_text_chars: 1200
 
 peft:
   mode: lora    #lora | loraplus | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft | xlora
