@@ -6,7 +6,7 @@ from pathlib import Path
 
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -49,6 +49,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     intent = detect_intent(question)
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
+    bm25_weights = get_bm25_weights(intent)
     candidate_k = max(top_k * 5, candidate_k_cfg)
     log.info(
         "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s broad=%s",
@@ -107,6 +108,45 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
         return bm25_ret_cache
 
+    def merge_ranked_results(primary: list[tuple[int, float]], fallback: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
+        merged = []
+        seen = set()
+
+        for cid, score in primary + fallback:
+            cid = int(cid)
+
+            if cid in seen:
+                continue
+
+            seen.add(cid)
+            merged.append((cid, float(score)))
+
+            if len(merged) >= k:
+                break
+
+        return merged
+    
+    def search_bm25(k: int):
+        bm25_ret = get_bm25_ret()
+
+        strict_query = make_intent_fts5_query(question, intent)
+        log.info("[BM25] intent=%s weights=%s", intent, bm25_weights)
+
+        if not strict_query:
+            return bm25_ret.search(question, k, weights=bm25_weights)
+
+        log.info("[BM25] strict intent query=%s", strict_query)
+
+        strict_results = bm25_ret.search_fts(strict_query, k, weights=bm25_weights)
+        minimum_strict = min(10, k)
+
+        if len(strict_results) >= minimum_strict:
+            return strict_results
+
+        log.info("[BM25] strict query returned only %d rows; adding broad fallback", len(strict_results))
+        broad_results = bm25_ret.search(question, k, weights=bm25_weights)
+
+        return merge_ranked_results(strict_results, broad_results, k)
 
     def get_turbovec_ret():
         nonlocal turbovec_ret_cache
@@ -126,12 +166,10 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
     def search_hybrid(k: int):
         faiss_ret = get_faiss_ret()
-        bm25_ret = get_bm25_ret()
-
         q_vec = get_q_vec(faiss_ret)
 
         faiss_results = faiss_ret.search(q_vec, k)
-        bm25_results = bm25_ret.search(question.lower(), k)
+        bm25_results = search_bm25(k)
 
         signals = build_hybrid_signal(faiss_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
 
@@ -141,12 +179,10 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
     def search_hybrid_turbovec(k: int):
         tv_ret = get_turbovec_ret()
-        bm25_ret = get_bm25_ret()
-
         q_vec = get_q_vec(tv_ret)
 
         tv_results = tv_ret.search(q_vec, k)
-        bm25_results = bm25_ret.search(question.lower(), k)
+        bm25_results = search_bm25(k)
 
         signals = build_hybrid_signal(tv_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
 
@@ -171,7 +207,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     elif retriever_name == "bm25":
         log.info("[QNA] using SQLite BM25 retriever")
         retriever = get_bm25_ret()
-        results = retriever.search(question.lower(), candidate_k)
+        results = search_bm25(candidate_k)
         retrieval_signals = {cid: score for cid, score in results}
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
@@ -212,7 +248,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
             deep_results = search_embedding_retriever(retriever, deep_k)
             retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "bm25":
-            deep_results = retriever.search(question.lower(), deep_k)
+            deep_results = search_bm25(deep_k)
             retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "hybrid":
             deep_results, retrieval_signals = search_hybrid(deep_k)
@@ -246,9 +282,10 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
     chunks = fetch_chunks(conn, chunk_ids)
     max_per_doc = dedup_max_per_doc
-    if intent in ("biography", "location"):
+    if intent == "build":
+        max_per_doc = max(dedup_max_per_doc, 6)
+    elif intent in ("biography", "location"):
         max_per_doc = max(dedup_max_per_doc, 2)
-    chunks = dedupe_chunks(chunks, initial_scores, max_per_doc=max_per_doc)
 
     baseline_label, baseline_ord = get_kqm_news_fetch_version_baseline(conn)
     log.info(
@@ -258,7 +295,17 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     )
 
     if reranker_mode in ("feature", "cross_encoder"):
-        chunks = rerank_chunks(question, chunks, retrieval_signals, baseline_ord)
+        chunks = rerank_chunks(
+            question,
+            chunks,
+            retrieval_signals,
+            baseline_ord,
+        )
+        dedupe_scores = {int(row["chunk_id"]): float(row["_rerank_score"]) for row in chunks}
+    else:
+        dedupe_scores = initial_scores
+
+    chunks = dedupe_chunks(chunks, dedupe_scores, max_per_doc=max_per_doc)
     
     if reranker_mode == "cross_encoder":
         chunks = cross_encoder_rerank(
@@ -267,10 +314,12 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
             model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), 
             top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)),
             batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)),
-            max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200))
-            )
+            max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
     elif reranker_mode not in ("none", "feature", "cross_encoder"):
         raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
+
+    for row in chunks:
+        row.pop("_rerank_score", None)
 
     if not chunks:
         try:
@@ -299,7 +348,6 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
 
         parent_cfg = cfg.get("parent_child", {}) or {}
         parent_enabled = as_bool(parent_cfg.get("enabled", False))
-
 
         if parent_enabled:
             selected_chunks = fetch_parent_context_chunks(

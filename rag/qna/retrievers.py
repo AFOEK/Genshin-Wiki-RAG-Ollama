@@ -103,22 +103,30 @@ class BM25Retriever:
         self.conn = conn
         self.dims = None
 
-    def search(self, query: str, top_k: int):
-        fts_query = make_fts5_query(query)
+    def _search_fts(self, fts_query: str, top_k: int, *, weights: tuple[float, float, float, float, float]):
         if not fts_query:
             return []
         
+        chunk_id_w, doc_id_w, source_w, title_w, text_w = weights
         cur = self.conn.cursor()
         cur.execute("""
             SELECT
                 chunk_id,
-                -bm25(chunks_fts) as score
+                -bm25(chunks_fts, ?, ?, ?, ?, ?) as score
             FROM chunks_fts
             WHERE chunks_fts MATCH ?
-            ORDER BY bm25(chunks_fts)
+            ORDER BY score DESC
             LIMIT ?
-        """, (fts_query, top_k))
+        """, (chunk_id_w, doc_id_w, source_w, title_w, text_w, fts_query, top_k))
         return [(int(row[0]), float(row[1])) for row in cur.fetchall()]
+    
+    def search(self, query: str, top_k: int, *, weights: tuple[float, float, float, float, float] | None = None):
+        if weights is None:
+            weights = (0.0, 0.0, 0.0, 4.0, 1.0)
+        return self.search_fts(make_fts5_query(query), top_k, weights)
+    
+    def search_fts(self, fts_query: str, top_k: int, *, weights: tuple[float, float, float, float, float] | None = None):
+        return self._search_fts(fts_query, top_k, weights)
     
 class TurboVecRetriever:
     def __init__(self, turbovec_dir: Path, *, expected_model: str | None = None, mismatch_policy: str = "error"):

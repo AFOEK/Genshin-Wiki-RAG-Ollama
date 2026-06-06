@@ -33,6 +33,13 @@ INTENT_PROFILES = {
             "preferred": ["honey"],
             "excluded": ["kqm_news"]
         },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 8.0,
+            "text": 1.0,
+        },
     },
     "lore": {
         "source_bonus": {"genshin_wiki": 0.12},
@@ -52,6 +59,13 @@ INTENT_PROFILES = {
             "preferred": [],
             "excluded": ["honey", "game8", "kqm_tcl", "kqm_news", "genshin_gg"]
         },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 3.0,
+            "text": 2.0,
+        },
     },
     "mechanic":{
         "source_bonus": {"genshin_wiki": 0.05, "kqm_tcl": 0.12, "game8": 0.07, "genshin_gg":0.06},
@@ -68,6 +82,13 @@ INTENT_PROFILES = {
             "required": ["game8", "kqm_tcl", "genshin_gg"],
             "preferred": ["genshin_wiki"],
             "excluded": ["kqm_news"]
+        },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 4.0,
+            "text": 2.0,
         },
     },
     "location": {
@@ -107,6 +128,13 @@ INTENT_PROFILES = {
             "preferred": ["game8"],
             "excluded": ["kqm_news", "kqm_tcl", "honey"]
         },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 5.0,
+            "text": 1.5,
+        },
     },
 
     "biography": {
@@ -133,6 +161,13 @@ INTENT_PROFILES = {
             "preferred": ["honey", "game8", "genshin_gg"],
             "excluded": ["kqm_tcl", "kqm_news"]
         },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 6.0,
+            "text": 1.5,
+        },
     },
     "general": {
         "source_bonus":   {"genshin_wiki": 0.05, "game8":0.04},
@@ -146,6 +181,13 @@ INTENT_PROFILES = {
             "required": [],
             "preferred": ["genshin_wiki", "game8"],
             "excluded": []
+        },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 4.0,
+            "text": 1.0,
         },
     },
 }
@@ -288,11 +330,40 @@ def build_hybrid_signal(faiss_results: list[tuple[int, float]], bm25_results: li
 
     return signals
 
+def get_bm25_weights(intent: str) -> tuple[float, float, float, float, float]:
+    profile = INTENT_PROFILES.get(
+        intent,
+        INTENT_PROFILES["general"],
+    )
+
+    cfg = profile.get("bm25_weights", {}) or {}
+
+    weights = (
+        float(cfg.get("chunk_id", 0.0)),
+        float(cfg.get("doc_id", 0.0)),
+        float(cfg.get("source", 0.0)),
+        float(cfg.get("title", 4.0)),
+        float(cfg.get("text", 1.0)),
+    )
+
+    if any(weight < 0 for weight in weights):
+        raise ValueError(
+            f"BM25 weights must be non-negative, got {weights}"
+        )
+
+    return weights
+
+def quote_fts5_phrase(value: str) -> str:
+    value = re.sub(r"\s+", " ", value.strip().lower())
+    value = value.replace('"', '""')
+    return f'"{value}"'
+
 def make_fts5_query(user_query: str) -> str:
     raw_tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
 
     tokens = []
     for t in raw_tokens:
+        t = re.sub(r"'s$", "", t)
         t = t.strip("'")
         if not t:
             continue
@@ -323,6 +394,54 @@ def make_fts5_query(user_query: str) -> str:
         uniq.append(p)
 
     return " OR ".join(uniq)
+
+def make_intent_fts5_query(question: str, intent: str) -> str | None:
+    q = question.lower()
+    entity_terms = extract_entity_terms(question)
+
+    if not entity_terms:
+        return None
+
+    entity = quote_fts5_phrase(entity_terms[0])
+
+    if intent == "build":
+        if "signature weapon" in q:
+            return (
+                f"title:{entity} AND "
+                '("signature weapon" OR "signature" OR "weapon")'
+            )
+
+        if any(
+            marker in q
+            for marker in (
+                "recommended weapon",
+                "best weapon",
+                "weapon",
+                "weapons",
+            )
+        ):
+            return (
+                f"title:{entity} AND "
+                '("best weapons" OR "recommended weapon" '
+                'OR "weapon" OR "weapons" OR "recommended")'
+            )
+
+        if any(
+            marker in q
+            for marker in (
+                "recommended artifact",
+                "best artifact",
+                "artifact",
+                "artifacts",
+            )
+        ):
+            return (
+                f"title:{entity} AND "
+                '("best artifacts" OR "recommended artifact" '
+                'OR "artifact" OR "artifacts" OR "recommended")'
+            )
+
+    return None
 
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     if not chunk_ids:
@@ -775,7 +894,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             # - recency_penalty
             - penalty
         )
-
+        row["_rerank_score"] = float(final_score)
         ranked.append((final_score, row))
 
     ranked.sort(key=lambda x: x[0], reverse=True)
