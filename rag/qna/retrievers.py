@@ -123,10 +123,10 @@ class BM25Retriever:
     def search(self, query: str, top_k: int, *, weights: tuple[float, float, float, float, float] | None = None):
         if weights is None:
             weights = (0.0, 0.0, 0.0, 4.0, 1.0)
-        return self.search_fts(make_fts5_query(query), top_k, weights)
+        return self.search_fts(make_fts5_query(query), top_k, weights=weights)
     
     def search_fts(self, fts_query: str, top_k: int, *, weights: tuple[float, float, float, float, float] | None = None):
-        return self._search_fts(fts_query, top_k, weights)
+        return self._search_fts(fts_query, top_k, weights=weights)
     
 class TurboVecRetriever:
     def __init__(self, turbovec_dir: Path, *, expected_model: str | None = None, mismatch_policy: str = "error"):
