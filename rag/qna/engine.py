@@ -6,7 +6,7 @@ from pathlib import Path
 
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
@@ -47,17 +47,19 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         qa_timeout = int(cfg["ollama"].get("timeout", 1800))
 
     intent = detect_intent(question)
+    build_subtypes = (detect_build_subtypes(question) if intent == "build" else set())
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
     bm25_weights = get_bm25_weights(intent)
     candidate_k = max(top_k * 5, candidate_k_cfg)
     log.info(
-        "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s broad=%s",
+        "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s subtypes=%s broad=%s",
         top_k,
         candidate_k,
         deep_candidate_multiplier,
         dedup_max_per_doc,
         intent,
+        sorted(build_subtypes),
         broad,
     )
 
@@ -92,6 +94,46 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     expected_faiss_model = expected_model_from_cfg(cfg, backend=backend)
     faiss_mismatch_policy = str(retrieval_cfg.get("faiss_model_mismatch", "error")).strip().lower()
     
+    def build_single_channel_results(raw_results: list[tuple[int, float]], channel: str) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+        scale = float(retrieval_cfg.get("rrf_scale", 10.0))
+        signals: dict[int, dict] = {}
+
+        for rank, (cid, raw_score) in enumerate(raw_results, start=1):
+            cid = int(cid)
+
+            signal = {
+                "rrf_score": scale / (rrf_k + rank),
+                "faiss_score": 0.0,
+                "bm25_score": 0.0,
+                "faiss_rank": None,
+                "bm25_rank": None,
+                "in_faiss": False,
+                "in_bm25": False,
+            }
+
+            if channel == "bm25":
+                signal["bm25_score"] = float(raw_score)
+                signal["bm25_rank"] = rank
+                signal["in_bm25"] = True
+            else:
+                # Treat FAISS, SQLite-vector and TurboVec as semantic channels.
+                signal["faiss_score"] = float(raw_score)
+                signal["faiss_rank"] = rank
+                signal["in_faiss"] = True
+
+            signals[cid] = signal
+
+        ranked = sorted(
+            (
+                (cid, signal["rrf_score"])
+                for cid, signal in signals.items()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+
+        return ranked, signals
+
     def get_faiss_ret():
         nonlocal faiss_ret_cache
 
@@ -138,7 +180,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
         log.info("[BM25] strict intent query=%s", strict_query)
 
         strict_results = bm25_ret.search_fts(strict_query, k, weights=bm25_weights)
-        minimum_strict = min(10, k)
+        minimum_strict = min(5, k)
 
         if len(strict_results) >= minimum_strict:
             return strict_results
@@ -197,8 +239,8 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
         retriever = get_faiss_ret()
-        results = search_embedding_retriever(retriever, candidate_k)
-        retrieval_signals = {cid: score for cid, score in results}
+        raw_results = search_embedding_retriever(retriever, candidate_k)
+        results, retrieval_signals = build_single_channel_results(raw_results, "semantic")
     elif retriever_name == "sqlite":
         log.info("[QNA] using SQLite brute-force retriever")
         retriever = SqliteEmbeddingRetriever(conn)
@@ -207,8 +249,8 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
     elif retriever_name == "bm25":
         log.info("[QNA] using SQLite BM25 retriever")
         retriever = get_bm25_ret()
-        results = search_bm25(candidate_k)
-        retrieval_signals = {cid: score for cid, score in results}
+        raw_results = search_bm25(candidate_k)
+        results, retrieval_signals = build_single_channel_results(raw_results, "bm25")
     elif retriever_name == "hybrid":
         log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
         retriever = None
@@ -248,8 +290,8 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
             deep_results = search_embedding_retriever(retriever, deep_k)
             retrieval_signals = {cid: score for cid, score in deep_results}
         elif retriever_name == "bm25":
-            deep_results = search_bm25(deep_k)
-            retrieval_signals = {cid: score for cid, score in deep_results}
+            raw_deep_results = search_bm25(deep_k)
+            deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "bm25")
         elif retriever_name == "hybrid":
             deep_results, retrieval_signals = search_hybrid(deep_k)
         elif retriever_name == "turbovec":
@@ -373,6 +415,7 @@ def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid",
             log.info("[CTX_EXPAND] expanded context chunks=%d before=%s after=%s", len(selected_chunks), context_cfg.get("before", 1), context_cfg.get("after", 1))
 
         context = build_context(selected_chunks)
+        log.info("[CONTEXT] final chunk IDs=%s", [int(row["chunk_id"]) for row in selected_chunks])
         prompt = textwrap.dedent(f"""
             You are a retrieval-grounded Genshin Impact assistant.
             Answer the question using ONLY the provided context.

@@ -192,6 +192,179 @@ INTENT_PROFILES = {
     },
 }
 
+BUILD_SUBTYPE_PROFILES = {
+    "weapon": {
+        "query_markers": (
+            "weapon",
+            "weapons",
+            "best weapon",
+            "recommended weapon",
+            "signature weapon",
+            "bis weapon",
+        ),
+        "section_markers": (
+            "best weapons",
+            "recommended weapons",
+            "recommended weapon",
+            "weapon ranking",
+            "signature weapon",
+            "bis weapon",
+        ),
+        "fts_terms": (
+            "best weapons",
+            "recommended weapon",
+            "weapon",
+            "weapons",
+        ),
+        "bonus": 0.40,
+        "missing_penalty": 0.35,
+    },
+
+    "artifact": {
+        "query_markers": (
+            "artifact",
+            "artifacts",
+            "artifact set",
+            "best artifact",
+            "recommended artifact",
+            "main stat",
+            "main stats",
+            "substat",
+            "substats",
+            "sands",
+            "goblet",
+            "circlet",
+        ),
+        "section_markers": (
+            "best artifacts",
+            "recommended artifacts",
+            "recommended artifact",
+            "artifact sets",
+            "best artifact set",
+            "main stats",
+            "artifact main stats",
+        ),
+        "fts_terms": (
+            "best artifacts",
+            "recommended artifact",
+            "artifact",
+            "artifacts",
+            "main stats",
+        ),
+        "bonus": 0.40,
+        "missing_penalty": 0.35,
+    },
+
+    "talent": {
+        "query_markers": (
+            "talent priority",
+            "talent order",
+            "which talent",
+            "level first",
+            "leveling priority",
+            "crown first",
+            "skill priority",
+            "burst priority",
+            "normal attack priority",
+        ),
+        "section_markers": (
+            "talent priority",
+            "talent order",
+            "talent leveling priority",
+            "talent leveling",
+            "talent levels",
+            "talents",
+            "leveling priority",
+            "skill priority",
+            "burst priority",
+        ),
+        "fts_terms": (
+            "talent priority",
+            "talent order",
+            "talents",
+            "leveling priority",
+        ),
+        "bonus": 0.40,
+        "missing_penalty": 0.35,
+    },
+
+    "team": {
+        "query_markers": (
+            "team",
+            "teams",
+            "team comp",
+            "team composition",
+            "best team",
+            "recommended team",
+            "party",
+        ),
+        "section_markers": (
+            "best teams",
+            "recommended teams",
+            "team composition",
+            "team comps",
+            "best team",
+        ),
+        "fts_terms": (
+            "best teams",
+            "recommended team",
+            "team composition",
+            "teams",
+        ),
+        "bonus": 0.40,
+        "missing_penalty": 0.35,
+    },
+
+    "stats": {
+        "query_markers": (
+            "stats",
+            "stat priority",
+            "main stat",
+            "substat",
+            "crit ratio",
+            "energy recharge",
+            "elemental mastery",
+        ),
+        "section_markers": (
+            "stat priority",
+            "recommended stats",
+            "main stats",
+            "substats",
+            "crit ratio",
+        ),
+        "fts_terms": (
+            "stat priority",
+            "recommended stats",
+            "main stats",
+            "substats",
+        ),
+        "bonus": 0.35,
+        "missing_penalty": 0.30,
+    },
+
+    "rotation": {
+        "query_markers": (
+            "rotation",
+            "rotations",
+            "combo",
+            "skill order",
+        ),
+        "section_markers": (
+            "rotation",
+            "recommended rotation",
+            "team rotation",
+            "combo",
+        ),
+        "fts_terms": (
+            "rotation",
+            "recommended rotation",
+            "team rotation",
+        ),
+        "bonus": 0.35,
+        "missing_penalty": 0.30,
+    },
+}
+
 BM25_STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been",
     "who", "what", "when", "where", "why", "how",
@@ -396,52 +569,31 @@ def make_fts5_query(user_query: str) -> str:
     return " OR ".join(uniq)
 
 def make_intent_fts5_query(question: str, intent: str) -> str | None:
-    q = question.lower()
     entity_terms = extract_entity_terms(question)
-
     if not entity_terms:
         return None
 
     entity = quote_fts5_phrase(entity_terms[0])
+    if intent != "build":
+        return None
 
-    if intent == "build":
-        if "signature weapon" in q:
-            return (
-                f"title:{entity} AND "
-                '("signature weapon" OR "signature" OR "weapon")'
-            )
+    subtypes = detect_build_subtypes(question)
+    if not subtypes:
+        return None
 
-        if any(
-            marker in q
-            for marker in (
-                "recommended weapon",
-                "best weapon",
-                "weapon",
-                "weapons",
-            )
-        ):
-            return (
-                f"title:{entity} AND "
-                '("best weapons" OR "recommended weapon" '
-                'OR "weapon" OR "weapons" OR "recommended")'
-            )
+    clauses: list[str] = []
+    for subtype in sorted(subtypes):
+        subtype_cfg = BUILD_SUBTYPE_PROFILES.get(subtype, {})
+        fts_terms = subtype_cfg.get("fts_terms", ())
+        quoted_terms = [quote_fts5_phrase(term) for term in fts_terms]
+        if quoted_terms:
+            clauses.append("(" + " OR ".join(quoted_terms) + ")")
 
-        if any(
-            marker in q
-            for marker in (
-                "recommended artifact",
-                "best artifact",
-                "artifact",
-                "artifacts",
-            )
-        ):
-            return (
-                f"title:{entity} AND "
-                '("best artifacts" OR "recommended artifact" '
-                'OR "artifact" OR "artifacts" OR "recommended")'
-            )
+    if not clauses:
+        return None
 
-    return None
+    subtype_query = " OR ".join(clauses)
+    return f"title:{entity} AND ({subtype_query})"
 
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     if not chunk_ids:
@@ -549,6 +701,26 @@ def chunk_batch(seq: list[dict], size: int) -> Iterable[list[dict]]:
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
 
+def marker_in_text(question_l: str, marker: str) -> bool:
+    marker_l = marker.strip().lower()
+
+    if not marker_l:
+        return False
+    if " " in marker_l:
+        return marker_l in question_l
+
+    return re.search(
+        rf"(?<!\w){re.escape(marker_l)}(?!\w)",
+        question_l,
+    ) is not None
+
+
+def contains_any_marker(question_l: str, markers) -> bool:
+    return any(
+        marker_in_text(question_l, marker)
+        for marker in markers
+    )
+
 def tokenize(s: str) -> set[str]:
     return set(re.findall(r"[a-zA-Z0-9_']+", s.lower()))
 
@@ -572,6 +744,7 @@ def dedupe_chunks(chunks: list[dict], initial_scores: dict[int, float], *, max_p
 
 def detect_intent(question: str) -> str:
     q = question.lower()
+    build_subtypes = detect_build_subtypes(question)
     BUILD_MARKERS = [
         "weapon", "artifact", "build", "damage", "dps", "support",
         "team", "comp", "rotation", "stats", "crit", "er", "em",
@@ -609,18 +782,31 @@ def detect_intent(question: str) -> str:
         "come from", "who was", "where is she from", "where is he from", "where are they from"
     ]
 
-    if any(m in q for m in BIOGRAPHY_MARKERS):
+    if contains_any_marker(q, BIOGRAPHY_MARKERS):
         return "biography"
-    if any(m in q for m in LOCATION_MARKERS):
+    if contains_any_marker(q, LOCATION_MARKERS):
         return "location"
-    if any(m in q for m in MECHANICS_MARKERS):
-        return "mechanic"
-    if any(m in q for m in BUILD_MARKERS):
+    if build_subtypes:
         return "build"
-    if any(m in q for m in LORE_MARKERS):
+    if contains_any_marker(q, MECHANICS_MARKERS):
+        return "mechanic"
+    if contains_any_marker(q, BUILD_MARKERS):
+        return "build"
+    if contains_any_marker(q, LORE_MARKERS):
         return "lore"
-
+    
     return "general"
+
+def detect_build_subtypes(question: str) -> set[str]:
+    q = question.lower()
+    found: set[str] = set()
+
+    for subtype, subtype_cfg in BUILD_SUBTYPE_PROFILES.items():
+        markers = subtype_cfg.get("query_markers", ())
+        if contains_any_marker(q, markers):
+            found.add(subtype)
+
+    return found
 
 def is_recency_sensitive_question(question: str) -> bool:
     q = question.lower()
@@ -661,32 +847,72 @@ def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection, max_version_or
 
 def extract_entity_terms(question: str) -> list[str]:
     q = question.strip()
-
+    BUILD_ENTITY_TARGET = (
+        r"(?:"
+        r"talent priority|talent order|stat priority|team composition|"
+        r"weapon|weapons|artifact|artifacts|build|team|teams|"
+        r"talent|talents|rotation|rotations|stats"
+        r")"
+    )
     patterns = [
-        r"\bwho\s+is\s+([A-Za-z][A-Za-z' -]{1,40})",
-        r"\bwho\s+was\s+([A-Za-z][A-Za-z' -]{1,40})",
-        r"\bwhat\s+is\s+([A-Za-z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature|weapon|build|artifact)",
-        r"\bwhat\s+are\s+([A-Za-z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature|weapons|builds|artifacts)",
-        r"\bbest\s+(?:weapon|artifact|build|team)\s+for\s+([A-Za-z][A-Za-z' -]{1,40})",
-        r"\brecommended\s+(?:weapon|artifact|build|team)\s+for\s+([A-Za-z][A-Za-z' -]{1,40})",
-        r"\b([A-Z][A-Za-z' -]{1,40})\s+(?:recommended|best|signature)\s+(?:weapon|artifact|build|team)",
+        rf"\b(?:what\s+(?:is|are)\s+)?"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
+        rf"(?:recommended\s+|best\s+|signature\s+)?"
+        rf"{BUILD_ENTITY_TARGET}\b",
+
+        rf"\bwhat\s+(?:is|are)\s+"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)\s+"
+        rf"(?:recommended|best|signature)\s+"
+        rf"{BUILD_ENTITY_TARGET}\b",
+
+        rf"\b(?:what\s+(?:is|are)\s+)?"
+        rf"(?:the\s+)?(?:best|recommended|signature)\s+"
+        rf"{BUILD_ENTITY_TARGET}\s+for\s+"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}})",
+
+        r"\bshould\s+"
+        r"([A-Za-z][A-Za-z' -]{1,40}?)\s+"
+        r"(?:use|equip|run|build)\b",
+
+        rf"^\s*([A-Z][A-Za-z' -]{{1,40}}?)\s+"
+        rf"(?:recommended|best|signature)\s+"
+        rf"{BUILD_ENTITY_TARGET}\b",
+
+        rf"^\s*([A-Z][A-Za-z' -]{{1,40}}?)\s+"
+        rf"(?:talent priority|talent order|stat priority|rotation|build)\b",
+
+        r"\bwho\s+(?:is|was)\s+([A-Za-z][A-Za-z' -]{1,40})",
     ]
 
     for pat in patterns:
         m = re.search(pat, q, re.I)
         if not m:
             continue
-
         ent = m.group(1)
         ent = re.split(r"\?|,|\.|\band\b|\bwhere\b|\bwhat\b", ent, flags=re.I)[0]
-        ent = ent.strip().lower()
-        ent = re.sub(r"'s\b", "", ent).strip()
-        ent = re.sub(r"\b(recommended|best|signature|weapon|weapons|build|artifact|artifacts)$", "", ent).strip()
-
+        ent = re.sub(r"\s+", " ", ent).strip(" '")
+        ent = re.sub(r"^the\s+", "", ent, flags=re.I)
+        ent = re.sub(r"'s$", "", ent, flags=re.I)
+        ent = re.sub(
+            r"\b(?:"
+            r"recommended|best|signature|"
+            r"weapon|weapons|build|"
+            r"artifact|artifacts|"
+            r"talent|talents|"
+            r"team|teams|"
+            r"rotation|rotations|stats"
+            r")$", "", ent, flags=re.I).strip()
         if ent:
             return [ent] + ent.split()
 
-    return []
+    if ent:
+        main = ent.lower()
+        result = [main]
+        for token in main.split():
+            if token not in result:
+                result.append(token)
+
+    return result
 
 def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int = 3) -> list[dict]:
     terms = extract_entity_terms(question)
@@ -723,6 +949,7 @@ def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int =
 def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict], current_version_ord: int | None = None) -> list[dict]:
     q_terms = tokenize(question)
     intent  = detect_intent(question)
+    build_subtypes = (detect_build_subtypes(question) if intent == "build" else set())
     profile = INTENT_PROFILES[intent]
     media_exts = [".jpeg", ".jpg", ".png", ".webp", ".mp4", ".svg", ".ico" , ".webm", ".mp3", ".gif", ".wav", ".ogg", ".woff", ".woff2"]
     ranked = []
@@ -753,24 +980,19 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         tier       = row.get("tier") or ""
         weight     = float(row.get("weight") or 1.0)
         source     = row.get("source") or ""
+        matched_subtypes: set[str] = set()
 
         text_terms    = tokenize(text)
         title_terms   = tokenize(title)
         text_overlap  = len(q_terms & text_terms)
         title_overlap = len(q_terms & title_terms)
+        combined_l = f"{title_l}\n{text.lower()}"
 
         weighted_base = base_score * weight
 
-        lexical_bonus = (
-            0.02 * text_overlap
-          + 0.10 * title_overlap
-        )
+        lexical_bonus = (0.02 * text_overlap + 0.10 * title_overlap)
 
-        tier_bonus = (
-            0.05 if tier == "primary"
-            else 0.02 if tier == "supplementary"
-            else 0.0
-        )
+        tier_bonus = (0.05 if tier == "primary" else 0.02 if tier == "supplementary" else 0.0)
 
         intent_source_bonus = float(
             profile.get("source_bonus",   {}).get(source, 0.0)
@@ -784,11 +1006,33 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             else 0.0
         )
 
+        title_penalties = list(profile.get("title_penalize", []))
+        if intent == "build" and "talent" in build_subtypes:
+            talent_related = {
+                "normal attack",
+                "skill",
+                "burst",
+                "elemental skill",
+                "elemental burst",
+            }
+
+            title_penalties = [
+                marker
+                for marker in title_penalties
+                if marker not in talent_related
+            ]
+
+        for subtype in build_subtypes:
+            subtype_cfg = BUILD_SUBTYPE_PROFILES.get(subtype, {})
+            section_markers = subtype_cfg.get("section_markers", ())
+            if any(marker in combined_l for marker in section_markers):
+                matched_subtypes.add(subtype)
+
         retrieval_bonus = 0.0
         if in_faiss and in_bm25:
             retrieval_bonus += 0.08
 
-        if intent in {"mechanic", "lore", "biography", "location", "general"}:
+        if intent in {"mechanic", "build", "lore", "biography", "location", "general"}:
             if in_bm25:
                 retrieval_bonus += 0.05
             if bm25_rank is not None and bm25_rank <= 5:
@@ -815,7 +1059,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             penalty += 0.15
         if len(text.strip()) < 100:
             penalty += 0.10
-        if any(m in title_l for m in profile.get("title_penalize", [])):
+        if any(marker in title_l for marker in title_penalties):
             penalty += 0.15
 
         require_any = profile.get("text_require_any", [])
@@ -874,6 +1118,14 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             elif main_entity in title_l:
                 entity_bonus += 0.15
 
+            if intent == "build" and entity_terms:
+                main_entity = entity_terms[0]
+                if "build" in title_l:
+                    if main_entity in title_l:
+                        entity_bonus += 0.25
+                    else:
+                        penalty += 0.50
+
             if intent == "biography":
                 bad_profile_titles = [
                     "avatar", "namecard", "fan art contest", "quest item",
@@ -881,6 +1133,17 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
                     "taking pictures", "change history"]
                 if any(x in title_l for x in bad_profile_titles):
                     entity_bonus -= 0.20
+
+        if intent == "build" and build_subtypes:
+            if matched_subtypes:
+                best_bonus = max(float(BUILD_SUBTYPE_PROFILES[subtype].get("bonus", 0.40)) for subtype in matched_subtypes)
+                retrieval_bonus += best_bonus
+                if len(matched_subtypes) > 1:
+                    retrieval_bonus += 0.08 * (
+                        len(matched_subtypes) - 1)
+            else:
+                missing_penalty = min(float(BUILD_SUBTYPE_PROFILES[subtype].get("missing_penalty", 0.35))for subtype in build_subtypes)
+                penalty += missing_penalty
 
         final_score = (
             weighted_base
@@ -890,8 +1153,8 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             + intent_source_bonus
             + intent_title_boost
             + retrieval_bonus
-            # + recency_bonus
-            # - recency_penalty
+            + recency_bonus
+            - recency_penalty
             - penalty
         )
         row["_rerank_score"] = float(final_score)
