@@ -846,28 +846,30 @@ def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection, max_version_or
     return row["version_label"], int(row["version_ord"])
 
 def extract_entity_terms(question: str) -> list[str]:
-    q = question.strip()
-    BUILD_ENTITY_TARGET = (
+    q = question.strip().replace("’", "'")
+
+    build_entity_target = (
         r"(?:"
         r"talent priority|talent order|stat priority|team composition|"
         r"weapon|weapons|artifact|artifacts|build|team|teams|"
         r"talent|talents|rotation|rotations|stats"
         r")"
     )
+
     patterns = [
         rf"\b(?:what\s+(?:is|are)\s+)?"
         rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
         rf"(?:recommended\s+|best\s+|signature\s+)?"
-        rf"{BUILD_ENTITY_TARGET}\b",
+        rf"{build_entity_target}\b",
 
         rf"\bwhat\s+(?:is|are)\s+"
         rf"([A-Za-z][A-Za-z' -]{{1,40}}?)\s+"
         rf"(?:recommended|best|signature)\s+"
-        rf"{BUILD_ENTITY_TARGET}\b",
+        rf"{build_entity_target}\b",
 
         rf"\b(?:what\s+(?:is|are)\s+)?"
         rf"(?:the\s+)?(?:best|recommended|signature)\s+"
-        rf"{BUILD_ENTITY_TARGET}\s+for\s+"
+        rf"{build_entity_target}\s+for\s+"
         rf"([A-Za-z][A-Za-z' -]{{1,40}})",
 
         r"\bshould\s+"
@@ -876,7 +878,7 @@ def extract_entity_terms(question: str) -> list[str]:
 
         rf"^\s*([A-Z][A-Za-z' -]{{1,40}}?)\s+"
         rf"(?:recommended|best|signature)\s+"
-        rf"{BUILD_ENTITY_TARGET}\b",
+        rf"{build_entity_target}\b",
 
         rf"^\s*([A-Z][A-Za-z' -]{{1,40}}?)\s+"
         rf"(?:talent priority|talent order|stat priority|rotation|build)\b",
@@ -884,16 +886,23 @@ def extract_entity_terms(question: str) -> list[str]:
         r"\bwho\s+(?:is|was)\s+([A-Za-z][A-Za-z' -]{1,40})",
     ]
 
-    for pat in patterns:
-        m = re.search(pat, q, re.I)
-        if not m:
+    for pattern in patterns:
+        match = re.search(pattern, q, re.IGNORECASE)
+        if not match:
             continue
-        ent = m.group(1)
-        ent = re.split(r"\?|,|\.|\band\b|\bwhere\b|\bwhat\b", ent, flags=re.I)[0]
-        ent = re.sub(r"\s+", " ", ent).strip(" '")
-        ent = re.sub(r"^the\s+", "", ent, flags=re.I)
-        ent = re.sub(r"'s$", "", ent, flags=re.I)
-        ent = re.sub(
+
+        entity = match.group(1)
+
+        entity = re.split(
+            r"\?|,|\.|\band\b|\bwhere\b|\bwhat\b",
+            entity,
+            flags=re.IGNORECASE,
+        )[0]
+
+        entity = re.sub(r"\s+", " ", entity).strip(" '")
+        entity = re.sub(r"^the\s+", "", entity, flags=re.IGNORECASE)
+        entity = re.sub(r"'s$", "", entity, flags=re.IGNORECASE)
+        entity = re.sub(
             r"\b(?:"
             r"recommended|best|signature|"
             r"weapon|weapons|build|"
@@ -901,18 +910,24 @@ def extract_entity_terms(question: str) -> list[str]:
             r"talent|talents|"
             r"team|teams|"
             r"rotation|rotations|stats"
-            r")$", "", ent, flags=re.I).strip()
-        if ent:
-            return [ent] + ent.split()
+            r")$",
+            "",
+            entity,
+            flags=re.IGNORECASE,
+        ).strip()
 
-    if ent:
-        main = ent.lower()
-        result = [main]
-        for token in main.split():
+        if not entity:
+            continue
+
+        main_entity = entity.lower()
+        result = [main_entity]
+        for token in main_entity.split():
             if token not in result:
                 result.append(token)
 
-    return result
+        return result
+
+    return []
 
 def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int = 3) -> list[dict]:
     terms = extract_entity_terms(question)
