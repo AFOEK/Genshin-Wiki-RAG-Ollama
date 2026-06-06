@@ -5,13 +5,16 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import requests
 import sqlite3
 import sys
 import time
 import yaml
+
 from pathlib import Path
+from contextlib import ExitStack
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
 
@@ -19,6 +22,7 @@ from utils.logging_setup import setup_logging
 from qna.engine import retrieve_question_context, build_grounded_answer_prompt
 from qna.generators import generate
 from qna.utils import extract_entity_terms
+from qna.types import RetrivalResult
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -223,6 +227,236 @@ def find_document_rank(chunks: list[dict], doc_id: int) -> int | None:
             return rank
     return None
 
+def compact_chunk(row: dict | sqlite3.Row, max_chars: int = 1400) -> dict:
+    data = dict(row)
+
+    return {
+        "chunk_id": int(data["chunk_id"]),
+        "doc_id": int(data["doc_id"]),
+        "source": data.get("source"),
+        "title": data.get("title"),
+        "url": data.get("url"),
+        "text": clean_text(data.get("text") or "")[:max_chars],
+    }
+
+def extract_json_object(text: str) -> dict:
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start < 0 or end <= start:
+        raise ValueError("No JSON object found")
+
+    data = json.loads(text[start:end + 1])
+
+    if not isinstance(data, dict):
+        raise ValueError("Expected a JSON object")
+
+    return data
+
+def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float) -> tuple[bool, dict]:
+    candidate_context = (
+        f"Title: {candidate.get('title')}\n"
+        f"Source: {candidate.get('source')}\n"
+        f"URL: {candidate.get('url')}\n\n"
+        f"Text:\n{clean_text(candidate.get('text') or '')[:1800]}"
+    )
+
+    prompt = f"""
+    You are validating a potential negative passage for retrieval training.
+
+    Determine whether the candidate passage can answer the question or
+    supports the reference answer.
+
+    Return JSON only:
+
+    {{
+    "question_answerable": true or false,
+    "supports_reference_answer": true or false,
+    "confidence": number from 0 to 1,
+    "reason": "brief explanation"
+    }}
+
+    Question:
+    {question}
+
+    Reference answer:
+    {reference_answer}
+
+    Candidate passage:
+    {candidate_context}
+    """.strip()
+
+    raw = ollama_generate(
+        ollama_url,
+        validator_model,
+        prompt,
+    )
+
+    result = extract_json_object(raw)
+
+    confidence = float(result.get("confidence", 0.0))
+    question_answerable = (
+        result.get("question_answerable") is True
+    )
+    supports_reference = (
+        result.get("supports_reference_answer") is True
+    )
+
+    is_valid_negative = (
+        not question_answerable
+        and not supports_reference
+        and confidence >= min_confidence
+    )
+
+    return is_valid_negative, result
+
+def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, pool_size: int) -> list[dict]:
+    positive_doc_id = int(positive["doc_id"])
+
+    output: list[dict] = []
+    seen_docs = {positive_doc_id}
+
+    for candidate in retrieval.candidate_chunks:
+        candidate = dict(candidate)
+        doc_id = int(candidate["doc_id"])
+
+        if doc_id in seen_docs:
+            continue
+
+        text = clean_text(candidate.get("text") or "")
+        title = candidate.get("title") or ""
+        source = candidate.get("source") or ""
+
+        if not is_good_chunk(text, title, source):
+            continue
+
+        seen_docs.add(doc_id)
+        output.append(candidate)
+
+        if len(output) >= pool_size:
+            break
+
+    return output
+
+def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float) -> list[dict]:
+    accepted: list[dict] = []
+
+    for candidate in candidates:
+        try:
+            valid, validation = validate_negative_candidate(
+                question=question,
+                reference_answer=reference_answer,
+                candidate=candidate,
+                ollama_url=ollama_url,
+                validator_model=validator_model,
+                min_confidence=min_confidence,
+            )
+        except Exception as exc:
+            log.warning(
+                "[NEGATIVE] validation failed chunk_id=%s: %s",
+                candidate.get("chunk_id"),
+                exc,
+            )
+            continue
+
+        if not valid:
+            continue
+
+        candidate = dict(candidate)
+        candidate["negative_validation"] = validation
+        accepted.append(candidate)
+
+        if len(accepted) >= count:
+            break
+
+    return accepted
+
+def find_easy_negative_candidates(conn: sqlite3.Connection, *, positive: dict, question: str, count: int, excluded_doc_ids: set[int], seed: int, max_attempts: int = 100) -> list[dict]:
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(chunk_id) FROM chunks")
+    max_chunk_id = int(cur.fetchone()[0] or 0)
+
+    if max_chunk_id <= 0:
+        return []
+
+    entity_terms = [
+        term.lower()
+        for term in extract_entity_terms(question)
+        if len(term) >= 3
+    ]
+
+    rng = random.Random(
+        seed + int(positive["chunk_id"])
+    )
+
+    output: list[dict] = []
+    seen_docs = {
+        int(positive["doc_id"]),
+        *excluded_doc_ids,
+    }
+
+    for _ in range(max_attempts):
+        if len(output) >= count:
+            break
+
+        start_id = rng.randint(1, max_chunk_id)
+
+        cur.execute(
+            """
+            SELECT
+                c.chunk_id,
+                c.doc_id,
+                c.text,
+                d.source,
+                d.url,
+                d.title
+            FROM chunks c
+            JOIN docs d ON d.doc_id = c.doc_id
+            WHERE c.chunk_id >= ?
+              AND c.is_active = 1
+              AND COALESCE(d.status, 1) = 1
+            ORDER BY c.chunk_id
+            LIMIT 16
+            """,
+            (start_id,),
+        )
+
+        for row in cur.fetchall():
+            candidate = dict(row)
+            doc_id = int(candidate["doc_id"])
+
+            if doc_id in seen_docs:
+                continue
+
+            text = clean_text(candidate.get("text") or "")
+            title = candidate.get("title") or ""
+            combined = f"{title}\n{text}".lower()
+
+            if len(text) < 350:
+                continue
+
+            if any(term in combined for term in entity_terms):
+                continue
+
+            if not is_good_chunk(
+                text,
+                title,
+                candidate.get("source") or "",
+            ):
+                continue
+
+            seen_docs.add(doc_id)
+            output.append(candidate)
+
+            if len(output) >= count:
+                break
+
+    return output
+
 def make_prompt(title: str, source: str, url: str, text: str, n: int) -> str:
     return f"""
 You are generating candidate supervised fine-tuning examples
@@ -294,7 +528,7 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool) -> tuple[dict | None, dict | None]:
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool) -> tuple[dict | None, dict | None, RetrivalResult]:
     retrieval = retrieve_question_context(
         cfg,
         question,

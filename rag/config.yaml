@@ -154,7 +154,20 @@ dataset_creation:
   seed: 1337
   sleep: 0.0
 
-  make_negatives: false
+  make_negatives: true
+  retrieval_pairs_out: genshin_retrieval_pairs.jsonl
+  double_negative_out: genshin_double_negative_pairs.jsonl
+  sft_negative_out: genshin_sft_negative_answerability.jsonl
+
+  hard_negatives: 2
+  easy_negatives: 2
+  negative_pool_size: 20
+  negative_text_chars: 1400
+
+  validate_negatives: true
+  validator_model: llama3.2:3b
+  negative_validation_confidence: 0.80
+  negative_sft_per_positive: 1
 
   sources:
     - genshin_wiki
