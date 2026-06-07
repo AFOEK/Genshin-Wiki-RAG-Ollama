@@ -563,7 +563,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
                 "selected_chunk_ids",
                 [],
             ),
-        }
+        }, retrieval
 
     if not retrieval.context.strip():
         return None, {
@@ -575,7 +575,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
             "positive_doc_id": int(
                 positive["doc_id"]
             ),
-        }
+        }, retrieval
 
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context)
 
@@ -590,7 +590,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
             "positive_chunk_id": int(
                 positive["chunk_id"]
             ),
-        }
+        }, retrieval
 
     if is_refusal(final_answer):
         return None, {
@@ -605,7 +605,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
                 "selected_chunk_ids",
                 [],
             ),
-        }
+        }, retrieval
 
     intent = retrieval.intent
     subtypes = sorted(retrieval.build_subtypes)
@@ -667,7 +667,126 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
         },
     }
 
-    return record, None
+    return record, None, retrieval
+
+def make_negative_sft_record(*, base_id: str, question: str, negative: dict, negative_type: str, max_chars: int) -> dict:
+    context = (
+        f"[chunk_id={negative['chunk_id']}] "
+        f"[source_name={negative.get('source')}]\n"
+        f"Title: {negative.get('title')}\n"
+        f"URL: {negative.get('url')}\n\n"
+        f"{clean_text(negative.get('text') or '')[:max_chars]}"
+    )
+
+    return {
+        "id": (
+            f"{base_id}_negative_"
+            f"{negative_type}_{negative['chunk_id']}"
+        ),
+        "messages": [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Question:\n{question}\n\n"
+                    f"Context:\n{context}"
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "I don't have enough evidence in the "
+                    "provided context to answer that."
+                ),
+            },
+        ],
+        "metadata": {
+            "type": "negative_answerability",
+            "negative_type": negative_type,
+            "negative_chunk_id": int(
+                negative["chunk_id"]
+            ),
+            "negative_doc_id": int(
+                negative["doc_id"]
+            ),
+            "source": negative.get("source"),
+            "title": negative.get("title"),
+            "url": negative.get("url"),
+            "retrieval_validated": True,
+            "human_verified": False,
+        },
+    }
+
+def make_retrieval_pair_record(*, base_id: str, question: str, positive: dict, hard_negatives: list[dict], easy_negatives: list[dict], max_chars: int) -> dict:
+    return {
+        "id": f"{base_id}_retrieval",
+        "query": question,
+        "positive": compact_chunk(
+            positive,
+            max_chars,
+        ),
+        "hard_negatives": [
+            compact_chunk(row, max_chars)
+            for row in hard_negatives
+        ],
+        "easy_negatives": [
+            compact_chunk(row, max_chars)
+            for row in easy_negatives
+        ],
+    }
+
+def make_double_negative_record(
+    *,
+    base_id: str,
+    question: str,
+    positive: dict,
+    hard_negatives: list[dict],
+    easy_negatives: list[dict],
+    max_chars: int,
+) -> dict | None:
+    negative_items: list[tuple[str, dict]] = []
+
+    if hard_negatives:
+        negative_items.append(
+            ("hard", hard_negatives[0])
+        )
+
+    if easy_negatives:
+        negative_items.append(
+            ("easy", easy_negatives[0])
+        )
+
+    # Fall back to a second hard negative.
+    if len(negative_items) < 2 and len(hard_negatives) > 1:
+        negative_items.append(
+            ("hard", hard_negatives[1])
+        )
+
+    if len(negative_items) < 2:
+        return None
+
+    first_type, first = negative_items[0]
+    second_type, second = negative_items[1]
+
+    return {
+        "id": f"{base_id}_double_negative",
+        "query": question,
+        "positive": compact_chunk(
+            positive,
+            max_chars,
+        ),
+        "negative_1": {
+            "type": first_type,
+            **compact_chunk(first, max_chars),
+        },
+        "negative_2": {
+            "type": second_type,
+            **compact_chunk(second, max_chars),
+        },
+    }
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -839,7 +958,7 @@ def main() -> None:
                     }
 
                     try:
-                        record, rejection = process_generated_pair(
+                        record, rejection, retrieval = process_generated_pair(
                             cfg,
                             question=question,
                             reference_answer=reference_answer,
