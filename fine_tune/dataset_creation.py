@@ -738,15 +738,7 @@ def make_retrieval_pair_record(*, base_id: str, question: str, positive: dict, h
         ],
     }
 
-def make_double_negative_record(
-    *,
-    base_id: str,
-    question: str,
-    positive: dict,
-    hard_negatives: list[dict],
-    easy_negatives: list[dict],
-    max_chars: int,
-) -> dict | None:
+def make_double_negative_record(*, base_id: str, question: str, positive: dict, hard_negatives: list[dict], easy_negatives: list[dict], max_chars: int) -> dict | None:
     negative_items: list[tuple[str, dict]] = []
 
     if hard_negatives:
@@ -817,6 +809,14 @@ def main() -> None:
     direct_top_k = cfg_int(ds_cfg.get("direct_top_k"), 10)
     require_positive_document = cfg_bool(ds_cfg.get("require_positive_document"), True)
     ollama_cfg = cfg.get("ollama", {}) or {}
+    make_negatives = cfg_bool(ds_cfg.get("make_negatives"), False)
+    hard_negative_count = cfg_int(ds_cfg.get("hard_negatives") 2)
+    easy_negative_count = cfg_int(ds_cfg.get("easy_negatives"), 2)
+    negative_pool_size = cfg_int(ds_cfg.get("negative_pool_size"), 20)
+    negative_text_chars = cfg_int(ds_cfg.get("negative_text_chars"), 1400)
+    validator_model = str(ds_cfg.get("validator_model") or args.model or "llama3.2:3b")
+    negative_min_confidence = cfg_float(ds_cfg.get("negative_validation_confidence"),0.80)
+    negative_sft_per_positive = cfg_int(ds_cfg.get("negative_sft_per_positive"),1)
 
     db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg))
     cfg["db_path"] = str(db_path)
@@ -827,6 +827,10 @@ def main() -> None:
     out_path = (resolve_output_path(args.out, cfg) if args.out else out_dir / ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
     rejected_path = out_dir / ds_cfg.get("rejected_out", "genshin_rejected.jsonl")
     rejected_path.parent.mkdir(parents=True, exist_ok=True)
+
+    retrieval_pairs_path = out_dir / ds_cfg.get("retrieval_pairs_out", "genshin_retrieval_pairs.jsonl")
+    double_negative_path = out_dir / ds_cfg.get("double_negative_out", "genshin_double_negative_pairs.jsonl")
+    sft_negative_path = out_dir / ds_cfg.get("sft_negative_out", "genshin_sft_negative_answerability.jsonl")
     
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -867,7 +871,40 @@ def main() -> None:
         )
 
         log.info(f"[LORA_DATASET] Loaded candidate chunks: {len(rows)}")
-        with (out_path.open("w", encoding="utf-8") as f, rejected_path.open("w", encoding="utf-8") as rejected_f):
+        with ExitStack() as stack:
+            output_f = stack.enter_context(
+                out_path.open("w", encoding="utf-8")
+            )
+
+            rejected_f = stack.enter_context(
+                rejected_path.open("w", encoding="utf-8")
+            )
+
+            pair_f = None
+            double_negative_f = None
+            negative_sft_f = None
+
+            if make_negatives:
+                pair_f = stack.enter_context(
+                    retrieval_pairs_path.open(
+                        "w",
+                        encoding="utf-8",
+                    )
+                )
+
+                double_negative_f = stack.enter_context(
+                    double_negative_path.open(
+                        "w",
+                        encoding="utf-8",
+                    )
+                )
+
+                negative_sft_f = stack.enter_context(
+                    sft_negative_path.open(
+                        "w",
+                        encoding="utf-8",
+                    )
+                )
             for row in rows:
                 chunk_id = int(row["chunk_id"])
                 doc_id = int(row["doc_id"])
@@ -1006,7 +1043,7 @@ def main() -> None:
                         skipped += 1
                         continue
 
-                    f.write(
+                    output_f.write(
                         json.dumps(
                             record,
                             ensure_ascii=False,
@@ -1014,6 +1051,110 @@ def main() -> None:
                         + "\n"
                     )
                     written += 1
+                    if make_negatives:
+                        hard_candidates = get_hard_negative_candidates(
+                            retrieval,
+                            positive,
+                            pool_size=negative_pool_size,
+                        )
+
+                        hard_negatives = select_validated_negatives(
+                            hard_candidates,
+                            question=question,
+                            reference_answer=reference_answer,
+                            count=hard_negative_count,
+                            ollama_url=args.ollama_url,
+                            validator_model=validator_model,
+                            min_confidence=negative_min_confidence,
+                        )
+
+                        hard_doc_ids = {
+                            int(row["doc_id"])
+                            for row in hard_negatives
+                        }
+
+                        easy_candidates = find_easy_negative_candidates(
+                            conn,
+                            positive=positive,
+                            question=question,
+                            count=max(easy_negative_count * 4, 8),
+                            excluded_doc_ids=hard_doc_ids,
+                            seed=args.seed,
+                        )
+
+                        easy_negatives = select_validated_negatives(
+                            easy_candidates,
+                            question=question,
+                            reference_answer=reference_answer,
+                            count=easy_negative_count,
+                            ollama_url=args.ollama_url,
+                            validator_model=validator_model,
+                            min_confidence=negative_min_confidence,
+                        )
+
+                        pair_record = make_retrieval_pair_record(
+                            base_id=record["id"],
+                            question=question,
+                            positive=positive,
+                            hard_negatives=hard_negatives,
+                            easy_negatives=easy_negatives,
+                            max_chars=negative_text_chars,
+                        )
+
+                        pair_f.write(
+                            json.dumps(
+                                pair_record,
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+
+                        double_negative_record = (
+                            make_double_negative_record(
+                                base_id=record["id"],
+                                question=question,
+                                positive=positive,
+                                hard_negatives=hard_negatives,
+                                easy_negatives=easy_negatives,
+                                max_chars=negative_text_chars,
+                            )
+                        )
+
+                        if double_negative_record is not None:
+                            double_negative_f.write(
+                                json.dumps(
+                                    double_negative_record,
+                                    ensure_ascii=False,
+                                )
+                                + "\n"
+                            )
+
+                        selected_for_negative_sft = (
+                            hard_negatives + easy_negatives
+                        )[:negative_sft_per_positive]
+
+                        for negative in selected_for_negative_sft:
+                            negative_type = (
+                                "hard"
+                                if int(negative["doc_id"]) in hard_doc_ids
+                                else "easy"
+                            )
+
+                            negative_sft = make_negative_sft_record(
+                                base_id=record["id"],
+                                question=question,
+                                negative=negative,
+                                negative_type=negative_type,
+                                max_chars=negative_text_chars,
+                            )
+
+                            negative_sft_f.write(
+                                json.dumps(
+                                    negative_sft,
+                                    ensure_ascii=False,
+                                )
+                                + "\n"
+                            )
 
                 if written % 100 == 0 and written > 0:
                     log.info(
