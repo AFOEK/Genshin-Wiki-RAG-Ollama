@@ -147,6 +147,10 @@ dataset_creation:
   direct_top_k: 10
   require_positive_document: true
 
+  workers: 2
+  max_inflight: 4
+  preserve_output_order: true
+
   limit: 10
   qa_per_chunk: 2
   min_chars: 500

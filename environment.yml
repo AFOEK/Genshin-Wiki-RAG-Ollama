@@ -1,10 +1,9 @@
-name: genshin-rag
+name: rag
 channels:
   - conda-forge
-  - defaults
 
 dependencies:
-  - python=3.13
+  - python=3.12
   - pip
 
   - numpy
@@ -16,6 +15,7 @@ dependencies:
   - six
   - tqdm
   - typing_extensions
+
   - requests
   - urllib3
   - idna
@@ -23,30 +23,30 @@ dependencies:
   - beautifulsoup4
   - soupsieve
   - lxml
+
   - pyyaml
   - regex
   - zstandard
   - pymysql
+  - protobuf
+
   - gitpython
   - gitdb
   - smmap
-  - protobuf
-  - transformers
-  - dataset
-  - accelerate
-  - peft
-  - trl
-  - bitsandbytes
+
   - bleach
   - markdownify
   - webencodings
   - text-unidecode
-  - kagglesdk
-  - kaggle
-  - configparser
-  - sentence-transformers
   - python-slugify
 
   - pip:
-      - shutils
       - turbovec
+      - torch==2.10
+      - faiss-cpu==1.14.2
+      - transformers
+      - datasets
+      - accelerate
+      - sentence-transformers
+      - kaggle
+      - kagglesdk

@@ -29,13 +29,13 @@ With python venv already activated install all python requirements by running:
 ```
 pip install -r requirements.txt
 ```
-or setup python3 virtuak environment using conda:
+or setup python3 virtual environment using conda:
 ```
 conda env create -f environment.yml
 ```
 and start conda environment:
 ```
-conda activate genshin_rag
+conda activate rag
 ```
 
 ### Ollama server setup

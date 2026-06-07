@@ -12,9 +12,13 @@ import sqlite3
 import sys
 import time
 import yaml
+import threading
 
 from pathlib import Path
 from contextlib import ExitStack
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "rag"))
 
@@ -22,7 +26,7 @@ from utils.logging_setup import setup_logging
 from qna.engine import retrieve_question_context, build_grounded_answer_prompt
 from qna.generators import generate
 from qna.utils import extract_entity_terms
-from qna.types import RetrivalResult
+from qna.types import RetrievalResult
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,6 +48,22 @@ REFUSAL_MARKERS = (
     "couldn't retrieve any relevant chunks",
 )
 
+_worker_local = threading.local()
+
+@dataclass
+class ChunkTaskResult:
+    task_index: int
+    chunk_id: int
+
+    records: list[dict] = field(default_factory=list)
+    rejected: list[dict] = field(default_factory=list)
+
+    retrieval_pairs: list[dict] = field(default_factory=list)
+    double_negative_records: list[dict] = field(default_factory=list)
+    negative_sft_records: list[dict] = field(default_factory=list)
+
+    skipped: int = 0
+    errors: list[str] = field(default_factory=list)
 
 def is_refusal(answer: str) -> bool:
     answer_l = answer.lower()
@@ -186,8 +206,18 @@ def cfg_sources(x, default: str) -> list[str]:
 
     return [s.strip() for s in str(x).split(",") if s.strip()]
 
+def get_worker_http_session() -> requests.Session:
+    session = getattr(_worker_local, "http_session", None)
+
+    if session is None:
+        session = requests.Session()
+        _worker_local.http_session = session
+
+    return session
+
 def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300) -> str:
-    r = requests.post(
+    session = get_worker_http_session()
+    r = session.post(
         f"{base_url.rstrip('/')}/api/generate",
         json={
             "model": model,
@@ -203,6 +233,335 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300) 
     r.raise_for_status()
     return r.json().get("response", "").strip()
 
+def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
+    chunk_id = int(row["chunk_id"])
+    result = ChunkTaskResult(task_index=task_index, chunk_id=chunk_id)
+    doc_id = int(row["doc_id"])
+    source = str(row.get("source") or "")
+    url = str(row.get("url") or "")
+    title = str(row.get("title") or "")
+    text = clean_text(str(row.get("text") or ""))
+
+    if not is_good_chunk(text, title, source):
+        result.skipped += 1
+        result.rejected.append(
+            {
+                "reason": "source_chunk_not_useful",
+                "positive_chunk_id": chunk_id,
+                "positive_doc_id": doc_id,
+                "source": source,
+                "title": title,
+            }
+        )
+        return result
+
+    prompt = make_prompt(
+        title=title,
+        source=source,
+        url=url,
+        text=text[: settings["max_chars"]],
+        n=settings["qa_per_chunk"],
+    )
+
+    try:
+        raw = ollama_generate(
+            settings["ollama_url"],
+            settings["model"],
+            prompt,
+            timeout=settings["request_timeout"],
+        )
+
+        items = extract_json_array(raw)
+
+    except Exception as exc:
+        result.skipped += 1
+        result.rejected.append(
+            {
+                "reason": "draft_generation_failed",
+                "positive_chunk_id": chunk_id,
+                "positive_doc_id": doc_id,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+        )
+        return result
+
+    if not items:
+        result.skipped += 1
+        result.rejected.append(
+            {
+                "reason": "draft_generator_returned_empty_array",
+                "positive_chunk_id": chunk_id,
+                "positive_doc_id": doc_id,
+            }
+        )
+        return result
+
+    positive = {
+        "chunk_id": chunk_id,
+        "doc_id": doc_id,
+        "text": text,
+        "source": source,
+        "url": url,
+        "title": title,
+    }
+
+    for item in items[:settings["qa_per_chunk"]]:
+        if not isinstance(item, dict):
+            result.skipped += 1
+            result.rejected.append(
+                {
+                    "reason": "draft_item_not_object",
+                    "positive_chunk_id": chunk_id,
+                    "positive_doc_id": doc_id,
+                    "draft_item": item,
+                }
+            )
+            continue
+
+        question = str(
+            item.get("question", "")
+        ).strip()
+
+        reference_answer = str(
+            item.get("reference_answer")
+            or item.get("answer")
+            or ""
+        ).strip()
+
+        if not question or not reference_answer:
+            result.skipped += 1
+            result.rejected.append(
+                {
+                    "reason": "missing_question_or_reference_answer",
+                    "positive_chunk_id": chunk_id,
+                    "positive_doc_id": doc_id,
+                    "draft_item": item,
+                }
+            )
+            continue
+
+        try:
+            record, rejection, retrieval = process_generated_pair(
+                cfg,
+                question=question,
+                reference_answer=reference_answer,
+                positive=positive,
+                retriever_name=settings["retriever_name"],
+                direct_top_k=settings["direct_top_k"],
+                backend=settings["backend"],
+                require_positive_document=settings[
+                    "require_positive_document"
+                ],
+            )
+
+        except Exception as exc:
+            result.skipped += 1
+            result.rejected.append(
+                {
+                    "reason": "processing_exception",
+                    "question": question,
+                    "reference_answer": reference_answer,
+                    "positive_chunk_id": chunk_id,
+                    "positive_doc_id": doc_id,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        if record is None:
+            result.skipped += 1
+
+            result.rejected.append(
+                rejection
+                or {
+                    "reason": "unknown_pair_rejection",
+                    "question": question,
+                    "positive_chunk_id": chunk_id,
+                    "positive_doc_id": doc_id,
+                }
+            )
+            continue
+
+        result.records.append(record)
+
+        if settings["make_negatives"]:
+            hard_candidates = get_hard_negative_candidates(
+                retrieval,
+                positive,
+                pool_size=settings["negative_pool_size"],
+            )
+
+            hard_negatives = select_validated_negatives(
+                hard_candidates,
+                question=question,
+                reference_answer=reference_answer,
+                count=settings["hard_negative_count"],
+                ollama_url=settings["ollama_url"],
+                validator_model=settings["validator_model"],
+                min_confidence=settings[
+                    "negative_min_confidence"
+                ],
+            )
+
+            hard_doc_ids = {
+                int(candidate["doc_id"])
+                for candidate in hard_negatives
+            }
+
+            negative_conn = sqlite3.connect(
+                f"file:{settings['db_path']}?mode=ro",
+                uri=True,
+            )
+            negative_conn.row_factory = sqlite3.Row
+
+            try:
+                easy_candidates = find_easy_negative_candidates(
+                    negative_conn,
+                    positive=positive,
+                    question=question,
+                    count=max(
+                        settings["easy_negative_count"] * 4,
+                        8,
+                    ),
+                    excluded_doc_ids=hard_doc_ids,
+                    seed=settings["seed"],
+                )
+            finally:
+                negative_conn.close()
+
+            easy_negatives = select_validated_negatives(
+                easy_candidates,
+                question=question,
+                reference_answer=reference_answer,
+                count=settings["easy_negative_count"],
+                ollama_url=settings["ollama_url"],
+                validator_model=settings["validator_model"],
+                min_confidence=settings[
+                    "negative_min_confidence"
+                ],
+            )
+
+            pair_record = make_retrieval_pair_record(
+                base_id=record["id"],
+                question=question,
+                positive=positive,
+                hard_negatives=hard_negatives,
+                easy_negatives=easy_negatives,
+                max_chars=settings["negative_text_chars"],
+            )
+
+            result.retrieval_pairs.append(pair_record)
+
+            double_record = make_double_negative_record(
+                base_id=record["id"],
+                question=question,
+                positive=positive,
+                hard_negatives=hard_negatives,
+                easy_negatives=easy_negatives,
+                max_chars=settings["negative_text_chars"],
+            )
+
+            if double_record is not None:
+                result.double_negative_records.append(
+                    double_record
+                )
+
+            selected_negatives = (
+                hard_negatives + easy_negatives
+            )[: settings["negative_sft_per_positive"]]
+
+            for negative in selected_negatives:
+                negative_type = (
+                    "hard"
+                    if int(negative["doc_id"]) in hard_doc_ids
+                    else "easy"
+                )
+
+                negative_sft = make_negative_sft_record(
+                    base_id=record["id"],
+                    question=question,
+                    negative=negative,
+                    negative_type=negative_type,
+                    max_chars=settings["negative_text_chars"],
+                )
+
+                result.negative_sft_records.append(
+                    negative_sft
+                )
+
+    if settings["sleep"] > 0:
+        time.sleep(settings["sleep"])
+
+    return result
+
+def run_bounded_workers(rows: list[dict], *, workers: int, max_inflight: int, cfg: dict, settings: dict[str, Any]):
+    if workers <= 0:
+        raise ValueError(
+            f"workers must be positive, got {workers}"
+        )
+
+    if max_inflight < workers:
+        max_inflight = workers
+
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="dataset",
+    ) as executor:
+        pending: dict[Future, int] = {}
+        next_submit = 0
+
+        while next_submit < len(rows) or pending:
+            while (
+                next_submit < len(rows)
+                and len(pending) < max_inflight
+            ):
+                task_index = next_submit
+
+                future = executor.submit(
+                    process_source_row,
+                    task_index,
+                    rows[task_index],
+                    cfg=cfg,
+                    settings=settings,
+                )
+
+                pending[future] = task_index
+                next_submit += 1
+
+            completed, _ = wait(
+                pending,
+                return_when=FIRST_COMPLETED,
+            )
+
+            for future in completed:
+                task_index = pending.pop(future)
+
+                try:
+                    result = future.result()
+
+                except Exception as exc:
+                    result = ChunkTaskResult(
+                        task_index=task_index,
+                        chunk_id=int(
+                            rows[task_index]["chunk_id"]
+                        ),
+                        skipped=1,
+                        rejected=[
+                            {
+                                "reason": "worker_crashed",
+                                "task_index": task_index,
+                                "positive_chunk_id": int(
+                                    rows[task_index]["chunk_id"]
+                                ),
+                                "error_type": type(exc).__name__,
+                                "error": str(exc),
+                            }
+                        ],
+                    )
+
+                yield result
 
 def extract_json_array(text: str) -> list[dict]:
     text = text.strip()
@@ -528,7 +887,7 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool) -> tuple[dict | None, dict | None, RetrivalResult]:
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool) -> tuple[dict | None, dict | None, RetrievalResult]:
     retrieval = retrieve_question_context(
         cfg,
         question,
@@ -723,6 +1082,7 @@ def make_negative_sft_record(*, base_id: str, question: str, negative: dict, neg
 def make_retrieval_pair_record(*, base_id: str, question: str, positive: dict, hard_negatives: list[dict], easy_negatives: list[dict], max_chars: int) -> dict:
     return {
         "id": f"{base_id}_retrieval",
+        "origin_record_id": base_id,
         "query": question,
         "positive": compact_chunk(
             positive,
@@ -809,17 +1169,32 @@ def main() -> None:
     direct_top_k = cfg_int(ds_cfg.get("direct_top_k"), 10)
     require_positive_document = cfg_bool(ds_cfg.get("require_positive_document"), True)
     ollama_cfg = cfg.get("ollama", {}) or {}
+
+    args.ollama_url = args.ollama_url or ds_cfg.get("ollama_url") or ollama_cfg.get("base_url", "http://localhost:11434")
+    args.model = args.model or ds_cfg.get("model") or ollama_cfg.get("qa_model", "llama3.2:3b")
+    args.limit = cfg_int(args.limit, cfg_int(ds_cfg.get("limit"), 1000))
+    args.qa_per_chunk = cfg_int(args.qa_per_chunk, cfg_int(ds_cfg.get("qa_per_chunk"), 2))
+    args.min_chars = cfg_int(args.min_chars, cfg_int(ds_cfg.get("min_chars"), 500))
+    args.max_chars = cfg_int(args.max_chars, cfg_int(ds_cfg.get("max_chars"), 2500))
+    args.seed = cfg_int(args.seed, cfg_int(ds_cfg.get("seed"), 1337))
+    args.sleep = cfg_float(args.sleep, cfg_float(ds_cfg.get("sleep"), 0.0))
+
     make_negatives = cfg_bool(ds_cfg.get("make_negatives"), False)
-    hard_negative_count = cfg_int(ds_cfg.get("hard_negatives") 2)
+    hard_negative_count = cfg_int(ds_cfg.get("hard_negatives"), 2)
     easy_negative_count = cfg_int(ds_cfg.get("easy_negatives"), 2)
     negative_pool_size = cfg_int(ds_cfg.get("negative_pool_size"), 20)
     negative_text_chars = cfg_int(ds_cfg.get("negative_text_chars"), 1400)
     validator_model = str(ds_cfg.get("validator_model") or args.model or "llama3.2:3b")
     negative_min_confidence = cfg_float(ds_cfg.get("negative_validation_confidence"),0.80)
     negative_sft_per_positive = cfg_int(ds_cfg.get("negative_sft_per_positive"),1)
+    workers = cfg_int(ds_cfg.get("workers"), 2)
+    max_inflight = cfg_int(ds_cfg.get("max_inflight"), workers * 2)
+    preserve_output_order = cfg_bool(ds_cfg.get("preserve_output_order"), True)
+    request_timeout = cfg_int(ds_cfg.get("request_timeout"), 600)
 
     db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg))
     cfg["db_path"] = str(db_path)
+    log.info("[DATASET] workers=%d max_inflight=%d preserve_order=%s", workers, max_inflight, preserve_output_order)
 
     out_dir = resolve_output_path(ds_cfg.get("out_dir", "data/training"), cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -834,17 +1209,31 @@ def main() -> None:
     
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    args.ollama_url = args.ollama_url or ds_cfg.get("ollama_url") or ollama_cfg.get("base_url", "http://localhost:11434")
-    args.model = args.model or ds_cfg.get("model") or ollama_cfg.get("qa_model", "llama3.2:3b")
-
-    args.limit = cfg_int(args.limit, cfg_int(ds_cfg.get("limit"), 1000))
-    args.qa_per_chunk = cfg_int(args.qa_per_chunk, cfg_int(ds_cfg.get("qa_per_chunk"), 2))
-    args.min_chars = cfg_int(args.min_chars, cfg_int(ds_cfg.get("min_chars"), 500))
-    args.max_chars = cfg_int(args.max_chars, cfg_int(ds_cfg.get("max_chars"), 2500))
-    args.seed = cfg_int(args.seed, cfg_int(ds_cfg.get("seed"), 1337))
-    args.sleep = cfg_float(args.sleep, cfg_float(ds_cfg.get("sleep"), 0.0))
-
     sources = cfg_sources(args.sources, ds_cfg.get("sources", "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"))
+
+    worker_settings = {
+        "db_path": str(db_path),
+        "ollama_url": args.ollama_url,
+        "model": args.model,
+        "request_timeout": request_timeout,
+        "qa_per_chunk": args.qa_per_chunk,
+        "max_chars": args.max_chars,
+        "sleep": args.sleep,
+        "retriever_name": retriever_name,
+        "direct_top_k": direct_top_k,
+        "backend": backend,
+        "require_positive_document": require_positive_document,
+
+        "make_negatives": make_negatives,
+        "hard_negative_count": hard_negative_count,
+        "easy_negative_count": easy_negative_count,
+        "negative_pool_size": negative_pool_size,
+        "negative_text_chars": negative_text_chars,
+        "validator_model": validator_model,
+        "negative_min_confidence": negative_min_confidence,
+        "negative_sft_per_positive": negative_sft_per_positive,
+        "seed": args.seed,
+    }
 
     if not sources:
         raise RuntimeError("[LORA_DATASET] No dataset sources configured.")
@@ -857,11 +1246,8 @@ def main() -> None:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
 
-    written = 0
-    skipped = 0
-
     try:
-        rows = fetch_chunks(
+        source_rows = fetch_chunks(
             conn,
             sources=sources,
             limit=args.limit,
@@ -869,177 +1255,125 @@ def main() -> None:
             max_chars=args.max_chars,
             seed=args.seed,
         )
+    finally:
+        conn.close()
 
-        log.info(f"[LORA_DATASET] Loaded candidate chunks: {len(rows)}")
-        with ExitStack() as stack:
-            output_f = stack.enter_context(
-                out_path.open("w", encoding="utf-8")
+    rows = [dict(row)for row in source_rows]
+    log.info(f"[LORA_DATASET] Loaded candidate chunks: {len(rows)}")
+
+    with ExitStack() as stack:
+        output_f = stack.enter_context(
+            out_path.open("w", encoding="utf-8")
+        )
+
+        rejected_f = stack.enter_context(
+            rejected_path.open("w", encoding="utf-8")
+        )
+
+        pair_f = None
+        double_negative_f = None
+        negative_sft_f = None
+
+        if make_negatives:
+            pair_f = stack.enter_context(
+                retrieval_pairs_path.open(
+                    "w",
+                    encoding="utf-8",
+                )
             )
 
-            rejected_f = stack.enter_context(
-                rejected_path.open("w", encoding="utf-8")
+            double_negative_f = stack.enter_context(
+                double_negative_path.open(
+                    "w",
+                    encoding="utf-8",
+                )
             )
 
-            pair_f = None
-            double_negative_f = None
-            negative_sft_f = None
-
-            if make_negatives:
-                pair_f = stack.enter_context(
-                    retrieval_pairs_path.open(
-                        "w",
-                        encoding="utf-8",
-                    )
+            negative_sft_f = stack.enter_context(
+                sft_negative_path.open(
+                    "w",
+                    encoding="utf-8",
                 )
+            )
+        completed_tasks = 0
+        written = 0
+        skipped = 0
 
-                double_negative_f = stack.enter_context(
-                    double_negative_path.open(
-                        "w",
-                        encoding="utf-8",
+        written_pairs = 0
+        written_double_negatives = 0
+        written_negative_sft = 0
+
+        seen_record_ids: set[str] = set()
+        seen_questions: set[str] = set()
+
+        result_buffer: dict[int, ChunkTaskResult] = {}
+        next_write_index = 0
+
+        for result in run_bounded_workers(rows, workers=workers, max_inflight=max_inflight, cfg=cfg, settings=worker_settings):
+            if preserve_output_order:
+                result_buffer[result.task_index] = result
+                ready_results: list[ChunkTaskResult] = []
+
+                while next_write_index in result_buffer:
+                    ready_results.append(
+                        result_buffer.pop(next_write_index)
                     )
-                )
+                    next_write_index += 1
+            else:
+                ready_results = [result]
 
-                negative_sft_f = stack.enter_context(
-                    sft_negative_path.open(
-                        "w",
-                        encoding="utf-8",
-                    )
-                )
-            for row in rows:
-                chunk_id = int(row["chunk_id"])
-                doc_id = int(row["doc_id"])
-                source = row["source"]
-                url = row["url"]
-                title = row["title"] or ""
-                text = clean_text(row["text"] or "")
+            for ready in ready_results:
+                completed_tasks += 1
+                skipped += ready.skipped
 
-                if not is_good_chunk(text, title, source):
-                    skipped += 1
-                    continue
-
-                prompt = make_prompt(title=title, source=source, url=url, text=text[: args.max_chars], n=args.qa_per_chunk)
-
-                try:
-                    raw = ollama_generate(args.ollama_url, args.model, prompt)
-                    items = extract_json_array(raw)
-                except Exception as e:
-                    log.warning(f"[LORA_DATASET] failed chunk_id={chunk_id} err={type(e).__name__}: {e}")
-                    skipped += 1
-                    continue
-                
-                if not items:
+                for rejection in ready.rejected:
                     rejected_f.write(
                         json.dumps(
-                            {
-                                "reason": "draft_generator_returned_empty_array",
-                                "positive_chunk_id": chunk_id,
-                                "positive_doc_id": doc_id,
-                            },
+                            rejection,
                             ensure_ascii=False,
                         )
                         + "\n"
                     )
-                    skipped += 1
-                    continue
 
-                for item in items[:args.qa_per_chunk]:
-                    if not isinstance(item, dict):
-                        rejected_f.write(
-                            json.dumps(
-                                {
-                                    "reason": "draft_item_not_object",
-                                    "positive_chunk_id": chunk_id,
-                                    "positive_doc_id": doc_id,
-                                    "draft_item": item,
-                                },
-                                ensure_ascii=False,
-                            )
-                            + "\n"
-                        )
-                        skipped += 1
-                        continue
+                for record in ready.records:
+                    record_id = str(
+                        record.get("id") or ""
+                    ).strip()
 
+                    metadata = record.get("metadata") or {}
                     question = str(
-                        item.get("question", "")
+                        metadata.get("question") or ""
                     ).strip()
 
-                    reference_answer = str(
-                        item.get("reference_answer")
-                        or item.get("answer")
-                        or ""
+                    question_key = re.sub(
+                        r"\s+",
+                        " ",
+                        question.lower(),
                     ).strip()
 
-                    if not question or not reference_answer:
+                    if not record_id:
+                        skipped += 1
                         rejected_f.write(
                             json.dumps(
                                 {
-                                    "reason": "missing_question_or_reference_answer",
-                                    "positive_chunk_id": chunk_id,
-                                    "positive_doc_id": doc_id,
-                                    "draft_item": item,
+                                    "reason": "record_missing_id",
+                                    "task_index": ready.task_index,
+                                    "positive_chunk_id": ready.chunk_id,
                                 },
                                 ensure_ascii=False,
                             )
                             + "\n"
                         )
+                        continue
+
+                    if record_id in seen_record_ids:
                         skipped += 1
                         continue
 
-                    positive = {
-                        "chunk_id": chunk_id,
-                        "doc_id": doc_id,
-                        "text": text,
-                        "source": source,
-                        "url": url,
-                        "title": title,
-                    }
-
-                    try:
-                        record, rejection, retrieval = process_generated_pair(
-                            cfg,
-                            question=question,
-                            reference_answer=reference_answer,
-                            positive=positive,
-                            retriever_name=retriever_name,
-                            direct_top_k=direct_top_k,
-                            backend=backend,
-                            require_positive_document=require_positive_document,
-                        )
-                    except Exception as exc:
-                        log.warning(
-                            "[DATASET] pair failed chunk_id=%d err=%s: %s",
-                            chunk_id,
-                            type(exc).__name__,
-                            exc,
-                        )
-
-                        rejected_f.write(
-                            json.dumps(
-                                {
-                                    "reason": "processing_exception",
-                                    "question": question,
-                                    "reference_answer": reference_answer,
-                                    "positive_chunk_id": chunk_id,
-                                    "positive_doc_id": doc_id,
-                                    "error_type": type(exc).__name__,
-                                    "error": str(exc),
-                                },
-                                ensure_ascii=False,
-                            )
-                            + "\n"
-                        )
-
-                        skipped += 1
-                        continue
-
-                    if record is None:
-                        rejected_f.write(
-                            json.dumps(
-                                rejection,
-                                ensure_ascii=False,
-                            )
-                            + "\n"
-                        )
+                    if (
+                        question_key
+                        and question_key in seen_questions
+                    ):
                         skipped += 1
                         continue
 
@@ -1050,57 +1384,16 @@ def main() -> None:
                         )
                         + "\n"
                     )
+
+                    seen_record_ids.add(record_id)
+
+                    if question_key:
+                        seen_questions.add(question_key)
+
                     written += 1
-                    if make_negatives:
-                        hard_candidates = get_hard_negative_candidates(
-                            retrieval,
-                            positive,
-                            pool_size=negative_pool_size,
-                        )
 
-                        hard_negatives = select_validated_negatives(
-                            hard_candidates,
-                            question=question,
-                            reference_answer=reference_answer,
-                            count=hard_negative_count,
-                            ollama_url=args.ollama_url,
-                            validator_model=validator_model,
-                            min_confidence=negative_min_confidence,
-                        )
-
-                        hard_doc_ids = {
-                            int(row["doc_id"])
-                            for row in hard_negatives
-                        }
-
-                        easy_candidates = find_easy_negative_candidates(
-                            conn,
-                            positive=positive,
-                            question=question,
-                            count=max(easy_negative_count * 4, 8),
-                            excluded_doc_ids=hard_doc_ids,
-                            seed=args.seed,
-                        )
-
-                        easy_negatives = select_validated_negatives(
-                            easy_candidates,
-                            question=question,
-                            reference_answer=reference_answer,
-                            count=easy_negative_count,
-                            ollama_url=args.ollama_url,
-                            validator_model=validator_model,
-                            min_confidence=negative_min_confidence,
-                        )
-
-                        pair_record = make_retrieval_pair_record(
-                            base_id=record["id"],
-                            question=question,
-                            positive=positive,
-                            hard_negatives=hard_negatives,
-                            easy_negatives=easy_negatives,
-                            max_chars=negative_text_chars,
-                        )
-
+                if pair_f is not None:
+                    for pair_record in ready.retrieval_pairs:
                         pair_f.write(
                             json.dumps(
                                 pair_record,
@@ -1108,66 +1401,63 @@ def main() -> None:
                             )
                             + "\n"
                         )
+                        written_pairs += 1
 
-                        double_negative_record = (
-                            make_double_negative_record(
-                                base_id=record["id"],
-                                question=question,
-                                positive=positive,
-                                hard_negatives=hard_negatives,
-                                easy_negatives=easy_negatives,
-                                max_chars=negative_text_chars,
+                if double_negative_f is not None:
+                    for double_record in (
+                        ready.double_negative_records
+                    ):
+                        double_negative_f.write(
+                            json.dumps(
+                                double_record,
+                                ensure_ascii=False,
                             )
+                            + "\n"
                         )
+                        written_double_negatives += 1
 
-                        if double_negative_record is not None:
-                            double_negative_f.write(
-                                json.dumps(
-                                    double_negative_record,
-                                    ensure_ascii=False,
-                                )
-                                + "\n"
+                # Write negative-answerability SFT records.
+                if negative_sft_f is not None:
+                    for negative_record in (
+                        ready.negative_sft_records
+                    ):
+                        negative_sft_f.write(
+                            json.dumps(
+                                negative_record,
+                                ensure_ascii=False,
                             )
+                            + "\n"
+                        )
+                        written_negative_sft += 1
 
-                        selected_for_negative_sft = (
-                            hard_negatives + easy_negatives
-                        )[:negative_sft_per_positive]
-
-                        for negative in selected_for_negative_sft:
-                            negative_type = (
-                                "hard"
-                                if int(negative["doc_id"]) in hard_doc_ids
-                                else "easy"
-                            )
-
-                            negative_sft = make_negative_sft_record(
-                                base_id=record["id"],
-                                question=question,
-                                negative=negative,
-                                negative_type=negative_type,
-                                max_chars=negative_text_chars,
-                            )
-
-                            negative_sft_f.write(
-                                json.dumps(
-                                    negative_sft,
-                                    ensure_ascii=False,
-                                )
-                                + "\n"
-                            )
-
-                if written % 100 == 0 and written > 0:
+                if (
+                    completed_tasks % 10 == 0
+                    or completed_tasks == len(rows)
+                ):
                     log.info(
-                        "[DATASET] written=%d skipped=%d",
+                        "[DATASET] tasks=%d/%d written=%d "
+                        "skipped=%d retrieval_pairs=%d "
+                        "double_negatives=%d negative_sft=%d",
+                        completed_tasks,
+                        len(rows),
                         written,
                         skipped,
+                        written_pairs,
+                        written_double_negatives,
+                        written_negative_sft,
                     )
 
-                if args.sleep > 0:
-                    time.sleep(args.sleep)
+                    output_f.flush()
+                    rejected_f.flush()
 
-    finally:
-        conn.close()
+                    if pair_f is not None:
+                        pair_f.flush()
+
+                    if double_negative_f is not None:
+                        double_negative_f.flush()
+
+                    if negative_sft_f is not None:
+                        negative_sft_f.flush()
 
     log.info(f"[LORA_DATASET] Done. written={written} skipped={skipped} out={out_path}")
 
