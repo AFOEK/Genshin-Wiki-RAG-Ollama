@@ -387,108 +387,127 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         result.records.append(record)
 
         if settings["make_negatives"]:
-            hard_candidates = get_hard_negative_candidates(
-                retrieval,
-                positive,
-                pool_size=settings["negative_pool_size"],
-            )
-
-            hard_negatives = select_validated_negatives(
-                hard_candidates,
-                question=question,
-                reference_answer=reference_answer,
-                count=settings["hard_negative_count"],
-                ollama_url=settings["ollama_url"],
-                validator_model=settings["validator_model"],
-                min_confidence=settings[
-                    "negative_min_confidence"
-                ],
-            )
-
-            hard_doc_ids = {
-                int(candidate["doc_id"])
-                for candidate in hard_negatives
-            }
-
-            negative_conn = sqlite3.connect(
-                f"file:{settings['db_path']}?mode=ro",
-                uri=True,
-            )
-            negative_conn.row_factory = sqlite3.Row
-
             try:
-                easy_candidates = find_easy_negative_candidates(
-                    negative_conn,
-                    positive=positive,
+                hard_candidates = get_hard_negative_candidates(
+                    retrieval,
+                    positive,
+                    pool_size=settings["negative_pool_size"],
+                )
+
+                hard_negatives = select_validated_negatives(
+                    hard_candidates,
                     question=question,
-                    count=max(
-                        settings["easy_negative_count"] * 4,
-                        8,
-                    ),
-                    excluded_doc_ids=hard_doc_ids,
-                    seed=settings["seed"],
-                )
-            finally:
-                negative_conn.close()
-
-            easy_negatives = select_validated_negatives(
-                easy_candidates,
-                question=question,
-                reference_answer=reference_answer,
-                count=settings["easy_negative_count"],
-                ollama_url=settings["ollama_url"],
-                validator_model=settings["validator_model"],
-                min_confidence=settings[
-                    "negative_min_confidence"
-                ],
-            )
-
-            pair_record = make_retrieval_pair_record(
-                base_id=record["id"],
-                question=question,
-                positive=positive,
-                hard_negatives=hard_negatives,
-                easy_negatives=easy_negatives,
-                max_chars=settings["negative_text_chars"],
-            )
-
-            result.retrieval_pairs.append(pair_record)
-
-            double_record = make_double_negative_record(
-                base_id=record["id"],
-                question=question,
-                positive=positive,
-                hard_negatives=hard_negatives,
-                easy_negatives=easy_negatives,
-                max_chars=settings["negative_text_chars"],
-            )
-
-            if double_record is not None:
-                result.double_negative_records.append(
-                    double_record
+                    reference_answer=reference_answer,
+                    count=settings["hard_negative_count"],
+                    ollama_url=settings["ollama_url"],
+                    validator_model=settings["validator_model"],
+                    min_confidence=settings[
+                        "negative_min_confidence"
+                    ],
+                    timeout=settings["request_timeout"]
                 )
 
-            selected_negatives = (
-                hard_negatives + easy_negatives
-            )[: settings["negative_sft_per_positive"]]
+                hard_doc_ids = {
+                    int(candidate["doc_id"])
+                    for candidate in hard_negatives
+                }
 
-            for negative in selected_negatives:
-                negative_type = (
-                    "hard"
-                    if int(negative["doc_id"]) in hard_doc_ids
-                    else "easy"
+                negative_conn = sqlite3.connect(
+                    f"file:{settings['db_path']}?mode=ro",
+                    uri=True,
+                )
+                negative_conn.row_factory = sqlite3.Row
+
+                try:
+                    easy_candidates = find_easy_negative_candidates(
+                        negative_conn,
+                        positive=positive,
+                        question=question,
+                        count=max(
+                            settings["easy_negative_count"] * 4,
+                            8,
+                        ),
+                        excluded_doc_ids=hard_doc_ids,
+                        seed=settings["seed"],
+                    )
+                finally:
+                    negative_conn.close()
+
+                easy_negatives = select_validated_negatives(
+                    easy_candidates,
+                    question=question,
+                    reference_answer=reference_answer,
+                    count=settings["easy_negative_count"],
+                    ollama_url=settings["ollama_url"],
+                    validator_model=settings["validator_model"],
+                    min_confidence=settings[
+                        "negative_min_confidence"
+                    ],
+                    timeout= settings["request_timeout"]
                 )
 
-                negative_sft = make_negative_sft_record(
+                if hard_negatives or easy_negatives:
+                    pair_record = make_retrieval_pair_record(
+                        base_id=record["id"],
+                        question=question,
+                        positive=positive,
+                        hard_negatives=hard_negatives,
+                        easy_negatives=easy_negatives,
+                        max_chars=settings["negative_text_chars"],
+                    )
+                    result.retrieval_pairs.append(pair_record)
+
+                double_record = make_double_negative_record(
                     base_id=record["id"],
                     question=question,
-                    negative=negative,
-                    negative_type=negative_type,
+                    positive=positive,
+                    hard_negatives=hard_negatives,
+                    easy_negatives=easy_negatives,
                     max_chars=settings["negative_text_chars"],
                 )
 
-                result.negative_sft_records.append(
-                    negative_sft
+                if double_record is not None:
+                    result.double_negative_records.append(
+                        double_record
+                    )
+
+                selected_negatives = (
+                    hard_negatives + easy_negatives
+                )[: settings["negative_sft_per_positive"]]
+
+                for negative in selected_negatives:
+                    negative_type = (
+                        "hard"
+                        if int(negative["doc_id"]) in hard_doc_ids
+                        else "easy"
+                    )
+
+                    negative_sft = make_negative_sft_record(
+                        base_id=record["id"],
+                        question=question,
+                        negative=negative,
+                        negative_type=negative_type,
+                        max_chars=settings["negative_text_chars"],
+                    )
+
+                    result.negative_sft_records.append(
+                        negative_sft
+                    )
+            except Exception as exc:
+                log.warning(
+                "[NEGATIVE] generation failed "
+                "chunk_id=%d question=%r err=%s: %s", chunk_id, question, type(exc).__name__, exc)
+
+                result.rejected.append(
+                    {
+                        "reason": "negative_generation_failed",
+                        "question": question,
+                        "positive_chunk_id": chunk_id,
+                        "positive_doc_id": doc_id,
+                        "origin_record_id": record["id"],
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
                 )
 
     if settings["sleep"] > 0:
@@ -616,7 +635,7 @@ def extract_json_object(text: str) -> dict:
 
     return data
 
-def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float) -> tuple[bool, dict]:
+def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int) -> tuple[bool, dict]:
     candidate_context = (
         f"Title: {candidate.get('title')}\n"
         f"Source: {candidate.get('source')}\n"
@@ -653,6 +672,7 @@ def validate_negative_candidate(*, question: str, reference_answer: str, candida
         ollama_url,
         validator_model,
         prompt,
+        timeout=timeout
     )
 
     result = extract_json_object(raw)
@@ -701,7 +721,7 @@ def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, 
 
     return output
 
-def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float) -> list[dict]:
+def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float, timeout: int) -> list[dict]:
     accepted: list[dict] = []
 
     for candidate in candidates:
@@ -713,6 +733,7 @@ def select_validated_negatives(candidates: list[dict], *, question: str, referen
                 ollama_url=ollama_url,
                 validator_model=validator_model,
                 min_confidence=min_confidence,
+                timeout=timeout
             )
         except Exception as exc:
             log.warning(
@@ -1065,6 +1086,7 @@ def make_negative_sft_record(*, base_id: str, question: str, negative: dict, neg
         "metadata": {
             "type": "negative_answerability",
             "negative_type": negative_type,
+            "origin_record_id": base_id,
             "negative_chunk_id": int(
                 negative["chunk_id"]
             ),
@@ -1111,7 +1133,6 @@ def make_double_negative_record(*, base_id: str, question: str, positive: dict, 
             ("easy", easy_negatives[0])
         )
 
-    # Fall back to a second hard negative.
     if len(negative_items) < 2 and len(hard_negatives) > 1:
         negative_items.append(
             ("hard", hard_negatives[1])
@@ -1125,6 +1146,7 @@ def make_double_negative_record(*, base_id: str, question: str, positive: dict, 
 
     return {
         "id": f"{base_id}_double_negative",
+        "origin_record_id": base_id,
         "query": question,
         "positive": compact_chunk(
             positive,
@@ -1309,6 +1331,27 @@ def main() -> None:
         result_buffer: dict[int, ChunkTaskResult] = {}
         next_write_index = 0
 
+        if retriever_name in {
+            "faiss",
+            "hybrid",
+            "hybrid_turbovec",
+        }:
+            log.info("[DATASET] Warming retrieval index")
+
+            try:
+                retrieve_question_context(
+                    cfg,
+                    "Who is Venti?",
+                    retriever_name=retriever_name,
+                    direct_top_k=3,
+                    backend=backend,
+                )
+            except Exception as exc:
+                log.warning(
+                    "[DATASET] Retrieval warm-up failed: %s",
+                    exc,
+                )
+
         for result in run_bounded_workers(rows, workers=workers, max_inflight=max_inflight, cfg=cfg, settings=worker_settings):
             if preserve_output_order:
                 result_buffer[result.task_index] = result
@@ -1323,6 +1366,7 @@ def main() -> None:
                 ready_results = [result]
 
             for ready in ready_results:
+                accepted_record_ids: set[str] = set()
                 completed_tasks += 1
                 skipped += ready.skipped
 
@@ -1384,7 +1428,7 @@ def main() -> None:
                         )
                         + "\n"
                     )
-
+                    accepted_record_ids.add(record_id)
                     seen_record_ids.add(record_id)
 
                     if question_key:
@@ -1394,6 +1438,13 @@ def main() -> None:
 
                 if pair_f is not None:
                     for pair_record in ready.retrieval_pairs:
+                        origin_id = pair_record.get(
+                            "origin_record_id"
+                        )
+
+                        if origin_id not in accepted_record_ids:
+                            continue
+
                         pair_f.write(
                             json.dumps(
                                 pair_record,
@@ -1404,9 +1455,14 @@ def main() -> None:
                         written_pairs += 1
 
                 if double_negative_f is not None:
-                    for double_record in (
-                        ready.double_negative_records
-                    ):
+                    for double_record in ready.double_negative_records:
+                        origin_id = double_record.get(
+                            "origin_record_id"
+                        )
+
+                        if origin_id not in accepted_record_ids:
+                            continue
+
                         double_negative_f.write(
                             json.dumps(
                                 double_record,
@@ -1416,11 +1472,17 @@ def main() -> None:
                         )
                         written_double_negatives += 1
 
-                # Write negative-answerability SFT records.
                 if negative_sft_f is not None:
-                    for negative_record in (
-                        ready.negative_sft_records
-                    ):
+                    for negative_record in ready.negative_sft_records:
+                        origin_id = (
+                            negative_record
+                            .get("metadata", {})
+                            .get("origin_record_id")
+                        )
+
+                        if origin_id not in accepted_record_ids:
+                            continue
+
                         negative_sft_f.write(
                             json.dumps(
                                 negative_record,
