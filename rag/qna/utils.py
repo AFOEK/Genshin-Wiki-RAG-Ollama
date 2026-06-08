@@ -169,6 +169,44 @@ INTENT_PROFILES = {
             "text": 1.5,
         },
     },
+        "lookup": {
+        "source_bonus": {
+            "genshin_wiki": 0.10,
+            "honey": 0.05,
+            "game8": 0.03,
+            "genshin_gg": 0.03,
+        },
+        "source_penalty": {
+            "kqm_news": 0.10,
+        },
+        "title_penalize": [
+            "change history",
+            "gallery",
+        ],
+        "title_boost": [],
+        "title_boost_v": 0.0,
+        "text_require_any": [],
+        "text_require_penalty": 0.0,
+        "source_priority": {
+            "required": [],
+            "preferred": [
+                "genshin_wiki",
+                "honey",
+                "game8",
+                "genshin_gg",
+            ],
+            "excluded": [
+                "kqm_news",
+            ],
+        },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 8.0,
+            "text": 1.0,
+        },
+    },
     "general": {
         "source_bonus":   {"genshin_wiki": 0.05, "game8":0.04},
         "source_penalty": {"kqm_news": 0.03},
@@ -191,6 +229,23 @@ INTENT_PROFILES = {
         },
     },
 }
+
+BUILD_RECOMMENDATION_MARKERS = (
+    "best",
+    "recommended",
+    "recommend",
+    "bis",
+    "signature weapon",
+    "talent priority",
+    "talent order",
+    "stat priority",
+    "main stats",
+    "substats",
+    "team comp",
+    "team composition",
+    "rotation",
+    "build for",
+)
 
 BUILD_SUBTYPE_PROFILES = {
     "weapon": {
@@ -574,6 +629,8 @@ def make_intent_fts5_query(question: str, intent: str) -> str | None:
         return None
 
     entity = quote_fts5_phrase(entity_terms[0])
+    if intent == "lookup":
+        return f"title:{entity}"
     if intent != "build":
         return None
 
@@ -721,6 +778,76 @@ def contains_any_marker(question_l: str, markers) -> bool:
         for marker in markers
     )
 
+def is_build_recommendation_question(question: str) -> bool:
+    q = question.lower().replace("’", "'")
+
+    if contains_any_marker(q, BUILD_RECOMMENDATION_MARKERS):
+        return True
+
+    if re.search(
+        r"\bshould\s+[a-z][a-z' -]{1,40}?\s+"
+        r"(?:use|equip|run|build)\b",
+        q,
+    ):
+        return True
+
+    if re.search(
+        r"\b(?:weapons?|artifacts?|teams?|stats)\s+for\s+",
+        q,
+    ):
+        return True
+
+    if re.search(
+        r"\b[a-z][a-z' -]{1,40}?'s\s+"
+        r"(?:best\s+|recommended\s+|signature\s+)?"
+        r"(?:weapons?|artifacts?|artifact set|teams?|stats)\b",
+        q,
+    ):
+        return True
+
+    return False
+
+def extract_lookup_entity(question: str) -> str | None:
+    q = question.strip().replace("’", "'")
+
+    patterns = (
+        r"^\s*what\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
+        r"^\s*where\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
+    )
+
+    entity: str | None = None
+
+    for pattern in patterns:
+        match = re.match(pattern, q, re.IGNORECASE)
+        if match:
+            entity = match.group(1)
+            break
+
+    if not entity:
+        return None
+
+    entity = re.sub(r"\s+", " ", entity).strip(" '")
+    entity = re.sub(r"^the\s+", "", entity, flags=re.IGNORECASE)
+
+    entity = re.sub(
+        r"\s+(?:"
+        r"artifact set|artifact|weapon|item|material|"
+        r"consumable|location|region"
+        r")$",
+        "",
+        entity,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return entity or None
+
+def normalize_title_key(value: str) -> str:
+    value = value.lower().replace("’", "'")
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+def primary_page_title(title: str) -> str:
+    return re.split(r"\s*[|｜]\s*", title, maxsplit=1)[0].strip()
+
 def tokenize(s: str) -> set[str]:
     return set(re.findall(r"[a-zA-Z0-9_']+", s.lower()))
 
@@ -786,15 +913,16 @@ def detect_intent(question: str) -> str:
         return "biography"
     if contains_any_marker(q, LOCATION_MARKERS):
         return "location"
-    if build_subtypes:
+    if (build_subtypes and is_build_recommendation_question(question)):
         return "build"
     if contains_any_marker(q, MECHANICS_MARKERS):
         return "mechanic"
+    if extract_lookup_entity(question):
+        return "lookup"
     if contains_any_marker(q, BUILD_MARKERS):
         return "build"
     if contains_any_marker(q, LORE_MARKERS):
         return "lore"
-    
     return "general"
 
 def detect_build_subtypes(question: str) -> set[str]:
@@ -927,6 +1055,17 @@ def extract_entity_terms(question: str) -> list[str]:
 
         return result
 
+    lookup_entity = extract_lookup_entity(question)
+    if lookup_entity:
+        main_entity = lookup_entity.lower()
+        result = [main_entity]
+
+        for token in main_entity.split():
+            if token not in result:
+                result.append(token)
+
+        return result
+
     return []
 
 def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int = 3) -> list[dict]:
@@ -972,6 +1111,26 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
     required = set(priority.get("required", []))
     excluded = set(priority.get("excluded", []))
     entity_terms = extract_entity_terms(question)
+    lookup_entity = (extract_lookup_entity(question) if intent == "lookup" else None)
+    lookup_key = (normalize_title_key(lookup_entity) if lookup_entity else "")
+    question_l = question.lower()
+    asks_for_card = contains_any_marker(
+        question_l,
+        (
+            "card",
+            "equipment card",
+            "tcg",
+            "genius invokation",
+        ),
+    )
+    asks_for_skin = contains_any_marker(
+        question_l,
+        (
+            "skin",
+            "dynamic skin",
+            "lustrous skin",
+        ),
+    )
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
@@ -1047,7 +1206,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         if in_faiss and in_bm25:
             retrieval_bonus += 0.08
 
-        if intent in {"mechanic", "build", "lore", "biography", "location", "general"}:
+        if intent in {"mechanic", "build", "lore", "biography", "location", "lookup", "general"}:
             if in_bm25:
                 retrieval_bonus += 0.05
             if bm25_rank is not None and bm25_rank <= 5:
@@ -1121,20 +1280,49 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
                     recency_penalty += 0.04
         
         entity_bonus = 0.0
+        title_primary = primary_page_title(title)
+        title_primary_key = normalize_title_key(title_primary)
 
-        if entity_terms:
-            main_entity =  entity_terms[0]
-            title_norm = re.sub(r"[^a-z0-9]+", " ", title_l).strip()
+        if lookup_key:
+            if title_primary_key == lookup_key:
+                entity_bonus += 1.00
+            elif title_primary_key.startswith(lookup_key + " "):
+                entity_bonus += 0.10
+            elif lookup_key in title_primary_key:
+                entity_bonus += 0.05
 
+            if not asks_for_card and "equipment card" in title_l:
+                penalty += 0.80
+
+            if not asks_for_skin and any(
+                marker in title_l
+                for marker in (
+                    "dynamic skin",
+                    "lustrous skin",
+                )
+            ):
+                penalty += 0.55
+
+            if any(
+                marker in title_l
+                for marker in (
+                    "/change history",
+                    "/gallery",
+                    "change history",
+                )
+            ):
+                penalty += 0.45
+        elif entity_terms:
+            main_entity = entity_terms[0]
+            title_norm = normalize_title_key(title)
             if title_norm == main_entity:
-                entity_bonus += 0.4
+                entity_bonus += 0.40
             elif title_norm.startswith(main_entity + " "):
-                entity_bonus += 0.3
+                entity_bonus += 0.30
             elif main_entity in title_l:
                 entity_bonus += 0.15
 
-            if intent == "build" and entity_terms:
-                main_entity = entity_terms[0]
+            if intent == "build":
                 if "build" in title_l:
                     if main_entity in title_l:
                         entity_bonus += 0.25
@@ -1142,10 +1330,17 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
                         penalty += 0.50
 
             if intent == "biography":
-                bad_profile_titles = [
-                    "avatar", "namecard", "fan art contest", "quest item",
-                    "normal attack", "constellation", "utility passive",
-                    "taking pictures", "change history"]
+                bad_profile_titles = (
+                    "avatar",
+                    "namecard",
+                    "fan art contest",
+                    "quest item",
+                    "normal attack",
+                    "constellation",
+                    "utility passive",
+                    "taking pictures",
+                    "change history",
+                )
                 if any(x in title_l for x in bad_profile_titles):
                     entity_bonus -= 0.20
 

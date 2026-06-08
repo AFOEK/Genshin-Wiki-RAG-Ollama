@@ -42,14 +42,15 @@ context_expansion:
   enabled: true
   before: 1
   after: 1
-  max_total_chunks: 8
+  max_total_chunks: 20
+  max_total_chunks_after_parent: 20
   direct_only: true
 
 parent_child:
   enabled: true
   children_per_parent: 4
-  max_parents: 4
-  max_total_chunks: 8
+  max_parents: 8
+  max_total_chunks: 16
 
 versioning:
   current: 605

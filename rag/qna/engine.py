@@ -368,7 +368,7 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
             context_cfg = cfg.get("context_expansion", {}) or {}
             ctx_enabled = as_bool(context_cfg.get("enabled", False))
             selected_chunks = chunks[:direct_top_k]
-            if intent in ("biography", "location"):
+            if intent in ("biography", "location", "lookup"):
                 selected_chunks = prefer_entity_seed_chunks(question, selected_chunks, min_keep=3)
                 selected_chunks = selected_chunks[:direct_top_k]
 
@@ -376,24 +376,49 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
             parent_enabled = as_bool(parent_cfg.get("enabled", False))
 
             if parent_enabled:
-                selected_chunks = fetch_parent_context_chunks(
+                seed_chunks = list(selected_chunks)
+                parent_max_total = max(
+                    int(parent_cfg.get("max_total_chunks", 16)),
+                    len(seed_chunks),
+                )
+                parent_chunks = fetch_parent_context_chunks(
                     conn,
-                    selected_chunks,
+                    seed_chunks,
                     max_parents=int(parent_cfg.get("max_parents", 8)),
-                    max_total_chunks=int(parent_cfg.get("max_total_chunks", 32)),
+                    max_total_chunks=parent_max_total,
+                )
+                selected_chunks = merge_context_preserving_seeds(
+                    seed_chunks,
+                    parent_chunks,
+                    max_total=parent_max_total,
+                    max_per_doc=4,
                 )
 
                 log.info("[PARENT] expanded selected chunks to parent context chunks=%d", len(selected_chunks))
 
             if ctx_enabled:
-                ctx_max_total = int(context_cfg.get("max_total_chunks_after_parent", context_cfg.get("max_total_chunks", 30)))
-
-                selected_chunks = expand_context_windows(
+                seed_chunks = list(selected_chunks)
+                ctx_max_total = max(
+                    int(
+                        context_cfg.get(
+                            "max_total_chunks_after_parent",
+                            context_cfg.get("max_total_chunks", 20),
+                        )
+                    ),
+                    len(seed_chunks),
+                )
+                expanded_chunks = expand_context_windows(
                     conn,
-                    selected_chunks,
+                    seed_chunks,
                     before=int(context_cfg.get("before", 1)),
                     after=int(context_cfg.get("after", 1)),
                     max_total_chunks=ctx_max_total,
+                )
+                selected_chunks = merge_context_preserving_seeds(
+                    seed_chunks,
+                    expanded_chunks,
+                    max_total=ctx_max_total,
+                    max_per_doc=4,
                 )
 
                 log.info("[CTX_EXPAND] expanded context chunks=%d before=%s after=%s", len(selected_chunks), context_cfg.get("before", 1), context_cfg.get("after", 1))
@@ -430,6 +455,44 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
     finally:
         conn.close()
 
+def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[dict], *, max_total: int, max_per_doc: int = 4) -> list[dict]:
+    max_total = max(int(max_total), len(seed_chunks))
+    output: list[dict] = []
+    seen_chunk_ids: set[int] = set()
+    doc_counts: dict[int, int] = {}
+
+    for row in seed_chunks:
+        chunk_id = int(row["chunk_id"])
+
+        if chunk_id in seen_chunk_ids:
+            continue
+
+        output.append(row)
+        seen_chunk_ids.add(chunk_id)
+
+        doc_id = int(row["doc_id"])
+        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+
+    for row in extra_chunks:
+        if len(output) >= max_total:
+            break
+
+        chunk_id = int(row["chunk_id"])
+
+        if chunk_id in seen_chunk_ids:
+            continue
+
+        doc_id = int(row["doc_id"])
+
+        if doc_counts.get(doc_id, 0) >= max_per_doc:
+            continue
+
+        output.append(row)
+        seen_chunk_ids.add(chunk_id)
+        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+
+    return output
+
 def build_grounded_answer_prompt(question: str, context: str) -> str:
     return textwrap.dedent(
         f"""
@@ -446,6 +509,12 @@ def build_grounded_answer_prompt(question: str, context: str) -> str:
             - If the context genuinely does not contain enough information, say so briefly.
             - Do not guess facts not supported by the context.
 
+            Evidence interpretation:
+            - Treat headings, numbered lists, bullet lists, tables, and short item descriptions as explicit evidence.
+            - A section titled “Best Weapons” or “Best Artifacts” followed by a numbered list is sufficient evidence for a recommendation.
+            - The first numbered item is the top-ranked recommendation unless the context explicitly states otherwise.
+            - For “What is X?” questions, prefer information from the context chunk whose title exactly matches X over derivative pages such as equipment cards, skins, galleries, or change-history pages.
+            - Before refusing, inspect all headings, lists, tables, and descriptions in the supplied context.
             Question:
             {question}
 
