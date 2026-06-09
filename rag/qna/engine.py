@@ -502,12 +502,14 @@ def build_grounded_answer_prompt(question: str, context: str) -> str:
             "I don't have enough evidence in the retrieved context."
 
             Rules:
-            - Use ONLY information present in the context.
-            - You MAY infer reasonable conclusions directly supported by the context.
-            - Cite chunk IDs inline like [chunk_id=123].
-            - Cite source name like [source_name=xyz].
-            - If the context genuinely does not contain enough information, say so briefly.
-            - Do not guess facts not supported by the context.
+            - Answer every part that is directly supported.
+            - If one part is unsupported, answer the supported portions first and identify only the unsupported part.
+            - Refuse only when none of the supplied context supports a useful answer.
+            - Treat headings, numbered lists, bullet lists, tables, stat blocks, item descriptions, and set bonuses as explicit evidence.
+            - “Best Weapons” and “Best Artifacts” lists are explicit recommendation evidence.
+            - A “Best Weapons” list does not by itself prove that an item is the character's canonical signature weapon.
+            - Do not reproduce chunk IDs, URLs, source headers, or internal retrieval metadata.
+            - Do not add facts absent from the context.
 
             Evidence interpretation:
             - Treat headings, numbered lists, bullet lists, tables, and short item descriptions as explicit evidence.

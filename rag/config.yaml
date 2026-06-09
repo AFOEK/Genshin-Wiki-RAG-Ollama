@@ -10,7 +10,14 @@ ollama:
   embedding_model: all-minilm:latest #snowflake-arctic-embed:xs
   qa_model: llama3.2:3b
   qa_keep_alive: "10m"
-  timeout: 600
+  timeout: 900
+  qa_timeout: 900
+  connect_timeout: 15
+  qa_retries: 3
+  qa_keep_alive: 30m
+
+  qa_temperature: 0.0
+  qa_top_p: 0.9
   embed_keep_alive: "15s"
 
 llamacpp:
