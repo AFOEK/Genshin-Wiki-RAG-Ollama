@@ -32,7 +32,7 @@ fts5:
   batch_size: 2000
 
 retrieval:
-  candidate_k: 85
+  candidate_k: 950
   deep_candidate_multiplier: 5
   rrf_k: 60
   rrf_scale: 10.0
@@ -47,17 +47,17 @@ reranker:
 
 context_expansion:
   enabled: true
-  before: 1
-  after: 1
-  max_total_chunks: 20
-  max_total_chunks_after_parent: 20
+  before: 2
+  after: 2
+  max_total_chunks: 50
+  max_total_chunks_after_parent: 50
   direct_only: true
 
 parent_child:
   enabled: true
-  children_per_parent: 4
-  max_parents: 8
-  max_total_chunks: 16
+  children_per_parent: 8
+  max_parents: 12
+  max_total_chunks: 50
 
 versioning:
   current: 605

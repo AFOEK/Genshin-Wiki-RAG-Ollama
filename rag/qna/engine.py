@@ -45,7 +45,7 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
     bm25_weights = get_bm25_weights(intent)
-    candidate_k = max(top_k * 5, candidate_k_cfg)
+    candidate_k = max(top_k, candidate_k_cfg)
     log.info(
         "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s subtypes=%s broad=%s",
         top_k,
