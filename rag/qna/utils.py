@@ -986,6 +986,25 @@ def extract_entity_terms(question: str) -> list[str]:
 
     patterns = [
         rf"\b(?:what\s+(?:is|are)\s+)?"
+        rf"(?:the\s+)?"
+        rf"(?:best|recommended|signature)\s+"
+        rf"{build_entity_target}\s+for\s+"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)"
+        rf"\s*[?!.]*$",
+
+        rf"\bwhat\s+"
+        rf"{build_entity_target}\s+"
+        rf"(?:is|are)\s+"
+        rf"(?:best|recommended)\s+for\s+"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)"
+        rf"\s*[?!.]*$",
+
+        rf"\b(?:what\s+(?:is|are)\s+)?"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
+        rf"(?:recommended\s+|best\s+|signature\s+)?"
+        rf"{build_entity_target}\b",
+
+        rf"\b(?:what\s+(?:is|are)\s+)?"
         rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
         rf"(?:recommended\s+|best\s+|signature\s+)?"
         rf"{build_entity_target}\b",
