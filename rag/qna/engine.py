@@ -293,6 +293,8 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
         max_per_doc = dedup_max_per_doc
         if intent == "build":
             max_per_doc = max(dedup_max_per_doc, 6)
+        elif intent == "lookup":
+            max_per_doc = max(dedup_max_per_doc, 6)
         elif intent in ("biography", "location"):
             max_per_doc = max(dedup_max_per_doc, 2)
 
@@ -361,6 +363,7 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
                 (row["text"][:200] if row["text"] else "").replace("\n", " "),
             )
 
+        context_max_per_doc = (8 if intent == "lookup" else 4)
         candidate_chunks = [dict(row) for row in chunks]
         if broad:
             selected_chunks = candidate_chunks
@@ -391,7 +394,7 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
                     seed_chunks,
                     parent_chunks,
                     max_total=parent_max_total,
-                    max_per_doc=4,
+                    max_per_doc=context_max_per_doc,
                 )
 
                 log.info("[PARENT] expanded selected chunks to parent context chunks=%d", len(selected_chunks))
@@ -418,7 +421,7 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
                     seed_chunks,
                     expanded_chunks,
                     max_total=ctx_max_total,
-                    max_per_doc=4,
+                    max_per_doc=context_max_per_doc,
                 )
 
                 log.info("[CTX_EXPAND] expanded context chunks=%d before=%s after=%s", len(selected_chunks), context_cfg.get("before", 1), context_cfg.get("after", 1))
@@ -496,32 +499,30 @@ def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[d
 def build_grounded_answer_prompt(question: str, context: str) -> str:
     return textwrap.dedent(
         f"""
-            You are a retrieval-grounded Genshin Impact assistant.
-            Answer the question using ONLY the provided context.
-            If the answer is not explicitly supported by the context, say:
-            "I don't have enough evidence in the retrieved context."
+        You are a retrieval-grounded Genshin Impact assistant.
 
-            Rules:
-            - Answer every part that is directly supported.
-            - If one part is unsupported, answer the supported portions first and identify only the unsupported part.
-            - Refuse only when none of the supplied context supports a useful answer.
-            - Treat headings, numbered lists, bullet lists, tables, stat blocks, item descriptions, and set bonuses as explicit evidence.
-            - “Best Weapons” and “Best Artifacts” lists are explicit recommendation evidence.
-            - A “Best Weapons” list does not by itself prove that an item is the character's canonical signature weapon.
-            - Do not reproduce chunk IDs, URLs, source headers, or internal retrieval metadata.
-            - Do not add facts absent from the context.
+        Rules:
+        - Use only the supplied context.
+        - Answer only the entity or topic requested.
+        - Do not enumerate similarly named or related items
+          unless the question requests a comparison or list.
+        - For "What is X?" questions, define X directly and
+          summarize its principal effect or purpose.
+        - Prefer chunks whose title exactly matches X.
+        - Ignore descriptions of other items with similar names.
+        - Treat headings, tables, numbered lists, descriptions
+          and effect blocks as explicit evidence.
+        - Do not invent unsupported facts.
+        - Refuse only when none of the context supports a useful
+          answer.
 
-            Evidence interpretation:
-            - Treat headings, numbered lists, bullet lists, tables, and short item descriptions as explicit evidence.
-            - A section titled “Best Weapons” or “Best Artifacts” followed by a numbered list is sufficient evidence for a recommendation.
-            - The first numbered item is the top-ranked recommendation unless the context explicitly states otherwise.
-            - For “What is X?” questions, prefer information from the context chunk whose title exactly matches X over derivative pages such as equipment cards, skins, galleries, or change-history pages.
-            - Before refusing, inspect all headings, lists, tables, and descriptions in the supplied context.
-            Question:
-            {question}
+        Context:
+        {context}
 
-            Context:
-            {context}
+        Question:
+        {question}
+
+        Answer the question directly:
         """).strip()
 
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:

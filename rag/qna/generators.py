@@ -56,6 +56,18 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
 
     last_error: Exception | None = None
 
+    log.info(
+        "[OLLAMA] request model=%s "
+        "attempt=%d/%d prompt_chars=%d "
+        "num_ctx=%s num_predict=%s",
+        model,
+        attempt + 1,
+        retries,
+        len(prompt),
+        request_options.get("num_ctx"),
+        request_options.get("num_predict"),
+    )
+
     for attempt in range(retries):
         started = time.perf_counter()
         response: requests.Response | None = None
@@ -387,23 +399,13 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
         )
 
         options: dict[str, Any] = {
-            "temperature": float(
-                ollama.get(
-                    "qa_temperature",
-                    0.0,
-                )
-            ),
-            "top_p": float(
-                ollama.get(
-                    "qa_top_p",
-                    0.9,
-                )
-            ),
+            "temperature": float(ollama.get("qa_temperature", 0.0)),
+            "top_p": float(ollama.get("qa_top_p", 0.9,)),
+            "num_ctx": int(ollama.get("qa_num_ctx", 8129)),
+            "num_predict": int(ollama.get("qa_num_predict", 256))
         }
 
         optional_option_names = (
-            "num_ctx",
-            "num_predict",
             "seed",
             "repeat_penalty",
             "top_k",

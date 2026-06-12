@@ -9,9 +9,10 @@ ollama:
   base_url: http://localhost:11434
   embedding_model: all-minilm:latest #snowflake-arctic-embed:xs
   qa_model: llama3.2:3b
-  qa_keep_alive: "10m"
   timeout: 900
   qa_timeout: 900
+  qa_num_ctx: 8192  #16384
+  qa_num_predict: 256 #512
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
