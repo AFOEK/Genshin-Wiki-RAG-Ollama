@@ -56,18 +56,6 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
 
     last_error: Exception | None = None
 
-    log.info(
-        "[OLLAMA] request model=%s "
-        "attempt=%d/%d prompt_chars=%d "
-        "num_ctx=%s num_predict=%s",
-        model,
-        attempt + 1,
-        retries,
-        len(prompt),
-        request_options.get("num_ctx"),
-        request_options.get("num_predict"),
-    )
-
     for attempt in range(retries):
         started = time.perf_counter()
         response: requests.Response | None = None
@@ -75,11 +63,14 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
         try:
             log.info(
                 "[OLLAMA] request model=%s "
-                "attempt=%d/%d prompt_chars=%d",
+                "attempt=%d/%d prompt_chars=%d "
+                "num_ctx=%s num_predict=%s",
                 model,
                 attempt + 1,
                 retries,
                 len(prompt),
+                request_options.get("num_ctx"),
+                request_options.get("num_predict"),
             )
 
             response = session.post(
