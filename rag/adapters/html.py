@@ -13,6 +13,23 @@ log = logging.getLogger(__name__)
 
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
+GAME8_NOISE_SELECTORS = (
+    ".c-commentItem__container--padding-sp",
+    ".c-commentItem__header",
+    ".c-commentItem__body",
+    "a[href*='/comments']",
+    "[data-track-mario-keyword*='comment']",
+    "#comments",
+    ".comments",
+    ".comment-list",
+    ".comment-thread",
+    ".reply",
+    ".replies",
+    ".discussion",
+    ".message-board",
+    "img[src^='data:image']",
+)
+
 def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
     qs = parse_qs(urlsplit(url).query)
     langs = qs.get("lang")
@@ -20,101 +37,138 @@ def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
         return True
     return langs[0].upper() == allowed_lang.upper()
 
-def drop_game8_comment(soup: BeautifulSoup) -> None:
-    selectors=[
-        ".c-commentItem__container--padding-sp",
-        ".c-commentItem__header",
-        ".c-commentItem__body",
-        "a[href*='/comments']",
-        "[data-track-mario-keyword*='comment']",
-        "#comments",
-        ".comments",
-        ".comment",
-        ".comment-list",
-        ".comment-thread",
-        ".reply",
-        ".replies",
-        ".discussion",
-        ".message-board",
-        "img[src^='data:image']",
-        "[class*='member']",
-        "[class*='Member']",
-        "[class*='premium']",
-        "[class*='Premium']",
-        "[class*='login']",
-        "[class*='Login']",
-        "[class*='signup']",
-        "[class*='Signup']",
-        "[class*='register']",
-        "[class*='Register']",
-        "[id*='member']",
-        "[id*='premium']",
-        "[id*='login']",
-        "[id*='signup']",
-        "[id*='register']",
-    ]
-
-    for sel in selectors:
-        for node in soup.select(sel):
+def drop_game8_noise(root) -> None:
+    for selector in GAME8_NOISE_SELECTORS:
+        for node in list(root.select(selector)):
             node.decompose()
-    
-    bad_phrases = [
-        "what can you do as a free member",
-        "create your free account today",
-        "site interface",
-        "article watchlist",
-        "game bookmarks",
-        "cross-device sync",
-        "light/dark theme",
-        "user profiles",
-        "direct feedback",
-        "comment rating",
-        "premium articles",
-        "map tool feature",
-        "free member",
-        "guest",
-    ]
 
-    for h in soup.select("h1, h2, h3, h4"):
-        txt = h.get_text(" ", strip=True).lower()
-        if txt in {"comment", "comments"}:
-            parent = h.find_parent(["section", "div"])
-            if parent:
-                parent.decompose()
+    membership_heading = ("what can you do as a free member")
 
-    for node in list(soup.find_all(["section", "div", "article", "aside"])):
-        txt = node.get_text(" ", strip=True).lower()
-        if not txt:
+    for heading in list(root.find_all(["h1", "h2", "h3", "h4"])):
+        heading_text = heading.get_text(" ", strip=True).lower()
+
+        if membership_heading not in heading_text:
             continue
 
-        hits = sum(1 for p in bad_phrases if p in txt)
-        if hits >=2:
-            node.decompose()
+        container = None
+        for parent in heading.parents:
+            if parent is root:
+                break
 
+            if parent.name not in {"dialog", "section", "aside", "div"}:
+                continue
+
+            parent_text = parent.get_text(
+                " ",
+                strip=True,
+            ).lower()
+
+            if len(parent_text) > 12_000:
+                break
+
+            membership_hits = sum(
+                phrase in parent_text
+                for phrase in (
+                    "create your free account today",
+                    "article watchlist",
+                    "game bookmarks",
+                    "cross-device sync",
+                    "comment rating",
+                    "premium articles",
+                    "continue as a guest",
+                )
+            )
+
+            if membership_hits >= 3:
+                container = parent
+                break
+
+        if container is not None:
+            container.decompose()
+        else:
+            heading.decompose()
+
+def find_game8_article_root(soup: BeautifulSoup):
+    selectors = (
+        "main article",
+        "article",
+        "[role='main']",
+        "main",
+        "#content",
+    )
+
+    for selector in selectors:
+        candidates = soup.select(selector)
+        for candidate in candidates:
+            text = candidate.get_text(
+                " ",
+                strip=True,
+            )
+
+            headings = candidate.find_all(
+                ["h1", "h2", "h3"]
+            )
+
+            if (
+                len(text) >= 1_000
+                and candidate.find("h1") is not None
+                and len(headings) >= 3
+            ):
+                return candidate
+
+    for heading in soup.find_all("h1"):
+        heading_text = heading.get_text(
+            " ",
+            strip=True,
+        )
+
+        if not heading_text:
+            continue
+
+        for parent in heading.parents:
+            if parent.name not in {"article", "main", "section", "div"}:
+                continue
+            text = parent.get_text(" ", strip=True)
+
+            subheadings = parent.find_all(["h2", "h3"])
+
+            if (
+                len(text) >= 1_000
+                and len(subheadings) >= 2
+            ):
+                return parent
+
+    return None
 
 def is_low_value_game8_text(text: str) -> bool:
-    t = (text or "").lower()
-    if len(t.strip()) < 800:
+    normalized = " ".join((text or "").split())
+    lowered = normalized.lower()
+    if len(normalized) < 800:
         return True
-    
-    bad_phrases = [
+
+    bad_phrases = (
         "what can you do as a free member",
         "create your free account today",
-        "site interface",
         "article watchlist",
         "game bookmarks",
         "cross-device sync",
         "comment rating",
         "premium articles",
-    ]
-    hits = sum(1 for p in bad_phrases if p in t)
+    )
 
-    if hits >= 2:
+    bad_hits = sum(phrase in lowered for phrase in bad_phrases)
+
+    article_signals = (
+        "last updated on",
+        "list of contents",
+        "genshin impact",
+    )
+
+    has_article_signal = any(signal in lowered for signal in article_signals)
+
+    if (bad_hits >= 3 and len(normalized) < 6_000 and not has_article_signal):
         return True
-    
-    if t.count("data:image") >= 5:
-        return True
-    
+
     return False
 
 def drop_honey_comment(soup: BeautifulSoup) -> None:
@@ -172,39 +226,70 @@ def extract_links(html: str, base: str):
 def html_to_text(html: str, url: str | None = None) -> str:
     soup = BeautifulSoup(html, "lxml")
 
-    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    if url:
-        host = urlparse(url).netloc.lower()
-        if "game8.co" in host:
-            drop_game8_comment(soup)
-        elif "honeyhunterworld.com" in host or "honey" in host:
+    host = (
+        urlparse(url).netloc.lower()
+        if url
+        else ""
+    )
+
+    if "game8.co" in host:
+        main = find_game8_article_root(soup)
+
+        if main is None:
+            log.warning(
+                "[GAME8] article root not found url=%s",
+                url,
+            )
+            return ""
+
+        drop_game8_noise(main)
+
+    else:
+        for tag in soup(
+            ["header", "footer", "nav", "aside"]):
+            tag.decompose()
+
+        if "honeyhunterworld.com" in host:
             drop_honey_comment(soup)
 
-    main = (
-        soup.select_one("main")
-        or soup.select_one("article")
-        or soup.select_one("#content")
-        or soup.select_one(".mw-parser-output")
-        or soup.body
-        or soup
-    )
+        main = (
+            soup.select_one("main")
+            or soup.select_one("article")
+            or soup.select_one("#content")
+            or soup.select_one(".mw-parser-output")
+            or soup.body
+            or soup
+        )
 
     try:
         text = md(str(main))
+
     except RecursionError:
-        log.warning("[WARN] html_to_text: RecursionError in markdownify; falling back")
-        text = soup_text_fallback(main)
-    except Exception as e:
-        log.warning("[WARN] html_to_text: markdownify failed (%s); falling back", type(e).__name__)
+        log.warning(
+            "[HTML] markdownify recursion error; "
+            "using text fallback"
+        )
         text = soup_text_fallback(main)
 
-    if url:
-        host = urlparse(url).netloc.lower()
-        if "game8.co" in host and is_low_value_game8_text(text):
-            log.warning("[GAME8] low-value text skipped url=%s len=%d", url, len(text))
+    except Exception as exc:
+        log.warning(
+            "[HTML] markdownify failed type=%s; "
+            "using text fallback",
+            type(exc).__name__,
+        )
+        text = soup_text_fallback(main)
+
+    text = text.strip()
+
+    if "game8.co" in host:
+        if is_low_value_game8_text(text):
+            log.warning("[GAME8] rejected extraction url=%s chars=%d", url, len(text))
             return ""
+
+        log.info("[GAME8] extraction accepted url=%s chars=%d", url, len(text))
 
     return text
 
@@ -213,6 +298,26 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
     seen: set[str] = set()
     retries: dict[str, int] = {}
     session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 "
+                "(X11; Linux aarch64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/136.0 Safari/537.36 "
+                "GenshinRAG/1.0"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,*/*;q=0.8"
+            ),
+            "Accept-Language": (
+                "en-US,en;q=0.9"
+            ),
+            "Cache-Control": "no-cache",
+        }
+    )
 
     while q and (max_pages is None or len(seen) < max_pages):
         url = q.popleft()
@@ -250,7 +355,6 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             r = session.get(
                 url,
                 timeout=60,
-                headers={"User-Agent": "GenshinRAG/1.0 (personal research)"},
             )
             last_modified = r.headers.get("Last-Modified")
             etag = r.headers.get("ETag")
@@ -321,6 +425,11 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 q.append(link)
 
         text = html_to_text(html, url)
+        if not text or not text.strip():
+            log.warning("[CRAWL] Skipping empty extraction url=%s", url)
+            time.sleep(rate_limit_s)
+            continue
+
         title = url
         try:
             soup = BeautifulSoup(html, "lxml")
