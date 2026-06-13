@@ -434,7 +434,7 @@ embedding_prompts:
 
 filters:
   deny_url_regex: "(new-in-|beta|datamine|preload|unreleased|prototype|%2Fdev%2F|%2Finternal%2F|#comment|comment-page|#respond|#comments|\\.(jpg|jpeg|png|gif|webp|svg|mp4|ico|webm|avi|mov|mkv|ogg|mp3|wav|woff|woff2|pdf|zip|rar|7z|tar|gz)|%2FChange_History|%2FGallery|%2FMedia|/Change_History|/Gallery|/Media)"
-  chunk_deny_text_regex: "(\bfrom\s+(?:the\s+)?beta\b|\bbeta\s+(?:build|server|version|data)\b|\btest\s+server\b|\bdatamin(?:e|ed|ing)\b|\bpreload\s+data\b|\bnot\s+yet\s+released\b|\bsubject\s+to\s+change\b|\bdevelopment\s+version\b|\bunreleased\s+(?:character|weapon|artifact|content|version)\b|\bupcoming\s+(?:character|weapon|artifact|banner|version|content)\b)"
+  chunk_deny_text_regex: '(\bfrom\s+(?:the\s+)?beta\b|\bbeta\s+(?:build|server|version|data)\b|\btest\s+server\b|\bdatamin(?:e|ed|ing)\b|\bpreload\s+data\b|\bnot\s+yet\s+released\b|\bsubject\s+to\s+change\b|\bdevelopment\s+version\b|\bunreleased\s+(?:character|weapon|artifact|content|version)\b|\bupcoming\s+(?:character|weapon|artifact|banner|version|content)\b)'
 
 logging:
   level: INFO
@@ -464,7 +464,7 @@ sources:
     weight: 0.95
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: honey
     kind: honey_html
@@ -475,7 +475,7 @@ sources:
     seeds:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: game8
     kind: game8_html
@@ -487,8 +487,8 @@ sources:
       - "https://game8.co/games/Genshin-Impact/"
     allow_url_regex: "^https://game8\\.co/games/Genshin-Impact(?:/?|/archives/\\d+/?)(?:[?#].*)?$"
     deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
-    chunk_deny_text_regex: "(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)"
-    rate_limit_s: 3.0
+    chunk_deny_text_regex: '(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)'
+    rate_limit_s: 2.0
 
   - name: genshin_gg
     kind: genshingg_html
@@ -507,7 +507,7 @@ sources:
      - "https://genshin.gg/elements/"
     allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: lunaris
     kind: lunaris_html
@@ -518,7 +518,7 @@ sources:
     seeds:
       - "https://lunaris.moe/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: naoka
     kind: naoka_html
@@ -529,7 +529,7 @@ sources:
     seeds:
       - "https://gi.nanoka.cc/?lang=EN"
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: homdgcat
     kind: homdgcat_html
@@ -538,7 +538,7 @@ sources:
     weight: 0.25
     base_url: https://homdgcat.wiki
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
 
   - name: hakushin
     kind: hakushin_html
@@ -547,4 +547,4 @@ sources:
     weight: 0.45
     base_url: https://gi20.hakush.in
     max_pages: null
-    rate_limit_s: 3.0
+    rate_limit_s: 2.0
