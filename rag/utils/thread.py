@@ -96,11 +96,24 @@ def producer(source_name: str, docs_iter, out_q: queue.Queue, source_filters=Non
                 log.warning("[PRODUCER] [%s] unexpected item shape %d, skipping", source_name, len(item))
                 continue
 
-            if source_filters:
-                if not source_filters.url_allowed(url):
-                    continue
-                if not source_filters.text_allowed(text):
-                    continue
+            if source_filters and not source_filters.url_allowed(url):
+                continue
+
+            if not text or not text.strip():
+                log.warning(
+                    "[PRODUCER] [%s] skipped empty text url=%s", source_name, url)
+                continue
+
+            minimum_chars = (800 if source_name == "game8" else 100)
+            if len(text.strip()) < minimum_chars:
+                log.warning(
+                    "[PRODUCER] [%s] skipped short text "
+                    "url=%s chars=%d",
+                    source_name,
+                    url,
+                    len(text.strip()),
+                )
+                continue
 
             if out_q.full():
                 log.warning("[PRODUCER] [%s] doc queue FULL; waiting...", source_name)
@@ -168,22 +181,9 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
             for _ in jobs:
                 embed_q.task_done()
 
-def ingest_consumer(num_producers: int,
-                    doc_q: queue.Queue,
-                    db_path: str,
-                    embed_fn: Callable[[str], tuple[bytes, int]],
-                    cfg: dict,
-                    filters,
-                    tier_map: dict,
-                    weight_map: dict,
-                    embed_workers: int = 2,
-                    embed_queue_size: int = 200):
-
-    log.info("[INGEST] start db_path=%s producers=%d embed_workers=%d",
-             db_path, num_producers, embed_workers)
-
+def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_fn: Callable[[str], tuple[bytes, int]], cfg: dict, filters, tier_map: dict, weight_map: dict, embed_workers: int = 2, embed_queue_size: int = 200):
+    log.info("[INGEST] start db_path=%s producers=%d embed_workers=%d",db_path, num_producers, embed_workers)
     conn = connect(db_path)
-
     embed_q: queue.Queue = queue.Queue(maxsize=embed_queue_size)
     embed_res_q: queue.Queue = queue.Queue()
 
@@ -252,9 +252,13 @@ def ingest_consumer(num_producers: int,
                     finished += 1
                     continue
 
-                if not filters.url_allowed(url) or not filters.text_allowed(text):
+                if not filters.url_allowed(url):
                     skipped += 1
                     continue
+                if not text or not text.strip():
+                    skipped += 1
+                    continue
+
                 tier = tier_map.get(src, "primary")
                 weight = weight_map.get(src, 1.0)
                 chunks_to_embed = process_document(

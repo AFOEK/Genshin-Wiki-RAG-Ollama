@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 from utils.hashing import sha256_text
@@ -33,6 +34,15 @@ def defang_tables(s: str) -> str:
 
 def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0, do_embed: bool=True, last_modified=None, etag=None):
     cur = conn.cursor()
+    source_cfg = next(
+        (
+            item
+            for item in config.get("sources", [])
+            if item.get("name") == source
+        ),
+        {},
+    )
+    force_rebuild = bool(source_cfg.get("force_rebuild", False))
     try:
         cur.execute("BEGIN IMMEDIATE")
         raw_hash = sha256_text(raw_text)
@@ -71,7 +81,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                 row = (doc_id_existing, old_hash_raw)
         if row:
             doc_id_existing, old_raw_hash = row
-            if old_raw_hash == raw_hash:
+            if (old_raw_hash == raw_hash and not force_rebuild):
                 cur.execute("SELECT COUNT(*) FROM chunks WHERE doc_id=? AND is_active=1", (doc_id_existing,))
                 active_chunks = int(cur.fetchone()[0] or 0)
                 if active_chunks > 0:
@@ -142,6 +152,9 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     return []
                 log.warning("REBUILD %s (unchanged raw, but no active chunks)", url)
                 doc_changed = True
+            elif(old_hash_raw == raw_hash and force_rebuild):
+                log.warning("[REBUILD] forced source=%s url=%s", source, url)
+                doc_changed = True
             else:
                 log.warning("[WARN] REBUILD %s (content changed)", url)
                 doc_changed = True
@@ -154,6 +167,78 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         norm = normalize(cleaned)
         norm_hash = sha256_text(norm)
         chunks = chunk_text(norm, config["pipeline"]["chunk_size"], config["pipeline"]["chunk_overlap"])
+
+        global_filter_cfg = config.get("filters", {}) or {}
+        global_deny_pattern = (global_filter_cfg.get("chunk_deny_text_regex") or global_filter_cfg.get("deny_text_regex"))
+
+        source_cfg = next(
+            (
+                source_cfg
+                for source_cfg in config.get("sources", [])
+                if source_cfg.get("name") == source
+            ),
+            {},
+        )
+        source_deny_pattern = (source_cfg.get("chunk_deny_text_regex") or source_cfg.get("deny_text_regex"))
+
+        deny_patterns = [
+            pattern
+            for pattern in (
+                global_deny_pattern,
+                source_deny_pattern,
+            )
+            if pattern
+        ]
+
+        deny_text_re = (
+            re.compile(
+                "|".join(
+                    f"(?:{pattern})"
+                    for pattern in deny_patterns
+                ),
+                re.IGNORECASE,
+            )
+            if deny_patterns
+            else None
+        )
+
+        original_chunk_count = len(chunks)
+        filtered_chunks: list[tuple[int, str]] = []
+
+        for original_index, chunk in enumerate(chunks):
+            chunk_value = str(chunk or "").strip()
+
+            if not chunk_value:
+                continue
+
+            if (
+                deny_text_re is not None
+                and deny_text_re.search(chunk_value)
+            ):
+                log.debug(
+                    "[CHUNK_FILTER] rejected source=%s "
+                    "url=%s chunk_index=%d preview=%r",
+                    source,
+                    url,
+                    original_index,
+                    chunk_value[:160],
+                )
+                continue
+
+            filtered_chunks.append(
+                (original_index, chunk_value)
+            )
+
+        chunks = filtered_chunks
+
+        log.info(
+            "[CHUNK_FILTER] source=%s total=%d "
+            "accepted=%d rejected=%d",
+            source,
+            original_chunk_count,
+            len(chunks),
+            original_chunk_count - len(chunks),
+        )
 
         archive_raw = bool(config.get("pipeline", {}).get("archive_raw", False))
         raw_zst = raw_len = raw_zst_len = None
