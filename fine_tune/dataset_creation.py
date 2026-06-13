@@ -48,6 +48,8 @@ REFUSAL_MARKERS = (
     "couldn't retrieve any relevant chunks",
 )
 
+NEGATIVE_VALIDATION_SCHEMA = {"type": "object", "properties": {"question_answerable": {"type": "boolean"}, "supports_reference_answer": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0}, "reason": {"type": "string"}}, "required": ["question_answerable", "supports_reference_answer", "confidence", "reason"], "additionalProperties": False}
+
 _worker_local = threading.local()
 
 @dataclass
@@ -215,23 +217,23 @@ def get_worker_http_session() -> requests.Session:
 
     return session
 
-def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300) -> str:
-    session = get_worker_http_session()
-    r = session.post(
-        f"{base_url.rstrip('/')}/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "top_p": 0.9,
-            },
-        },
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    return r.json().get("response", "").strip()
+def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2) -> str:
+    payload = {
+        "model": model, 
+        "prompt": prompt, 
+        "stream": False, 
+        "options": {
+            "temperature": temperature, 
+            "top_p": 0.9}
+    }
+    if response_format is not None: 
+        payload["format"] = response_format
+    response = get_worker_http_session().post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+    response.raise_for_status()
+    answer = str(response.json().get("response", "")).strip()
+    if not answer: 
+        raise ValueError("Ollama returned an empty response")
+    return answer
 
 def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
     chunk_id = int(row["chunk_id"])
@@ -636,62 +638,23 @@ def extract_json_object(text: str) -> dict:
     return data
 
 def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int) -> tuple[bool, dict]:
-    candidate_context = (
-        f"Title: {candidate.get('title')}\n"
-        f"Source: {candidate.get('source')}\n"
-        f"URL: {candidate.get('url')}\n\n"
-        f"Text:\n{clean_text(candidate.get('text') or '')[:1800]}"
-    )
-
-    prompt = f"""
-    You are validating a potential negative passage for retrieval training.
-
-    Determine whether the candidate passage can answer the question or
-    supports the reference answer.
-
-    Return JSON only:
-
-    {{
-    "question_answerable": true or false,
-    "supports_reference_answer": true or false,
-    "confidence": number from 0 to 1,
-    "reason": "brief explanation"
-    }}
-
-    Question:
-    {question}
-
-    Reference answer:
-    {reference_answer}
-
-    Candidate passage:
-    {candidate_context}
-    """.strip()
-
-    raw = ollama_generate(
-        ollama_url,
-        validator_model,
-        prompt,
-        timeout=timeout
-    )
-
-    result = extract_json_object(raw)
-
-    confidence = float(result.get("confidence", 0.0))
-    question_answerable = (
-        result.get("question_answerable") is True
-    )
-    supports_reference = (
-        result.get("supports_reference_answer") is True
-    )
-
-    is_valid_negative = (
-        not question_answerable
-        and not supports_reference
-        and confidence >= min_confidence
-    )
-
-    return is_valid_negative, result
+    candidate_context = f"Title: {candidate.get('title')}\nSource: {candidate.get('source')}\nURL: {candidate.get('url')}\n\nText:\n{clean_text(candidate.get('text') or '')[:1800]}"
+    prompt = f"Determine whether the candidate passage answers the question or supports the reference answer. Return only the required JSON object.\n\nQuestion:\n{question}\n\nReference answer:\n{reference_answer}\n\nCandidate passage:\n{candidate_context}"
+    last_error: Exception | None = None
+    for attempt in range(5):
+        raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0)
+        try:
+            result = json.loads(raw)
+            break
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            log.warning("[NEGATIVE] malformed validator JSON attempt=%d/5 chunk_id=%s raw=%r", attempt + 1, candidate.get("chunk_id"), raw[:500])
+    else:
+        raise ValueError(f"Validator returned invalid JSON after 2 attempts: {last_error}")
+    confidence = float(result["confidence"])
+    question_answerable = bool(result["question_answerable"])
+    supports_reference = bool(result["supports_reference_answer"])
+    return not question_answerable and not supports_reference and confidence >= min_confidence, result
 
 def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, pool_size: int) -> list[dict]:
     positive_doc_id = int(positive["doc_id"])
@@ -1343,7 +1306,7 @@ def main() -> None:
                     cfg,
                     "Who is Venti?",
                     retriever_name=retriever_name,
-                    direct_top_k=3,
+                    direct_top_k=10,
                     backend=backend,
                 )
             except Exception as exc:
