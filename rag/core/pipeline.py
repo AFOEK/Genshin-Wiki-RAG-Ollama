@@ -152,7 +152,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     return []
                 log.warning("REBUILD %s (unchanged raw, but no active chunks)", url)
                 doc_changed = True
-            elif(old_hash_raw == raw_hash and force_rebuild):
+            elif(old_raw_hash == raw_hash and force_rebuild):
                 log.warning("[REBUILD] forced source=%s url=%s", source, url)
                 doc_changed = True
             else:
@@ -351,7 +351,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         cur.execute("SELECT doc_id FROM docs WHERE url=?", (url,))
         doc_id = cur.fetchone()[0]
         cur.execute("UPDATE chunks SET is_active=0 WHERE doc_id=?", (doc_id,))
-        for i, c in enumerate(chunks):
+        for i, c in chunks:
             chash = sha256_text(c)
             czst = zstd_compress_text(c)
             clen = len(c)
