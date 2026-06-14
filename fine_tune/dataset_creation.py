@@ -920,7 +920,8 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
             ),
         }, retrieval
 
-    answer_prompt = build_grounded_answer_prompt(question, retrieval.context)
+    answer_style_cfg = cfg.get("answer_style", {}) or {}
+    answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
 
     final_answer = str(
         generate(cfg, answer_prompt)

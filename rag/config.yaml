@@ -91,6 +91,24 @@ runtime:
   faiss_model_mismatch: error  # error | warn | ignore
   faiss_expected_model: kaggle # kaggle | runtime | ollama | llamacpp
 
+answer_style:
+  max_build_recommendations: 3 #5
+
+answer_context:
+  lookup_max_chunks: 6
+  lookup_max_chars: 9000
+
+  build_max_chunks: 8
+  build_max_chars: 14000
+
+  biography_max_chunks: 8
+  biography_max_chars: 12000
+
+  location_max_chunks: 6
+  location_max_chars: 9000
+
+  max_chars_per_chunk: 2200
+
 kaggle:
   # intfloat/e5-large-v2: 335M params, 1024-dim, strong retrieval quality
   # BAAI/bge-large-en-v1.5: 335M params, 1024-dim, alternative

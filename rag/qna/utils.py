@@ -629,7 +629,7 @@ def make_intent_fts5_query(question: str, intent: str) -> str | None:
         return None
 
     entity = quote_fts5_phrase(entity_terms[0])
-    if intent == "lookup":
+    if intent in {"lookup", "biography", "location"}:
         return f"title:{entity}"
     if intent != "build":
         return None
@@ -978,9 +978,11 @@ def extract_entity_terms(question: str) -> list[str]:
 
     build_entity_target = (
         r"(?:"
-        r"talent priority|talent order|stat priority|team composition|"
-        r"weapon|weapons|artifact|artifacts|build|team|teams|"
-        r"talent|talents|rotation|rotations|stats"
+        r"talent priority|talent order|stat priority|"
+        r"team compositions?|team comps?|"
+        r"artifact sets?|artifacts?|"
+        r"weapons?|build|teams?|"
+        r"talents?|rotations?|stats"
         r")"
     )
 
@@ -990,19 +992,7 @@ def extract_entity_terms(question: str) -> list[str]:
         rf"(?:best|recommended|signature)\s+"
         rf"{build_entity_target}\s+for\s+"
         rf"([A-Za-z][A-Za-z' -]{{1,40}}?)"
-        rf"\s*[?!.]*$",
-
-        rf"\bwhat\s+"
-        rf"{build_entity_target}\s+"
-        rf"(?:is|are)\s+"
-        rf"(?:best|recommended)\s+for\s+"
-        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)"
-        rf"\s*[?!.]*$",
-
-        rf"\b(?:what\s+(?:is|are)\s+)?"
-        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
-        rf"(?:recommended\s+|best\s+|signature\s+)?"
-        rf"{build_entity_target}\b",
+        rf"(?:\?|$)",
 
         rf"\b(?:what\s+(?:is|are)\s+)?"
         rf"([A-Za-z][A-Za-z' -]{{1,40}}?)'s\s+"
@@ -1014,10 +1004,9 @@ def extract_entity_terms(question: str) -> list[str]:
         rf"(?:recommended|best|signature)\s+"
         rf"{build_entity_target}\b",
 
-        rf"\b(?:what\s+(?:is|are)\s+)?"
-        rf"(?:the\s+)?(?:best|recommended|signature)\s+"
-        rf"{build_entity_target}\s+for\s+"
-        rf"([A-Za-z][A-Za-z' -]{{1,40}})",
+        rf"\b{build_entity_target}\s+should\s+"
+        rf"([A-Za-z][A-Za-z' -]{{1,40}}?)\s+"
+        rf"(?:use|equip|run|build)\b",
 
         r"\bshould\s+"
         r"([A-Za-z][A-Za-z' -]{1,40}?)\s+"
@@ -1027,10 +1016,8 @@ def extract_entity_terms(question: str) -> list[str]:
         rf"(?:recommended|best|signature)\s+"
         rf"{build_entity_target}\b",
 
-        rf"^\s*([A-Z][A-Za-z' -]{{1,40}}?)\s+"
-        rf"(?:talent priority|talent order|stat priority|rotation|build)\b",
-
-        r"\bwho\s+(?:is|was)\s+([A-Za-z][A-Za-z' -]{1,40})",
+        r"\bwho\s+(?:is|are|was|were)\s+"
+        r"(?:the\s+)?([A-Za-z][A-Za-z' -]{1,40})",
     ]
 
     for pattern in patterns:
@@ -1363,13 +1350,31 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
                 if any(x in title_l for x in bad_profile_titles):
                     entity_bonus -= 0.20
 
+        if intent == "build" and entity_terms:
+            main_entity = entity_terms[0]
+            text_l = text.lower()
+
+            entity_in_title = main_entity in title_l
+            entity_in_text = main_entity in text_l[:3000]
+
+            if not entity_in_title and not entity_in_text:
+                penalty += 1.00
+
+            if "build" in title_l:
+                if entity_in_title:
+                    entity_bonus += 0.35
+                else:
+                    penalty += 1.25
+
+            if entity_in_title and matched_subtypes:
+                retrieval_bonus += 0.35
+
         if intent == "build" and build_subtypes:
             if matched_subtypes:
                 best_bonus = max(float(BUILD_SUBTYPE_PROFILES[subtype].get("bonus", 0.40)) for subtype in matched_subtypes)
                 retrieval_bonus += best_bonus
                 if len(matched_subtypes) > 1:
-                    retrieval_bonus += 0.08 * (
-                        len(matched_subtypes) - 1)
+                    retrieval_bonus += 0.08 * (len(matched_subtypes) - 1)
             else:
                 missing_penalty = min(float(BUILD_SUBTYPE_PROFILES[subtype].get("missing_penalty", 0.35))for subtype in build_subtypes)
                 penalty += missing_penalty
