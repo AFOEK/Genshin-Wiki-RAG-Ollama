@@ -221,7 +221,8 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     payload = {
         "model": model, 
         "prompt": prompt, 
-        "stream": False, 
+        "stream": False,
+        "think": False, 
         "options": {
             "temperature": temperature, 
             "top_p": 0.9}
@@ -257,22 +258,10 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         )
         return result
 
-    prompt = make_prompt(
-        title=title,
-        source=source,
-        url=url,
-        text=text[: settings["max_chars"]],
-        n=settings["qa_per_chunk"],
-    )
+    prompt = make_prompt(title=title, source=source, url=url, text=text[: settings["max_chars"]], n=settings["qa_per_chunk"])
 
     try:
-        raw = ollama_generate(
-            settings["ollama_url"],
-            settings["model"],
-            prompt,
-            timeout=settings["request_timeout"],
-        )
-
+        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"])
         items = extract_json_array(raw)
 
     except Exception as exc:
@@ -321,15 +310,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
             )
             continue
 
-        question = str(
-            item.get("question", "")
-        ).strip()
-
-        reference_answer = str(
-            item.get("reference_answer")
-            or item.get("answer")
-            or ""
-        ).strip()
+        question = str(item.get("question", "")).strip()
+        reference_answer = str(item.get("reference_answer") or item.get("answer") or "").strip()
 
         if not question or not reference_answer:
             result.skipped += 1
@@ -352,9 +334,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 retriever_name=settings["retriever_name"],
                 direct_top_k=settings["direct_top_k"],
                 backend=settings["backend"],
-                require_positive_document=settings[
-                    "require_positive_document"
-                ],
+                require_positive_document=settings["require_positive_document"],
+                answer_model=settings["answer_model"]
             )
 
         except Exception as exc:
@@ -871,7 +852,7 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool) -> tuple[dict | None, dict | None, RetrievalResult]:
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b") -> tuple[dict | None, dict | None, RetrievalResult]:
     retrieval = retrieve_question_context(
         cfg,
         question,
@@ -922,10 +903,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     answer_style_cfg = cfg.get("answer_style", {}) or {}
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
-
-    final_answer = str(
-        generate(cfg, answer_prompt)
-    ).strip()
+    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model)).strip()
 
     if not final_answer:
         return None, {
@@ -1157,7 +1135,8 @@ def main() -> None:
     ollama_cfg = cfg.get("ollama", {}) or {}
 
     args.ollama_url = args.ollama_url or ds_cfg.get("ollama_url") or ollama_cfg.get("base_url", "http://localhost:11434")
-    args.model = args.model or ds_cfg.get("model") or ollama_cfg.get("qa_model", "llama3.2:3b")
+    default_model = str(args.model or ds_cfg.get("model") or ollama_cfg.get("qa_model") or "llama3.2:3b").strip()
+    
     args.limit = cfg_int(args.limit, cfg_int(ds_cfg.get("limit"), 1000))
     args.qa_per_chunk = cfg_int(args.qa_per_chunk, cfg_int(ds_cfg.get("qa_per_chunk"), 2))
     args.min_chars = cfg_int(args.min_chars, cfg_int(ds_cfg.get("min_chars"), 500))
@@ -1170,7 +1149,9 @@ def main() -> None:
     easy_negative_count = cfg_int(ds_cfg.get("easy_negatives"), 2)
     negative_pool_size = cfg_int(ds_cfg.get("negative_pool_size"), 20)
     negative_text_chars = cfg_int(ds_cfg.get("negative_text_chars"), 1400)
-    validator_model = str(ds_cfg.get("validator_model") or args.model or "llama3.2:3b")
+    draft_model = str(ds_cfg.get("draft_model") or default_model).strip()
+    answer_model = str(ds_cfg.get("answer_model") or default_model).strip()
+    validator_model = str(ds_cfg.get("validator_model") or answer_model).strip()
     negative_min_confidence = cfg_float(ds_cfg.get("negative_validation_confidence"),0.80)
     negative_sft_per_positive = cfg_int(ds_cfg.get("negative_sft_per_positive"),1)
     workers = cfg_int(ds_cfg.get("workers"), 2)
@@ -1200,7 +1181,8 @@ def main() -> None:
     worker_settings = {
         "db_path": str(db_path),
         "ollama_url": args.ollama_url,
-        "model": args.model,
+        "draft_model": draft_model,
+        "answer_model": answer_model,
         "request_timeout": request_timeout,
         "qa_per_chunk": args.qa_per_chunk,
         "max_chars": args.max_chars,

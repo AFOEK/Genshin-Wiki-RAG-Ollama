@@ -349,45 +349,17 @@ def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, c
 def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int | None = None, model_override: str | None = None, provider_override: str | None = None, options_override: dict[str, Any] | None = None) -> str:
     runtime = cfg.get("runtime", {}) or {}
 
-    provider = str(
-        provider_override
-        or runtime.get("qa_provider", "ollama")
-    ).strip().lower()
+    provider = str(provider_override or runtime.get("qa_provider", "ollama")).strip().lower()
 
     if provider in {"llama.cpp", "llama-cpp"}:
         provider = "llamacpp"
 
     if provider == "ollama":
         ollama = cfg.get("ollama", {}) or {}
-
-        model = str(
-            model_override
-            or ollama.get("qa_model")
-            or ollama.get("model")
-            or "llama3.2:3b"
-        )
-
-        effective_retries = int(
-            retries
-            if retries is not None
-            else ollama.get("qa_retries", 3)
-        )
-
-        effective_timeout = int(
-            timeout
-            if timeout is not None
-            else ollama.get(
-                "qa_timeout",
-                ollama.get("timeout", 300),
-            )
-        )
-
-        connect_timeout = int(
-            ollama.get(
-                "connect_timeout",
-                15,
-            )
-        )
+        model = str(model_override or ollama.get("qa_model") or ollama.get("model") or "llama3.2:3b")
+        effective_retries = int(retries if retries is not None else ollama.get("qa_retries", 3))
+        effective_timeout = int(timeout if timeout is not None else ollama.get("qa_timeout", ollama.get("timeout", 300)))
+        connect_timeout = int(ollama.get("connect_timeout", 15))
 
         options: dict[str, Any] = {
             "temperature": float(ollama.get("qa_temperature", 0.0)),
@@ -405,11 +377,8 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
 
         for option_name in optional_option_names:
             config_name = f"qa_{option_name}"
-
             if config_name in ollama:
-                options[option_name] = ollama[
-                    config_name
-                ]
+                options[option_name] = ollama[config_name]
 
         if options_override:
             options.update(options_override)
@@ -420,7 +389,7 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
                     "base_url",
                     "http://localhost:11434",
                 )
-            ),
+            ).strip(),
             model,
             prompt,
             retries=effective_retries,

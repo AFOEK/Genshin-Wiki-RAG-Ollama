@@ -651,14 +651,7 @@ def has_lookup_phrase(chunks: list[dict], entity: str) -> bool:
     return False
 
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
-    result = retrieve_question_context(
-        cfg,
-        question,
-        retriever_name=retriever_name,
-        direct_top_k=direct_top_k,
-        broad_top_k=broad_top_k,
-        backend=backend,
-    )
+    result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
 
     if not result.selected_chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."

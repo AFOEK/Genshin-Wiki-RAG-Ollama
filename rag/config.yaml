@@ -11,8 +11,8 @@ ollama:
   qa_model: llama3.2:3b
   timeout: 900
   qa_timeout: 900
-  qa_num_ctx: 8192  #16384
-  qa_num_predict: 256 #512
+  qa_num_ctx: 16384   #16384 | 8192
+  qa_num_predict: 256 #512 | 256
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
@@ -92,7 +92,7 @@ runtime:
   faiss_expected_model: kaggle # kaggle | runtime | ollama | llamacpp
 
 answer_style:
-  max_build_recommendations: 3 #5
+  max_build_recommendations: 5 #5
 
 answer_context:
   lookup_max_chunks: 6
@@ -167,19 +167,20 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  model: llama3.2:3b
+  draft_model: qwen3:8b  #llama3.2:3b | qwen3:8b | gemma3:12b
+  answer_model: gemma3:12b  #llama3.2:3b | qwen3:8b | gemma3:12b
 
   retriever: hybrid
   backend: ollama
-  direct_top_k: 25
+  direct_top_k: 50
   require_positive_document: true
 
-  workers: 2
-  max_inflight: 4
+  workers: 32          #2 - 32
+  max_inflight: 30     #4 - 30
   preserve_output_order: true
 
-  limit: 1000
-  qa_per_chunk: 2
+  limit: 10
+  qa_per_chunk: 5 #2-10
   min_chars: 500
   max_chars: 2500
   seed: 1337
@@ -196,7 +197,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: llama3.2:3b
+  validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b
   negative_validation_confidence: 0.80
   negative_sft_per_positive: 1
 
