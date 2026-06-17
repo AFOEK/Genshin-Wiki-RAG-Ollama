@@ -10,65 +10,65 @@ This project data sources are pulled from [Genshin Impact Fandom Wiki](https://g
 
 ## Dependency
 Before start to use this repos, this project required some packages (Debian based build):
-```
+```shell
 sudo apt install git curl ca-certificates python3 python3-venv python3-pip sqlite3 build-essential pkg-config libxml2-dev libxslt1-dev liblz4-dev zlib1g-dev libffi-dev libssl-dev unzip jq libvulkan-dev glslc libopenblas-dev -y
 ```
 After that clone this github:
-```
+```shell
 git clone https://github.com/AFOEK/Genshin-Wiki-RAG-Ollama.git && cd Genshin-Wiki-RAG-Ollama
 ```
 setup python3 virtual environment using venv:
-```
+```shell
 python3 -m venv .venv
 ```
 and start the virtual environments:
-```
+```shell
 source .venv/bin/activate
 ```
 With python venv already activated install all python requirements by running:
-```
+```shell
 pip install -r requirements.txt
 ```
 or setup python3 virtual environment using conda:
-```
+```shell
 conda env create -f environment.yml
 ```
 and start conda environment:
-```
+```shell
 conda activate rag
 ```
 
 ### Ollama server setup
 This project need Ollama server to assist on embeddings, for Linux installation:
-```
+```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 Enable Vulkan support:
-```
+```shell
 sudo systemctl edit ollama.service
 ```
 Put one line override:
-```
+```shell
 [Service]
 Environment="OLLAMA_VULKAN=1"
 ```
 Reload the Ollama service:
-```
+```shell
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
 For Windows installation:
-```
+```PowerShell
 irm https://ollama.com/install.ps1 | iex
 ```
 For add Vulkan support by set user enviroment variable:
-```
+```PowerShell
 OLLAMA_VULKAN=1
 ```
 Then close Ollama from the system tray and start it again.
 After that pull appropiate Ollama model:
-```
+```PowerShell
 # Chat model (pick one)
 ollama pull llama3.2:3b
 # Embedding model
@@ -80,31 +80,31 @@ The model isn't fix, this project can use other model depends with users require
 
 ### Llama.cpp server setup
 Clone the llama.cpp repository:
-```
+```shell
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 ```
 CPU build only:
-```
+```shell
 cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
 cmake --build build --config Release -j"$(nproc)"
 ```
 Vulkan support:
-```
+```shell
 cmake -B build -DGGML_VULKAN=1
 cmake --build build --config Release -j"$(nproc)"
 ```
 CUDA support:
-```
+```shell
 cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release -j"$(nproc)"
 ```
 ARM® KleidiAI support [^2]:
-```
+```shell
 cmake -B build -DGGML_CPU_KLEIDIAI=ON
 cmake --build build --config Release -j"$(nproc)"
 ```
 Combined build:
-```
+```shell
 cmake -B build -DGGML_CPU_KLEIDIAI=ON -DGGML_VULKAN=1 -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
 cmake --build build --config Release -j"$(nproc)"
 ```
@@ -119,39 +119,39 @@ There are 2 options for installing FAISS:
 Both of the method are good to make it works, but this project preferred using source build FAISS.
 
 #### Python FAISS installation
-```
+```shell
 pip install -U faiss-cpu
 ```
 
 #### Source build FAISS installation
 Before running the installation make sure all packages are installed (Debian based build):
-```
+```shell
 sudo apt update && sudo apt install -y git cmake build-essential pkg-config python3-dev python3-venv libopenblas-dev liblapack-dev swig
 ```
 clone FAISS github:
-```
+```shell
 git clone https://github.com/facebookresearch/faiss.git && cd faiss
 ```
 and build the FAISS itself:
-```
+```shell
 cmake -B build -DFAISS_ENABLE_PYTHON=ON -DFAISS_ENABLE_GPU=OFF -DBUILD_TESTING=OFF -DFAISS_ENABLE_C_API=OFF -DFAISS_ENABLE_OPENMP=ON -DBLA_VENDOR=OpenBLAS
 ```
 if target build has GPU, FAISS itself support GPU by turn on:
-```
+```shell
 ...
 -DFAISS_ENABLE_GPU=ON 
 ...
 ```
 Run the build script by executing:
-```
+```shell
 cmake --build build -j4
 ```
 after it finish, build the python library:
-```
+```shell
 cd build/faiss/python && pip install .
 ```
 Sanity check for installation can be done by executing:
-```
+```shell
 python -c "import faiss, numpy as np; print('faiss ok'); print('version:', getattr(faiss,'version','(no version)'))"
 ```
 
@@ -160,38 +160,38 @@ python -c "import faiss, numpy as np; print('faiss ok'); print('version:', getat
 Windows FAISS build is fragile especially for FAISS-GPU build
 
 Before using the python script, make sure `Winget` already installed by running:
-```
+```PowerShell
 winget -v
 ```
 After that install MiniConda:
-```
+```PowerShell
 winget install Anaconda.MiniConda3
 winget install SQLite.SQLite
 ```
-Make sure that `conda` is recognized by the powershell by running:
-```
-& "$env:USERPROFILE\miniconda3\Scripts\conda.exe" init powershell
+Make sure that `conda` is recognized by the PowerShell by running:
+```PowerShell
+& "$env:USERPROFILE\miniconda3\Scripts\conda.exe" init PowerShell
 ```
 Then create virtual environment using `conda`:
-```
+```PowerShell
 conda create -n rag python=3.13.4
 ```
 activate the virtual environment:
-```
+```PowerShell
 conda activate rag
 ```
 Install FAISS first:
-```
+```PowerShell
 # FAISS CPU only
 conda install -c conda-forge faiss-cpu
 ```
 or
-```
+```PowerShell
 # FAISS GPU Support
 conda install -c pytorch faiss-gpu
 ```
 Finally install the rest python dependency:
-```
+```PowerShell
 pip install -r requirements.txt
 ```
 
@@ -203,7 +203,7 @@ Before using the python script, inside [config.yaml](rag/config.yaml) there are 
 
 ## Usage
 The main entry of the script is `main.py`, in the script it has options can be used, below is the default values:
-```
+```shell
 --DB_CRAWL=True
 --DB_AUDIT=True
 --DB_REPAIR=False 
@@ -226,34 +226,34 @@ Where `--DB_CRAWL` it will pull all the data from all datasource and store the e
 > [!WARNING]
 Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
 
-```
+```shell
 # Crawl + DB Audit
 python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=False --TURBOVEC_OVERWRITE=False --TURBOVEC_AUDIT=False --PARENT_SYNC=True --BACKEND=ollama
 ```
-```
+```shell
 # Migrate + Audit FAISS
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True --BACKEND=ollama
 ```
-```
+```shell
 # Migrate + Audit TurboVec
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True
 ```
-```
+```shell
 # DB Repair + DB Audit
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --BACKEND=ollama
 ```
-```
+```shell
 # Full pipeline
 python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND ollama
 ```
 
 ## QnA Test
 If all crawling, chunking, and embedding have done, user can test the RAG by running:
-```
+```shell
 python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
 ```
 It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
-```
+```shell
 --config rag/config.yaml                        #default value: rag/config.yaml
 --retriever {sqlite, faiss, bm25, hybrid, turbovec, hybrid_turbovec}   #default value: hybrid
 --direct_top_k 8-32                             #default value: 12
@@ -263,7 +263,7 @@ It can recieve query and generate output depends what user ask. In the `test.py`
 ```
 
 Example usage:
-```
+```shell
 python3 rag/test.py --retriever hybrid --backend ollama --direct_top_k 20 --question "What is ZhongLi signature weapon?"
 ```
 
@@ -274,7 +274,7 @@ Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml
 - `parent_child`
 The values can be changed, it will control the behavior of the retrievers.
 
-> [!INFO]
+> [!NOTE]
 In reranker `cross_encoder_model` value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model.
 
 ## Kaggle Embedding Support
@@ -288,17 +288,17 @@ To access Kaggle API, it can use API Tokens but for the sake of simplicity , thi
 
 ### Upload to kaggle
 After Kaggle API has been stored, before upload to the Kaggle itself. It required to run before hand:
-```
+```shell
 python3 kaggle_tools/extract_chunks.py
 ```
 It will extract all documents chunks and export it to `chunks.jsonl`. After that run:
-```
+```shell
 python3 kaggle_tools/upload.py --dataset_slug <YOUR_KAGGLE_USERNAME>/<GENSHIN_CHUNKS_NAME>
 ```
 
 ## One-for-all script
 This project provide a script to run as cron job or general usages, the script itself named [`./run_pipeline.sh`](./run_pipeline.sh). To setup the cron job:
-```
+```shell
 crontab -e #choose your favorite text editor (use nano)
 
 ##Add to a new line assume that the repos is on Documents
@@ -315,7 +315,7 @@ Since current project state is on crawling and embedding all the game data, isn'
 
 ### Dataset creations
 In order to train PEFT, it needs a trainable dataset, which can be generated by using [`fine_tune/dataset_creation.py`](fine_tune/dataset_creation.py). It will create `.jsonl` dataset, and it's controlled by [`rag/config.yaml`](rag/config.yaml) on dataset_creation tags. It's support multi-threading, which can be controlled in `workers` and `max_inflight` values. `limit` value can be ysed for controlling how many dataset will be created. The python scripts itself support command-line arguments such as:
-```
+```shell
 --config            #default value: rag/config.yaml
 --db                #default value: None
 --out               #default value: None
@@ -331,13 +331,13 @@ In order to train PEFT, it needs a trainable dataset, which can be generated by 
 ```
 The script will produce `genshin_double_negative_pairs.jsonl`, `genshin_rag_sft_candidates.jsonl`, `genshin_rejected.jsonl`, `genshin_retrieval_pairs.jsonl`, `genshin_sft_negative_answerability.jsonl`. All the `.jsonl` file except `genshin_rejected.jsonl` and `genshin_sft_negative_answerability.jsonl` can be used for PEFT training.
 
-```
+```shell
 #Example usage
 python3 dataset_creation.py --model ollama --limit 10 --qa-per-chunks 5 --seed 102 --sources "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"
 ```
 
 ## To-do list
-- [ ] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
+- [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
 - [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
 - [x] Add Vulkan and other accelerator support.
 - [x] Llama.cpp support.
@@ -353,12 +353,13 @@ python3 dataset_creation.py --model ollama --limit 10 --qa-per-chunks 5 --seed 1
 - [x] Reranker support.
 - [x] Dense similarity search.
 - [x] Hybrid BM25 and FAISS reranker.
-- [x] TurboVec reranked support
+- [x] TurboVec reranked support. [^4]
 - [x] Recency weighting. [^3]
 - [x] Parent-child retriever.
 - [ ] Cache layer retriever.
 
-## Footenote
+## Foot note
 [^1]: It's get processed on Kaggle
 [^2]: ARM architectures only
 [^3]: Partial need more testing
+[^4]: Beta version
