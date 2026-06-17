@@ -167,23 +167,36 @@ class TurboVecRetriever:
         log.info("[TURBOVEC] loaded index dims=%d model=%s count=%d path=%s", self.dims, self.model, self.count, self.index_path)
 
     def search(self, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
-        if k <= 0:
+        if k <= 0 or self.count <= 0:
             return []
-        
-        q = query_vec.astype(np.float32, copy=False)
+
+        q = np.asarray(query_vec, dtype=np.float32)
+
+        if q.ndim == 1:
+            q = q.reshape(1, -1)
+
+        if q.ndim != 2 or q.shape[0] != 1:
+            raise ValueError(f"TurboVecRetriever expects one query with shape (1, dims), got {q.shape}")
+
+        if q.shape[1] != self.dims:
+            raise ValueError(f"TurboVec query dimension mismatch: expected {self.dims}, got {q.shape[1]}")
+
+        norm = np.linalg.norm(q, axis=1, keepdims=True)
+        q = np.ascontiguousarray(q / np.maximum(norm, 1.0e-12), dtype=np.float32)
+        k = min(int(k), self.count)
 
         try:
-            log.info("[TURBOVEC] 2D index search")
             scores, ids = self.index.search(q, k=k)
-        except Exception:
-            log.info("[TURBOVEC] 1D index search")
-            scores, ids = self.index.search(q.reshape(-1), k=k)
+        except (TypeError, ValueError):
+            scores, ids = self.index.search(q[0], k=k)
 
-        scores = np.asarray(scores).reshape(-1)
-        ids = np.asarray(ids).reshape(-1)
+        scores = np.asarray(scores)
+        ids = np.asarray(ids)
 
-        out = []
-        for cid, score in zip(ids, scores):
-            out.append((int(cid), float(score)))
+        if scores.ndim == 2:
+            scores = scores[0]
 
-        return out
+        if ids.ndim == 2:
+            ids = ids[0]
+
+        return [(int(cid), float(score)) for cid, score in zip(ids, scores) if int(cid) >= 0]

@@ -156,6 +156,8 @@ turbovec:
   path: data/turbovec
   bit_width: 4
   batch_size: 4096
+  calibration_size: 50000
+  normalize: true
   model_source: runtime   # runtime | kaggle | ollama | llamacpp
   model_mismatch: warn   # error | warn | ignore
 
