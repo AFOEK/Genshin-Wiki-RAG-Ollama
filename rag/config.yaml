@@ -12,7 +12,7 @@ ollama:
   timeout: 900
   qa_timeout: 900
   qa_num_ctx: 16384   #16384 | 8192
-  qa_num_predict: 256 #512 | 256
+  qa_num_predict: 512 #512 | 256
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
@@ -92,7 +92,7 @@ runtime:
   faiss_expected_model: kaggle # kaggle | runtime | ollama | llamacpp
 
 answer_style:
-  max_build_recommendations: 5 #5
+  max_build_recommendations: 5 #3-5
 
 answer_context:
   lookup_max_chunks: 6
@@ -154,7 +154,7 @@ faiss:
 
 turbovec:
   path: data/turbovec
-  bit_width: 4
+  bit_width: 4  #2 | 4
   batch_size: 4096
   calibration_size: 50000
   normalize: true
@@ -181,7 +181,7 @@ dataset_creation:
   max_inflight: 30     #4 - 30
   preserve_output_order: true
 
-  limit: 10
+  limit: 500
   qa_per_chunk: 5 #2-10
   min_chars: 500
   max_chars: 2500
@@ -200,7 +200,7 @@ dataset_creation:
 
   validate_negatives: true
   validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b
-  negative_validation_confidence: 0.80
+  negative_validation_confidence: 0.85
   negative_sft_per_positive: 1
 
   sources:
