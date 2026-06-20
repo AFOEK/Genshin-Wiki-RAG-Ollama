@@ -14,20 +14,8 @@ log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 GAME8_NOISE_SELECTORS = (
-    ".c-commentItem__container--padding-sp",
-    ".c-commentItem__header",
-    ".c-commentItem__body",
-    "a[href*='/comments']",
-    "[data-track-mario-keyword*='comment']",
-    "#comments",
-    ".comments",
-    ".comment-list",
-    ".comment-thread",
-    ".reply",
-    ".replies",
-    ".discussion",
-    ".message-board",
-    "img[src^='data:image']",
+    ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", ".comments", ".comment-list", ".comment-thread", ".reply", ".replies", ".discussion", ".message-board",
+    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside",
 )
 
 def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
@@ -42,51 +30,18 @@ def drop_game8_noise(root) -> None:
         for node in list(root.select(selector)):
             node.decompose()
 
-    membership_heading = ("what can you do as a free member")
+    membership_markers = ("what can you do as a free member", "create your free account today", "article watchlist", "game bookmarks", "cross-device sync", "premium articles", "site interface", "game tools")
 
-    for heading in list(root.find_all(["h1", "h2", "h3", "h4"])):
-        heading_text = heading.get_text(" ", strip=True).lower()
+    for node in list(root.find_all(["h1", "h2", "h3", "h4", "section", "aside", "dialog", "div"])):
+        node_text = node.get_text(" ", strip=True).lower()
 
-        if membership_heading not in heading_text:
+        if len(node_text) > 12_000:
             continue
 
-        container = None
-        for parent in heading.parents:
-            if parent is root:
-                break
+        hits = sum(marker in node_text for marker in membership_markers)
 
-            if parent.name not in {"dialog", "section", "aside", "div"}:
-                continue
-
-            parent_text = parent.get_text(
-                " ",
-                strip=True,
-            ).lower()
-
-            if len(parent_text) > 12_000:
-                break
-
-            membership_hits = sum(
-                phrase in parent_text
-                for phrase in (
-                    "create your free account today",
-                    "article watchlist",
-                    "game bookmarks",
-                    "cross-device sync",
-                    "comment rating",
-                    "premium articles",
-                    "continue as a guest",
-                )
-            )
-
-            if membership_hits >= 3:
-                container = parent
-                break
-
-        if container is not None:
-            container.decompose()
-        else:
-            heading.decompose()
+        if hits >= 3:
+            node.decompose()
 
 def find_game8_article_root(soup: BeautifulSoup):
     selectors = (
@@ -154,19 +109,24 @@ def is_low_value_game8_text(text: str) -> bool:
         "cross-device sync",
         "comment rating",
         "premium articles",
+        "site interface",
+        "game tools",
+        "interactive map pins",
+        "build planner",
+        "stat calculator",
+        "diagnostic tool",
+        "weapon/armor wishlist",
     )
 
     bad_hits = sum(phrase in lowered for phrase in bad_phrases)
 
-    article_signals = (
-        "last updated on",
-        "list of contents",
-        "genshin impact",
-    )
+    if bad_hits >= 3:
+        return True
 
-    has_article_signal = any(signal in lowered for signal in article_signals)
+    if "what can you do as a free member" in lowered:
+        return True
 
-    if (bad_hits >= 3 and len(normalized) < 6_000 and not has_article_signal):
+    if "create your free account today" in lowered and "article watchlist" in lowered:
         return True
 
     return False
@@ -246,6 +206,10 @@ def html_to_text(html: str, url: str | None = None) -> str:
             return ""
 
         drop_game8_noise(main)
+        main_preview = main.get_text(" ", strip=True)
+        if is_low_value_game8_text(main_preview):
+            log.warning("[GAME8] rejected low-value article root url=%s chars=%d", url, len(main_preview))
+            return ""
 
     else:
         for tag in soup(
