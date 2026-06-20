@@ -2,6 +2,7 @@
 __pycache__/
 rag/data/repos/*
 rag/chunks_kaggle
+rag/data/*
 *.db
 *.db-*
 *.log
