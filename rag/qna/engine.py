@@ -23,7 +23,7 @@ _RETRIEVAL_CACHE : RetrievalCache | None = None
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     global _RETRIEVAL_CACHE
     cache_cfg = cfg.get("retrieval_cache", {}) or {}
-    if not as_bool(cache_cfg.get("enable"), False):
+    if not as_bool(cache_cfg.get("enable", False)):
         return None
     
     if _RETRIEVAL_CACHE is None:

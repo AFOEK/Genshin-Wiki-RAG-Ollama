@@ -333,7 +333,7 @@ The script will produce `genshin_double_negative_pairs.jsonl`, `genshin_rag_sft_
 
 ```shell
 #Example usage
-python3 dataset_creation.py --model ollama --limit 10 --qa-per-chunks 5 --seed 102 --sources "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"
+python3 dataset_creation.py --model ollama --limit 10 --qa-per-chunk 5 --seed 102 --sources "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"
 ```
 
 ## To-do list
