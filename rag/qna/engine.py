@@ -223,7 +223,29 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         bm25_results = search_bm25(k)
         signals = build_hybrid_signal(tv_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
+        return results, signals
+    
+    def search_hybrid_all(k: int):
+        faiss_ret = get_faiss_ret()
+        tv_ret = get_turbovec_ret()
+        q_vec = get_q_vec(faiss_ret)
 
+        if faiss_ret.dims != tv_ret.dims:
+            raise RuntimeError(f"FAISS/TurboVec dimension mismatch: faiss={faiss_ret.dims} turbovec={tv_ret.dims}")
+
+        faiss_results = faiss_ret.search(q_vec, k)
+        tv_results = tv_ret.search(q_vec, k)
+        bm25_results = search_bm25(k)
+
+        signals = build_three_way_signal(
+            faiss_results,
+            tv_results,
+            bm25_results,
+            rrf_k=rrf_k,
+            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)),
+        )
+
+        results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
 
     try:
@@ -260,6 +282,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             log.info("[QNA] using HYBRID retriever (TurboVec + BM25)")
             retriever = None
             results, retrieval_signals = search_hybrid_turbovec(candidate_k)
+        elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
+            log.info("[QNA] using HYBRID retriever (FAISS + TurboVec + BM25)")
+            retriever = None
+            results, retrieval_signals = search_hybrid_all(candidate_k)
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -288,6 +314,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "semantic")
             elif retriever_name == "hybrid_turbovec":
                 deep_results, retrieval_signals = search_hybrid_turbovec(deep_k)
+            elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
+                deep_results, retrieval_signals = search_hybrid_all(deep_k)
             else:
                 raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -518,6 +546,54 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
     cache.set(cache_key, retrieval_result_to_cache(result))
     log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
     return result
+
+def build_three_way_signal(faiss_results: list[tuple[int, float]], turbovec_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]], *, rrf_k: int = 60, rrf_scale: float = 10.0) -> dict[int, dict]:
+    signals: dict[int, dict] = {}
+
+    def ensure(cid: int) -> dict:
+        if cid not in signals:
+            signals[cid] = {
+                "rrf_score": 0.0,
+                "faiss_score": 0.0,
+                "turbovec_score": 0.0,
+                "bm25_score": 0.0,
+                "faiss_rank": None,
+                "turbovec_rank": None,
+                "bm25_rank": None,
+                "in_faiss": False,
+                "in_turbovec": False,
+                "in_bm25": False,
+            }
+        return signals[cid]
+
+    for rank, (cid, score) in enumerate(faiss_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["faiss_score"] = float(score)
+        s["faiss_rank"] = rank
+        s["in_faiss"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, (cid, score) in enumerate(turbovec_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["turbovec_score"] = float(score)
+        s["turbovec_rank"] = rank
+        s["in_turbovec"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, (cid, score) in enumerate(bm25_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["bm25_score"] = float(score)
+        s["bm25_rank"] = rank
+        s["in_bm25"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for s in signals.values():
+        s["rrf_score"] *= rrf_scale
+
+    return signals
 
 def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[dict], *, max_total: int, max_per_doc: int = 4) -> list[dict]:
     max_total = max(int(max_total), len(seed_chunks))

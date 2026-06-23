@@ -51,6 +51,7 @@ REFUSAL_MARKERS = (
 NEGATIVE_VALIDATION_SCHEMA = {"type": "object", "properties": {"question_answerable": {"type": "boolean"}, "supports_reference_answer": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0}, "reason": {"type": "string"}}, "required": ["question_answerable", "supports_reference_answer", "confidence", "reason"], "additionalProperties": False}
 
 _worker_local = threading.local()
+_ollama_semaphore = threading.BoundedSemaphore(2)
 
 @dataclass
 class ChunkTaskResult:
@@ -198,6 +199,9 @@ def cfg_float(x, default: float) -> float:
         return default
     return float(x)
 
+def resolve_user_path(value: str | Path) -> Path:
+        path = Path(str(value)).expanduser()
+        return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
 def cfg_sources(x, default: str) -> list[str]:
     if x is None:
@@ -222,15 +226,17 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
         "model": model, 
         "prompt": prompt, 
         "stream": False,
-        "think": False, 
+        "think": False,
+        "keep_alive": "10m", 
         "options": {
             "temperature": temperature, 
             "top_p": 0.9}
     }
     if response_format is not None: 
         payload["format"] = response_format
-    response = get_worker_http_session().post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
-    response.raise_for_status()
+    with _ollama_semaphore:
+        response = get_worker_http_session().post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
+        response.raise_for_status()
     answer = str(response.json().get("response", "")).strip()
     if not answer: 
         raise ValueError("Ollama returned an empty response")
@@ -1119,6 +1125,14 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--sources", default=None)
     ap.add_argument("--sleep", type=float, default=None)
+    ap.add_argument("--make-negatives", action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument("--retrieval-pairs-out", default=None)
+    ap.add_argument("--double-negative-out", default=None)
+    ap.add_argument("--sft-negative-out", default=None)
+    ap.add_argument("--hard-negatives", type=int, default=None)
+    ap.add_argument("--easy-negatives", type=int, default=None)
+    ap.add_argument("--negative-pool-size", type=int, default=None)
+    ap.add_argument("--negative-text-chars", type=int, default=None)
 
     args = ap.parse_args()
 
@@ -1144,11 +1158,11 @@ def main() -> None:
     args.seed = cfg_int(args.seed, cfg_int(ds_cfg.get("seed"), 1337))
     args.sleep = cfg_float(args.sleep, cfg_float(ds_cfg.get("sleep"), 0.0))
 
-    make_negatives = cfg_bool(ds_cfg.get("make_negatives"), False)
-    hard_negative_count = cfg_int(ds_cfg.get("hard_negatives"), 2)
-    easy_negative_count = cfg_int(ds_cfg.get("easy_negatives"), 2)
-    negative_pool_size = cfg_int(ds_cfg.get("negative_pool_size"), 20)
-    negative_text_chars = cfg_int(ds_cfg.get("negative_text_chars"), 1400)
+    make_negatives = cfg_bool(args.make_negatives, cfg_bool(ds_cfg.get("make_negatives"), False))
+    hard_negative_count = cfg_int(args.hard_negatives, cfg_int(ds_cfg.get("hard_negatives"), 2))
+    easy_negative_count = cfg_int(args.easy_negatives, cfg_int(ds_cfg.get("easy_negatives"), 2))
+    negative_pool_size = cfg_int(args.negative_pool_size, cfg_int(ds_cfg.get("negative_pool_size"), 20))
+    negative_text_chars = cfg_int(args.negative_text_chars, cfg_int(ds_cfg.get("negative_text_chars"), 1400))
     draft_model = str(ds_cfg.get("draft_model") or default_model).strip()
     answer_model = str(ds_cfg.get("answer_model") or default_model).strip()
     validator_model = str(ds_cfg.get("validator_model") or answer_model).strip()
@@ -1159,22 +1173,48 @@ def main() -> None:
     preserve_output_order = cfg_bool(ds_cfg.get("preserve_output_order"), True)
     request_timeout = cfg_int(ds_cfg.get("request_timeout"), 600)
 
-    db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg))
-    cfg["db_path"] = str(db_path)
-    log.info("[DATASET] workers=%d max_inflight=%d preserve_order=%s", workers, max_inflight, preserve_output_order)
+    db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).expanduser()
+    default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
-    out_dir = resolve_output_path(ds_cfg.get("out_dir", "data/training"), cfg)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.out:
+        out_arg = resolve_user_path(args.out)
+        if out_arg.suffix:
+            out_path = out_arg
+            out_dir = out_path.parent
+        else:
+            out_dir = out_arg
+            out_path = out_dir / default_filename
+    else:
+        configured_out_dir = ds_cfg.get("out_dir")
+        if configured_out_dir:
+            out_dir = resolve_user_path(configured_out_dir)
+        else:
+            out_dir = db_path.parent / "training"
+        out_path = out_dir / default_filename
 
-    out_path = (resolve_output_path(args.out, cfg) if args.out else out_dir / ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
-    rejected_path = out_dir / ds_cfg.get("rejected_out", "genshin_rejected.jsonl")
-    rejected_path.parent.mkdir(parents=True, exist_ok=True)
+    rejected_path = out_dir / str(ds_cfg.get("rejected_out", "genshin_rejected.jsonl"))
+    retrieval_pairs_path = out_dir / str(ds_cfg.get("retrieval_pairs_out", "genshin_retrieval_pairs.jsonl"))
+    double_negative_path = out_dir / str(ds_cfg.get("double_negative_out", "genshin_double_negative.jsonl"))
+    sft_negative_path = out_dir / str(ds_cfg.get("sft_negative_out", "genshin_sft_negative_answerability.jsonl"))
 
-    retrieval_pairs_path = out_dir / ds_cfg.get("retrieval_pairs_out", "genshin_retrieval_pairs.jsonl")
-    double_negative_path = out_dir / ds_cfg.get("double_negative_out", "genshin_double_negative_pairs.jsonl")
-    sft_negative_path = out_dir / ds_cfg.get("sft_negative_out", "genshin_sft_negative_answerability.jsonl")
-    
+    retrieval_pairs_arg = getattr(args, "retrieval_pairs_out", None)
+    double_negative_arg = getattr(args, "double_negative_out", None)
+    sft_negative_arg = getattr(args, "sft_negative_out", None)
+
+    if retrieval_pairs_arg:
+        retrieval_pairs_path = resolve_user_path(retrieval_pairs_arg)
+
+    if double_negative_arg:
+        double_negative_path = resolve_user_path(double_negative_arg)
+
+    if sft_negative_arg:
+        sft_negative_path = resolve_user_path(sft_negative_arg)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    rejected_path.parent.mkdir(parents=True, exist_ok=True)
+    retrieval_pairs_path.parent.mkdir(parents=True, exist_ok=True)
+    double_negative_path.parent.mkdir(parents=True, exist_ok=True)
+    sft_negative_path.parent.mkdir(parents=True, exist_ok=True)
 
     sources = cfg_sources(args.sources, ds_cfg.get("sources", "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"))
 
@@ -1208,7 +1248,7 @@ def main() -> None:
 
     log.info(f"[LORA_CONFIG] db={db_path}")
     log.info(f"[LORA_CONFIG] out={out_path}")
-    log.info(f"[LORA_CONFIG] model={args.model}")
+    log.info("[LORA_CONFIG] draft_model=%s answer_model=%s validator_model=%s", draft_model, answer_model, validator_model)
     log.info(f"[LORA_CONFIG] sources={sources}")
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -1280,7 +1320,10 @@ def main() -> None:
         if retriever_name in {
             "faiss",
             "hybrid",
+            "turbovec",
             "hybrid_turbovec",
+            "hybrid_all",
+            "hybrid_faiss_turbovec",
         }:
             log.info("[DATASET] Warming retrieval index")
 
@@ -1289,7 +1332,7 @@ def main() -> None:
                     cfg,
                     "Who is Venti?",
                     retriever_name=retriever_name,
-                    direct_top_k=10,
+                    direct_top_k=25,
                     backend=backend,
                 )
             except Exception as exc:

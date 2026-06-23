@@ -170,7 +170,7 @@ turbovec:
 
 dataset_creation:
   db_path: null
-  out_dir: data/training
+  out_dir: rag/data/training
 
   sft_out: genshin_rag_sft_candidates.jsonl
   rejected_out: genshin_rejected.jsonl
@@ -188,8 +188,8 @@ dataset_creation:
   max_inflight: 30     #4 - 30
   preserve_output_order: true
 
-  limit: 500
-  qa_per_chunk: 5 #2-10
+  limit: 100
+  qa_per_chunk: 2 #2-10
   min_chars: 500
   max_chars: 2500
   seed: 1337

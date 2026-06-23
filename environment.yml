@@ -50,3 +50,5 @@ dependencies:
       - sentence-transformers
       - kaggle
       - kagglesdk
+      - pennylane
+      - pennylane-lightning
