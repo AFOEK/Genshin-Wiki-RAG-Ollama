@@ -1,478 +1,213 @@
-# Genshin Impact Wiki Ollama RAG
+# Genshin Impact Wiki Ollama RAG (Retrieval-Augmented Generation)
 
-A local Retrieval-Augmented Generation (RAG) pipeline for answering questions about **Genshin Impact** using crawled/wiki-style game data, local LLM backends, dense retrieval, lexical retrieval, reranking, and optional PEFT dataset generation.
+## Introduction
+With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
+- Python 3.13.13
+- Sqlite3 3.46.1
+- FAISS (Facebook AI Similarity Search) 1.13.2
 
-The project currently supports data ingestion from multiple Genshin-related sources, stores processed chunks in SQLite, builds searchable vector indexes with FAISS or TurboVec, and queries the data through Ollama or llama.cpp.
+This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scraping.
 
----
-
-## Table of Contents
-
-- [Genshin Impact Wiki Ollama RAG](#genshin-impact-wiki-ollama-rag)
-  - [Table of Contents](#table-of-contents)
-  - [Overview](#overview)
-  - [Features](#features)
-  - [Tech Stack](#tech-stack)
-  - [Data Sources](#data-sources)
-  - [Installation](#installation)
-    - [Debian / Ubuntu Dependencies](#debian--ubuntu-dependencies)
-    - [Clone the Repository](#clone-the-repository)
-    - [Python Environment](#python-environment)
-      - [Option 1: venv](#option-1-venv)
-      - [Option 2: conda](#option-2-conda)
-  - [Backend Setup](#backend-setup)
-    - [Ollama Setup](#ollama-setup)
-      - [Linux Installation](#linux-installation)
-      - [Windows Installation](#windows-installation)
-    - [llama.cpp Setup](#llamacpp-setup)
-      - [CPU-only Build](#cpu-only-build)
-      - [Vulkan Build](#vulkan-build)
-      - [CUDA Build](#cuda-build)
-      - [ARM KleidiAI Build](#arm-kleidiai-build)
-      - [Combined Build](#combined-build)
-  - [FAISS Installation](#faiss-installation)
-    - [Install FAISS with pip](#install-faiss-with-pip)
-    - [Build FAISS from Source](#build-faiss-from-source)
-  - [Windows Setup](#windows-setup)
-  - [Configuration](#configuration)
-  - [Usage](#usage)
-    - [Main Pipeline Flags](#main-pipeline-flags)
-    - [Common Pipeline Commands](#common-pipeline-commands)
-      - [Crawl + DB Audit](#crawl--db-audit)
-      - [Migrate + Audit FAISS](#migrate--audit-faiss)
-      - [Migrate + Audit TurboVec](#migrate--audit-turbovec)
-      - [DB Repair + DB Audit](#db-repair--db-audit)
-      - [Full Pipeline](#full-pipeline)
-  - [Q\&A Testing](#qa-testing)
-  - [Kaggle Embedding Support](#kaggle-embedding-support)
-    - [Kaggle Setup](#kaggle-setup)
-    - [Upload Chunks to Kaggle](#upload-chunks-to-kaggle)
-  - [Automated Pipeline Script](#automated-pipeline-script)
-  - [PEFT Dataset Generation](#peft-dataset-generation)
-    - [Model Dependencies](#model-dependencies)
-    - [Dataset Creation](#dataset-creation)
-  - [To-do List](#to-do-list)
-  - [Footnotes](#footnotes)
-
----
-
-## Overview
-
-Genshin Impact has a large and constantly growing set of characters, weapons, artifacts, books, regions, enemies, quests, and item records. This project builds a local RAG system over that information so a small local language model can answer game-related questions with retrieved context instead of relying only on its internal knowledge.
-
-The default local setup uses:
-
-- **Chat model:** `llama3.2:3b`
-- **Embedding model:** `all-minilm`
-- **Database:** SQLite
-- **Vector search:** FAISS and/or TurboVec
-- **Lexical search:** FTS5 / BM25
-- **Backends:** Ollama and llama.cpp
-
-The model choices are configurable. Larger models and stronger embedding models can be used if your hardware allows it.
-
----
-
-## Features
-
-- Multi-source Genshin data crawling.
-- SQLite-based document, chunk, and embedding storage.
-- FAISS dense vector search.
-- TurboVec retrieval support.
-- FTS5 / BM25 lexical search.
-- Hybrid retrieval with dense + lexical ranking.
-- Cross-encoder reranking.
-- Parent-child chunk retrieval.
-- Context expansion.
-- Recency weighting.
-- Ollama backend support.
-- llama.cpp backend support.
-- Kaggle-based embedding generation.
-- PEFT dataset generation for SFT and retrieval-style training data.
-- Cron-compatible pipeline runner.
-
----
-
-## Tech Stack
-
-Tested project stack:
-
-| Component | Version / Tool |
-|---|---|
-| Python | 3.13.13 |
-| SQLite | 3.46.1 |
-| FAISS | 1.13.2 |
-| Local LLM backend | Ollama / llama.cpp |
-| Embedding backend | Ollama / external embedding models |
-| Retrieval | SQLite, FAISS, BM25, hybrid, TurboVec |
-
----
-
-## Data Sources
-
-This project pulls data from the following sources:
-
-- [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki)
-- [KeqingMains Theorycrafting](https://keqingmains.com/)
-- [Game8 Genshin Impact](https://game8.co/games/Genshin-Impact)
-- [Genshin.gg](https://genshin.gg/)
-- [Honey Hunter World](https://gensh.honeyhunterworld.com/?lang=EN)
-
-Depending on the source, data may be collected through APIs, GitHub repositories, or web scraping.
-
-> [!WARNING]
-> Do not casually change source filtering settings. Some Genshin-related websites may contain leaked, datamined, beta, or unreleased content. The configuration includes filters intended to reduce that risk.
-
----
-
-## Installation
-
-### Debian / Ubuntu Dependencies
-
-Install the required system packages:
-
-```bash
-sudo apt update
-sudo apt install -y git curl ca-certificates python3 python3-venv python3-pip sqlite3 build-essential pkg-config libxml2-dev libxslt1-dev liblz4-dev zlib1g-dev libffi-dev libssl-dev unzip jq libvulkan-dev glslc libopenblas-dev
+## Dependency
+Before start to use this repos, this project required some packages (Debian based build):
+```shell
+sudo apt install git curl ca-certificates python3 python3-venv python3-pip sqlite3 build-essential pkg-config libxml2-dev libxslt1-dev liblz4-dev zlib1g-dev libffi-dev libssl-dev unzip jq libvulkan-dev glslc libopenblas-dev -y
 ```
-
-### Clone the Repository
-
-```bash
-git clone https://github.com/AFOEK/Genshin-Wiki-RAG-Ollama.git
-cd Genshin-Wiki-RAG-Ollama
+After that clone this github:
+```shell
+git clone https://github.com/AFOEK/Genshin-Wiki-RAG-Ollama.git && cd Genshin-Wiki-RAG-Ollama
 ```
-
-### Python Environment
-
-You can use either `venv` or `conda`.
-
-#### Option 1: venv
-
-Create the environment:
-
-```bash
+setup python3 virtual environment using venv:
+```shell
 python3 -m venv .venv
 ```
-
-Activate it:
-
-```bash
+and start the virtual environments:
+```shell
 source .venv/bin/activate
 ```
-
-Install Python dependencies:
-
-```bash
+With python venv already activated install all python requirements by running:
+```shell
 pip install -r requirements.txt
 ```
-
-#### Option 2: conda
-
-Create the environment from `environment.yml`:
-
-```bash
+or setup python3 virtual environment using conda:
+```shell
 conda env create -f environment.yml
 ```
-
-Activate it:
-
-```bash
+and start conda environment:
+```shell
 conda activate rag
 ```
 
----
-
-## Backend Setup
-
-### Ollama Setup
-
-This project can use an Ollama server for chat generation and embeddings.
-
-#### Linux Installation
-
-Install Ollama:
-
-```bash
+### Ollama server setup
+This project need Ollama server to assist on embeddings, for Linux installation:
+```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
-
-Optional: enable Vulkan support.
-
-```bash
+Enable Vulkan support:
+```shell
 sudo systemctl edit ollama.service
 ```
-
-Add this override:
-
-```ini
+Put one line override:
+```shell
 [Service]
 Environment="OLLAMA_VULKAN=1"
 ```
-
-Reload and restart Ollama:
-
-```bash
+Reload the Ollama service:
+```shell
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
-Pull the default models:
-
-```bash
-# Chat model
-ollama pull llama3.2:3b
-
-# Embedding model
-ollama pull all-minilm
-```
-
-#### Windows Installation
-
-Install Ollama from PowerShell:
-
-```powershell
+For Windows installation:
+```PowerShell
 irm https://ollama.com/install.ps1 | iex
 ```
-
-Optional: enable Vulkan support by setting a user environment variable:
-
-```powershell
+For add Vulkan support by set user enviroment variable:
+```PowerShell
 OLLAMA_VULKAN=1
 ```
-
 Then close Ollama from the system tray and start it again.
-
-Pull the default models:
-
-```powershell
-# Chat model
+After that pull appropiate Ollama model:
+```PowerShell
+# Chat model (pick one)
 ollama pull llama3.2:3b
-
 # Embedding model
 ollama pull all-minilm
 ```
 
 > [!TIP]
-> The model is not fixed. You can use other Ollama models depending on your hardware and accuracy requirements. If you use different models, update the model parameters in [`rag/config.yaml`](rag/config.yaml).
+The model isn't fix, this project can use other model depends with users requirements. If pulled model is differs with guide above, user need to change [config.yaml](rag/config.yaml) model params.
 
----
-
-### llama.cpp Setup
-
+### Llama.cpp server setup
 Clone the llama.cpp repository:
-
-```bash
-git clone https://github.com/ggml-org/llama.cpp
-cd llama.cpp
+```shell
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 ```
-
-#### CPU-only Build
-
-```bash
+CPU build only:
+```shell
 cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
 cmake --build build --config Release -j"$(nproc)"
 ```
-
-#### Vulkan Build
-
-```bash
+Vulkan support:
+```shell
 cmake -B build -DGGML_VULKAN=1
 cmake --build build --config Release -j"$(nproc)"
 ```
-
-#### CUDA Build
-
-```bash
+CUDA support:
+```shell
 cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release -j"$(nproc)"
 ```
-
-#### ARM KleidiAI Build
-
-```bash
+ARM® KleidiAI support [^2]:
+```shell
 cmake -B build -DGGML_CPU_KLEIDIAI=ON
 cmake --build build --config Release -j"$(nproc)"
 ```
-
-#### Combined Build
-
-```bash
+Combined build:
+```shell
 cmake -B build -DGGML_CPU_KLEIDIAI=ON -DGGML_VULKAN=1 -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS
 cmake --build build --config Release -j"$(nproc)"
 ```
-
 > [!TIP]
-> Building llama.cpp with Vulkan or CUDA on Windows can be more fragile than Linux. For Windows, a CPU-only build is usually simpler. See the official [llama.cpp build guide](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) for more details.
+For llama.cpp windows build for Vulkan or CUDA support are more tricky, it's better just build CPU only (without BLAS). More info how to install Llama.cpp using Vulkan or OpenBLAS can be seen in official [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md) github guide.
 
----
+### FAISS Installation
+There are 2 options for installing FAISS:
+- python pip installation
+- source build
 
-## FAISS Installation
+Both of the method are good to make it works, but this project preferred using source build FAISS.
 
-There are two installation options:
-
-1. Install FAISS from Python packages.
-2. Build FAISS from source.
-
-This project prefers a source build when possible, but the pip version is simpler and usually enough for CPU-only use.
-
-### Install FAISS with pip
-
-```bash
+#### Python FAISS installation
+```shell
 pip install -U faiss-cpu
 ```
 
-### Build FAISS from Source
-
-Install build dependencies:
-
-```bash
-sudo apt update
-sudo apt install -y git cmake build-essential pkg-config python3-dev python3-venv libopenblas-dev liblapack-dev swig
+#### Source build FAISS installation
+Before running the installation make sure all packages are installed (Debian based build):
+```shell
+sudo apt update && sudo apt install -y git cmake build-essential pkg-config python3-dev python3-venv libopenblas-dev liblapack-dev swig
 ```
-
-Clone FAISS:
-
-```bash
-git clone https://github.com/facebookresearch/faiss.git
-cd faiss
+clone FAISS github:
+```shell
+git clone https://github.com/facebookresearch/faiss.git && cd faiss
 ```
-
-Configure a CPU build:
-
-```bash
+and build the FAISS itself:
+```shell
 cmake -B build -DFAISS_ENABLE_PYTHON=ON -DFAISS_ENABLE_GPU=OFF -DBUILD_TESTING=OFF -DFAISS_ENABLE_C_API=OFF -DFAISS_ENABLE_OPENMP=ON -DBLA_VENDOR=OpenBLAS
 ```
-
-For GPU support, change:
-
-```bash
--DFAISS_ENABLE_GPU=ON
+if target build has GPU, FAISS itself support GPU by turn on:
+```shell
+...
+-DFAISS_ENABLE_GPU=ON 
+...
 ```
-
-Build FAISS:
-
-```bash
+Run the build script by executing:
+```shell
 cmake --build build -j4
 ```
-
-Install the Python bindings:
-
-```bash
-cd build/faiss/python
-pip install .
+after it finish, build the python library:
+```shell
+cd build/faiss/python && pip install .
+```
+Sanity check for installation can be done by executing:
+```shell
+python -c "import faiss, numpy as np; print('faiss ok'); print('version:', getattr(faiss,'version','(no version)'))"
 ```
 
-Run a sanity check:
-
-```bash
-python -c "import faiss, numpy as np; print('faiss ok'); print('version:', getattr(faiss, 'version', '(no version)'))"
-```
-
----
-
-## Windows Setup
-
+## Windows
 > [!CAUTION]
-> Building FAISS on Windows can be fragile, especially for FAISS-GPU. Conda installation is recommended.
+Windows FAISS build is fragile especially for FAISS-GPU build
 
-Check that `winget` is installed:
-
-```powershell
+Before using the python script, make sure `Winget` already installed by running:
+```PowerShell
 winget -v
 ```
-
-Install Miniconda and SQLite:
-
-```powershell
+After that install MiniConda:
+```PowerShell
 winget install Anaconda.MiniConda3
 winget install SQLite.SQLite
 ```
-
-Initialize conda for PowerShell:
-
-```powershell
+Make sure that `conda` is recognized by the PowerShell by running:
+```PowerShell
 & "$env:USERPROFILE\miniconda3\Scripts\conda.exe" init PowerShell
 ```
-
-Create a conda environment:
-
-```powershell
+Then create virtual environment using `conda`:
+```PowerShell
 conda create -n rag python=3.13.4
 ```
-
-Activate it:
-
-```powershell
+activate the virtual environment:
+```PowerShell
 conda activate rag
 ```
-
-Install FAISS:
-
-```powershell
-# CPU-only FAISS
+Install FAISS first:
+```PowerShell
+# FAISS CPU only
 conda install -c conda-forge faiss-cpu
 ```
-
-Or, for GPU support:
-
-```powershell
-# GPU FAISS
+or
+```PowerShell
+# FAISS GPU Support
 conda install -c pytorch faiss-gpu
 ```
-
-Install the remaining Python dependencies:
-
-```powershell
+Finally install the rest python dependency:
+```PowerShell
 pip install -r requirements.txt
 ```
 
----
-
 ## Configuration
-
-The main configuration file is:
-
-```text
-rag/config.yaml
-```
-
-Configurable sections include:
-
-- Storage paths.
-- Ollama models.
-- llama.cpp backend settings.
-- FAISS index type and search metrics.
-- Pipeline chunk size and overlap.
-- Threading worker counts.
-- Retrieval settings.
-- Cross-encoder settings.
-- Context expansion settings.
-- Parent-child retrieval settings.
-- Dataset generation settings.
-
 > [!WARNING]
-> Avoid changing source-level filtering unless you know what you are doing. These settings help control which sources are crawled and help filter leaked, beta, unreleased, or datamined information.
+Don't change sources configuration params, since some of the sources may or may not have leaked or datamined game data.
 
----
+Before using the python script, inside [config.yaml](rag/config.yaml) there are some config can be changed, like `storage` path, `ollama` models, `faiss` index and metrics, `pipeline` chunks size, and `threading` workers. For other configurations are the best let them be, since it govern the data sources, and filters for `datamined` or `leaked` game informations.
 
 ## Usage
-
-The main pipeline entry point is:
-
-```bash
-python3 rag/main.py
-```
-
-### Main Pipeline Flags
-
-Default-style pipeline options:
-
-```bash
+The main entry of the script is `main.py`, in the script it has options can be used, below is the default values:
+```shell
 --DB_CRAWL=True
 --DB_AUDIT=True
---DB_REPAIR=False
---FAISS_MIGRATE=False
+--DB_REPAIR=False 
+--FAISS_MIGRATE=False 
 --FAISS_AUDIT=False
 --FAISS_OVERWRITE=False
 --TURBOVEC_MIGRATE=False
@@ -484,335 +219,147 @@ Default-style pipeline options:
 --PARENT_REBUILD=False
 --PARENT_SYNC=False
 --PARENT_INIT=False
---BACKEND=ollama
+--BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-
-| Flag | Purpose |
-|---|---|
-| `--DB_CRAWL` | Pull data from configured sources and store processed records in SQLite. |
-| `--DB_AUDIT` | Check whether sources, documents, chunks, and embeddings were processed correctly. |
-| `--DB_REPAIR` | Repair missing embeddings, missing chunks, or missing active records. |
-| `--FAISS_MIGRATE` | Migrate embedding vectors from SQLite to a FAISS index. |
-| `--FAISS_AUDIT` | Check whether FAISS records were processed correctly. |
-| `--FAISS_OVERWRITE` | Overwrite the current FAISS vector database records. |
-| `--TURBOVEC_MIGRATE` | Migrate embeddings to TurboVec. |
-| `--TURBOVEC_AUDIT` | Audit TurboVec records. |
-| `--TURBOVEC_OVERWRITE` | Overwrite the current TurboVec index records. |
-| `--FTS_SYNC` | Sync newly added or changed lexical records to FTS5 / BM25. |
-| `--FTS_INIT` | Initialize FTS5 for a first-time clean run. |
-| `--FTS_REBUILD` | Force rebuild all FTS5 records. |
-| `--PARENT_REBUILD` | Force rebuild all parent-child SQLite pairs. |
-| `--PARENT_INIT` | Initialize parent-child pairs for a first-time clean run. |
-| `--PARENT_SYNC` | Sync newly added or changed records to parent-child pairs. |
-| `--BACKEND` | Select the backend, such as `ollama` or `llamacpp`. |
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
 
 > [!WARNING]
-> Running `--FTS_REBUILD` can take a long time. Depending on hardware I/O and CPU speed, it may require multiple days.
+Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
 
----
-
-### Common Pipeline Commands
-
-#### Crawl + DB Audit
-
-```bash
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=False --TURBOVEC_OVERWRITE=False --TURBOVEC_AUDIT=False --BACKEND=ollama
+```shell
+# Crawl + DB Audit
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --FAISS_MIGRATE=False --FAISS_AUDIT=False --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=False --TURBOVEC_OVERWRITE=False --TURBOVEC_AUDIT=False --PARENT_SYNC=True --BACKEND=ollama
 ```
-
-#### Migrate + Audit FAISS
-
-```bash
+```shell
+# Migrate + Audit FAISS
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAISS_AUDIT=True --BACKEND=ollama
 ```
-
-#### Migrate + Audit TurboVec
-
-```bash
+```shell
+# Migrate + Audit TurboVec
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True
 ```
-
-#### DB Repair + DB Audit
-
-```bash
+```shell
+# DB Repair + DB Audit
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=True --DB_REPAIR=True --FTS_SYNC=True --PARENT_SYNC=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --BACKEND=ollama
 ```
-
-#### Full Pipeline
-
-```bash
-python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND=ollama
+```shell
+# Full pipeline
+python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --BACKEND ollama
 ```
 
----
-
-## Q&A Testing
-
-After crawling, chunking, embedding, and index migration are complete, test the RAG system with:
-
-```bash
-python3 rag/test.py --question "<YOUR_TEST_QUESTION>"
+## QnA Test
+If all crawling, chunking, and embedding have done, user can test the RAG by running:
+```shell
+python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
+```
+It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
+```shell
+--config rag/config.yaml                        #default value: rag/config.yaml
+--retriever {sqlite, faiss, bm25, hybrid, turbovec, hybrid_turbovec}   #default value: hybrid
+--direct_top_k 8-32                             #default value: 12
+--board_top_k 50-80                             #default value: 60
+--summarize_batch_size 4-16                     #default value: 8
+--backend {ollama, llamacpp}                    #default value: ollama
 ```
 
-Example:
-
-```bash
-python3 rag/test.py --retriever hybrid --backend ollama --direct_top_k 20 --question "What is Zhongli's signature weapon?"
+Example usage:
+```shell
+python3 rag/test.py --retriever hybrid --backend ollama --direct_top_k 20 --question "What is ZhongLi signature weapon?"
 ```
 
-Available options include:
-
-```bash
---config rag/config.yaml
---retriever {sqlite,faiss,bm25,hybrid,turbovec,hybrid_turbovec}
---direct_top_k 8-32
---board_top_k 50-80
---summarize_batch_size 4-16
---backend {ollama,llamacpp}
-```
-
-Default values:
-
-| Option | Default |
-|---|---|
-| `--config` | `rag/config.yaml` |
-| `--retriever` | `hybrid` |
-| `--direct_top_k` | `12` |
-| `--board_top_k` | `60` |
-| `--summarize_batch_size` | `8` |
-| `--backend` | `ollama` |
-
-Additional retrieval behavior is controlled in [`rag/config.yaml`](rag/config.yaml), including:
-
+Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml), where it control:
 - `cross_encoder`
 - `context_expansion`
 - `retrieval`
 - `parent_child`
+The values can be changed, it will control the behavior of the retrievers.
 
 > [!NOTE]
-> The `cross_encoder_model` value must be a valid `sentence_transformers` model string. It is not a generic Ollama model name and it is not a llama.cpp `.gguf` model.
-
----
+In reranker `cross_encoder_model` value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model.
 
 ## Kaggle Embedding Support
+Since local device may have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU. With that this project utilized `Kaggle API` to send chunks to Kaggle, where it will be embeded to bigger model, by using [upload.py](kaggle_tools/upload.py) script.
 
-Local embedding generation can be slow or limited by hardware. This project includes Kaggle support so chunks can be embedded using larger models on a Kaggle T4 GPU.
-
-The Kaggle upload workflow uses:
-
-```text
-kaggle_tools/upload.py
-```
-
-### Kaggle Setup
-
-To use the Kaggle API, create API credentials:
-
-1. Log in to Kaggle.
-2. Go to account settings.
-3. Create a legacy API key.
-4. Download `kaggle.json`.
-5. Place it in one of these locations:
-
-Linux:
-
-```text
-~/.kaggle/kaggle.json
-```
-
-Windows:
-
-```text
-C:\Users\<YOUR_USERNAME>\.kaggle\kaggle.json
-```
+### Kaggle setups
+In order to access Kaggle using API, it required API credentials. It can be get by login to [Kaggle](www.kaggle.com/settings) -> Account -> Legacy Token Credential -> Create Legacy API Key. it will download a json file named `kaggle.json`, which it need to be place in `~/.kaggle/` or `C:\Users\<YOUR_USERNAME>\.kaggle\`
 
 > [!TIP]
-> Kaggle API tokens can also be used, but this guide uses the legacy API credential for simplicity.
+To access Kaggle API, it can use API Tokens but for the sake of simplicity , this guide use legacy API credential
 
-### Upload Chunks to Kaggle
-
-Extract chunks first:
-
-```bash
+### Upload to kaggle
+After Kaggle API has been stored, before upload to the Kaggle itself. It required to run before hand:
+```shell
 python3 kaggle_tools/extract_chunks.py
 ```
-
-Then upload them:
-
-```bash
+It will extract all documents chunks and export it to `chunks.jsonl`. After that run:
+```shell
 python3 kaggle_tools/upload.py --dataset_slug <YOUR_KAGGLE_USERNAME>/<GENSHIN_CHUNKS_NAME>
 ```
 
----
+## One-for-all script
+This project provide a script to run as cron job or general usages, the script itself named [`./run_pipeline.sh`](./run_pipeline.sh). To setup the cron job:
+```shell
+crontab -e #choose your favorite text editor (use nano)
 
-## Automated Pipeline Script
-
-This project provides a general-purpose pipeline runner:
-
-```bash
-./run_pipeline.sh
-```
-
-It can be used manually or scheduled with cron.
-
-Open your crontab:
-
-```bash
-crontab -e
-```
-
-Example cron job:
-
-```cron
+##Add to a new line assume that the repos is on Documents
 0 3 1,15 * * CRON_MODE=1 /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/run_pipeline.sh >> /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/rag/logs/pipeline_run.log 2>&1
 ```
 
-This runs the pipeline at **3:00 AM on the 1st and 15th day of every month**.
+The script will run at 1st and 15th day every month at 3am.
 
 > [!TIP]
-> Cron format is:
->
-> ```text
-> minute hour day_of_month month day_of_week
-> ```
->
-> `CRON_MODE=1` acts as a lock so multiple instances of the same script do not run at the same time.
+The crontab entry can be change `0 3 1,15 * *` from the left to right order it detonates `minute hour day_of_month month day_of_week`. `CRON_MODE=1` is a lock so if 2 instance of same script running it will block.
 
----
+## Parameter Efficient Fine-Tuning (PEFT)
+Since current project state is on crawling and embedding all the game data, isn't possible to do fine tuning, although it will be using various suppported or custom PEFT method such as Q/LoRA (Quantization /Low-rank adaptation), Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation), VeRA (Vector-based Random Matrix Adaptation), DVoRA (Weight-Decomposed Vector-based Random Matrix Adaptation), etc fine-tuning planned. This fine tuning aim for better answering, reduce hallucinations, targeted cite, and preparing for embedding fine tuning.
 
-## PEFT Dataset Generation
+### Dataset creations
+In order to train PEFT, it needs a trainable dataset, which can be generated by using [`fine_tune/dataset_creation.py`](fine_tune/dataset_creation.py). It will create `.jsonl` dataset, and it's controlled by [`rag/config.yaml`](rag/config.yaml) on dataset_creation tags. It's support multi-threading, which can be controlled in `workers` and `max_inflight` values. `limit` value can be ysed for controlling how many dataset will be created. The python scripts itself support command-line arguments such as:
+```shell
+--config            #default value: rag/config.yaml
+--db                #default value: None
+--out               #default value: None
+--ollama-url        #default value: None
+--model             #default value: None
+--limit             #default value: None
+--qa-per-chunk      #default value: None
+--min-chars         #default value: None
+--max-chars         #default value: None
+--seed              #default value: None
+--sources           #default value: None
+--sleep             #default value: None
+```
+The script will produce `genshin_double_negative_pairs.jsonl`, `genshin_rag_sft_candidates.jsonl`, `genshin_rejected.jsonl`, `genshin_retrieval_pairs.jsonl`, `genshin_sft_negative_answerability.jsonl`. All the `.jsonl` file except `genshin_rejected.jsonl` and `genshin_sft_negative_answerability.jsonl` can be used for PEFT training.
 
-The project currently focuses on crawling, chunking, indexing, and retrieval. It also includes planned and experimental support for creating training datasets for PEFT-style fine-tuning.
-
-Planned or supported PEFT methods include:
-
-- QLoRA: Quantized Low-Rank Adaptation.
-- LoRA: Low-Rank Adaptation.
-- QDoRA: Quantized Weight-Decomposed Low-Rank Adaptation.
-- DoRA: Weight-Decomposed Low-Rank Adaptation.
-- VeRA: Vector-based Random Matrix Adaptation.
-- DVoRA: Weight-Decomposed Vector-based Random Matrix Adaptation.
-
-The goal of fine-tuning is to:
-
-- Improve answer quality.
-- Reduce hallucinations.
-- Improve citation targeting.
-- Prepare for embedding fine-tuning.
-- Improve domain-specific Genshin responses.
-
-### Model Dependencies
-
-Dataset generation uses three model roles configured in [`rag/config.yaml`](rag/config.yaml):
-
-- `draft_model`
-- `answer_model`
-- `validation_model`
-
-These models are used to generate:
-
-- Supervised fine-tuning pairs.
-- Hard negative pairs.
-- Rejected examples.
-- Answerability examples.
-
-Example model pulls:
-
-```bash
-ollama pull gemma3:12b
-ollama pull qwen3:8b
+```shell
+#Example usage
+python3 dataset_creation.py --model ollama --limit 10 --qa-per-chunks 5 --seed 102 --sources "genshin_wiki, kqm_tcl, kqm_news, honey, genshin_gg, game8"
 ```
 
-> [!WARNING]
-> Make sure the model names in [`rag/config.yaml`](rag/config.yaml) match the models installed in Ollama. Larger models may produce better datasets, but they are not strictly required.
-
----
-
-### Dataset Creation
-
-Dataset generation is handled by:
-
-```text
-fine_tune/dataset_creation.py
-```
-
-The script is controlled by the `dataset_creation` section in [`rag/config.yaml`](rag/config.yaml). It supports multithreading through `workers` and `max_inflight`.
-
-The `limit` value controls how many dataset examples are created.
-
-Supported command-line arguments:
-
-```bash
---config
---db
---out
---ollama-url
---model
---limit
---qa-per-chunk
---min-chars
---max-chars
---seed
---sources
---sleep
-```
-
-Generated files include:
-
-| File | Purpose |
-|---|---|
-| `genshin_double_negative_pairs.jsonl` | Double-negative retrieval pairs. |
-| `genshin_rag_sft_candidates.jsonl` | Candidate supervised fine-tuning examples. |
-| `genshin_rejected.jsonl` | Rejected generated examples. |
-| `genshin_retrieval_pairs.jsonl` | Retrieval training pairs. |
-| `genshin_sft_negative_answerability.jsonl` | Negative answerability examples. |
-
-The following files can be used for PEFT training:
-
-- `genshin_double_negative_pairs.jsonl`
-- `genshin_rag_sft_candidates.jsonl`
-- `genshin_retrieval_pairs.jsonl`
-
-The following files are mainly for filtering, debugging, or validation:
-
-- `genshin_rejected.jsonl`
-- `genshin_sft_negative_answerability.jsonl`
-
-Example command:
-
-```bash
-python3 fine_tune/dataset_creation.py --model ollama --limit 10 --qa-per-chunk 5 --seed 102 --sources "genshin_wiki,kqm_tcl,kqm_news,honey,genshin_gg,game8"
-```
-
----
-
-## To-do List
-
-- [x] Create JSONL datasets for QLoRA / QDoRA-style fine-tuning.
-- [ ] Test stronger generator models such as Llama 3.1 8B, Llama 3.2 8B, Qwen 2.5 7B, Qwen 3.5 9B, or Mistral 7B.
-- [x] Add Vulkan and accelerator support.
-- [x] Add llama.cpp support.
-- [x] Add support for stronger embedding models such as `mixedbread-ai/mxbai-embed-large-v1`, `BAAI/bge-large-en-v1.5`, and `nomic-ai/nomic-embed-text-v1.5`.[^1]
-- [x] Add Kaggle embedding workflow.
-- [x] Add cron job updates.
-- [x] Pull from configured sources.
+## To-do list
+- [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
+- [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
+- [x] Add Vulkan and other accelerator support.
+- [x] Llama.cpp support.
+- [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
+- [x] Embedding using Kaggle.
+- [x] Adding cron jobs updates.
+- [x] Pulling from sources.
 - [x] Add multithreading support.
-- [x] Add FAISS support.
-- [x] Add FTS5 / BM25 support.
-- [x] Add cross-encoder support.
-- [x] Add context expansion support.
-- [x] Add reranker support.
-- [x] Add dense similarity search.
-- [x] Add hybrid BM25 + FAISS reranking.
-- [x] Add TurboVec reranked support.[^4]
-- [x] Add recency weighting.[^3]
-- [x] Add parent-child retrieval.
-- [ ] Add retriever cache layer.
+- [x] FAISS support.
+- [x] FTS5/BM25 support.
+- [x] Cross encoder support.
+- [x] Context expand support.
+- [x] Reranker support.
+- [x] Dense similarity search.
+- [x] Hybrid BM25 and FAISS reranker.
+- [x] TurboVec reranked support. [^4]
+- [x] Recency weighting. [^3]
+- [x] Parent-child retriever.
+- [x] Cache layer retriever.
 
----
-
-## Footnotes
-
-[^1]: Processed on Kaggle.
-[^2]: ARM architectures only.
-[^3]: Partial support; needs more testing.
-[^4]: Beta version.
+## Foot note
+[^1]: It's get processed on Kaggle
+[^2]: ARM architectures only
+[^3]: Partial need more testing
+[^4]: Beta version
