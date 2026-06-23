@@ -60,8 +60,15 @@ parent_child:
   max_parents: 12
   max_total_chunks: 50
 
+retrieval_cache:
+  enabled: true
+  path: data/cache/retrieval_cache.sqlite
+  ttl_seconds: 86400
+  max_entries: 50000
+  version: 2
+
 versioning:
-  current: 605
+  current: 606
   aliases:
     luna 1: 600
     luna i: 600

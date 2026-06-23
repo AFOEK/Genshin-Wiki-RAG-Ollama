@@ -3,10 +3,16 @@ from __future__ import annotations
 import logging
 import sqlite3
 import re
-from typing import Iterable
+import json
+import hashlib
+import yaml
 
 import numpy as np
-import yaml
+
+from typing import Iterable, Any
+from pathlib import Path
+
+from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
 
@@ -450,7 +456,6 @@ def normalize_model_name(x) -> str:
         s = s[:-7]
 
     return s
-
 
 def expected_model_from_cfg(cfg: dict, backend: str | None = None, source: str = "runtime") -> str:
     source = str(source or "runtime").strip().lower()
@@ -972,6 +977,60 @@ def get_kqm_news_fetch_version_baseline(conn: sqlite3.Connection, max_version_or
         return None, None
 
     return row["version_label"], int(row["version_ord"])
+
+def normalize_cache_question(question: str) -> str:
+    return " ".join((question or "").lower().strip().split())
+
+def stable_json_hash(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def make_retrieval_cache_key(*, question: str, retriever_name: str, backend: str | None, direct_top_k: int, intent: str, subtypes: set[str], db_path: Path, index_meta: dict) -> str:
+    db_mtime = int(Path(db_path).stat().st_mtime) if Path(db_path).exists() else 0
+    payload = {
+        "v": 1,
+        "question": normalize_cache_question(question),
+        "retriever": retriever_name,
+        "backend": backend or "",
+        "direct_top_k": int(direct_top_k),
+        "intent": intent,
+        "subtypes": sorted(subtypes),
+        "db_mtime": db_mtime,
+        "index_meta": index_meta
+    }
+    return stable_json_hash(payload)
+
+def retrieval_result_to_cache(result: RetrievalResult) -> dict:
+    return {
+        "question": result.question,
+        "intent": result.intent,
+        "build_subtypes": sorted(result.build_subtypes),
+        "broad": bool(result.broad),
+        "candidate_chunks": result.candidate_chunks,
+        "selected_chunks": result.selected_chunks,
+        "context": result.context,
+        "retrieval_signals": result.retrieval_signals,
+        "baseline_label": result.baseline_label,
+        "baseline_ord": result.baseline_ord,
+        "strict_fts_query": result.strict_fts_query,
+        "diagnostics": result.diagnostics,
+    }
+
+def retrieval_result_from_cache(payload: dict) -> RetrievalResult:
+    return RetrievalResult(
+        question=str(payload.get("question", "")),
+        intent=str(payload.get("intent", "general")),
+        build_subtypes=set(payload.get("build_subtypes", [])),
+        broad=bool(payload.get("broad", False)),
+        candidate_chunks=list(payload.get("candidate_chunks", [])),
+        selected_chunks=list(payload.get("selected_chunks", [])),
+        context=str(payload.get("context", "")),
+        retrieval_signals=dict(payload.get("retrieval_signals", {})),
+        baseline_label=payload.get("baseline_label"),
+        baseline_ord=payload.get("baseline_ord"),
+        strict_fts_query=payload.get("strict_fts_query"),
+        diagnostics=dict(payload.get("diagnostics", {})),
+    )
 
 def extract_entity_terms(question: str) -> list[str]:
     q = question.strip().replace("’", "'")

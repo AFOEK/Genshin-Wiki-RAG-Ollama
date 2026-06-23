@@ -5,9 +5,10 @@ import logging, re
 from pathlib import Path
 
 from core.embed import embed
-from core.paths import resolve_db_path, resolve_faiss_dir
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity
+from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever
+from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
 from .prompts import build_context, summarize_chunk_group, synthesize_final_answer
 from .generators import generate
@@ -17,6 +18,20 @@ from .parent_child import fetch_parent_context_chunks
 from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
+_RETRIEVAL_CACHE : RetrievalCache | None = None
+
+def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
+    global _RETRIEVAL_CACHE
+    cache_cfg = cfg.get("retrieval_cache", {}) or {}
+    if not as_bool(cache_cfg.get("enable"), False):
+        return None
+    
+    if _RETRIEVAL_CACHE is None:
+        root = resolve_storage_root(cfg)
+        rel = Path(str(cache_cfg("path", "/data/cache/retrieval_cache.sqlite")))
+        path = rel if rel.is_absolute() else root / rel
+        _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
+    return _RETRIEVAL_CACHE
 
 def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     strict_fts_query_used: str | None = None
@@ -651,7 +666,27 @@ def has_lookup_phrase(chunks: list[dict], entity: str) -> bool:
     return False
 
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
-    result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
+    intent = detect_intent(question)
+    build_subtypes = detect_build_subtypes(question) if intent == "build" else set()
+    cache = get_retrieval_cache(cfg)
+    cache_key = None
+
+    if cache is not None:
+        db_path = resolve_db_path(cfg)
+        cache_cfg = cfg.get("retrieval_cache", {}) or {}
+        cache_version = int(cache_cfg.get("version", 1))
+        cache_key = make_retrieval_cache_key(question=question, retriever_name=retriever_name, backend=backend, direct_top_k=direct_top_k, intent=f"{intent}:v{cache_version}", subtypes=build_subtypes, db_path=db_path, index_meta={})
+        cached = cache.get(cache_key)
+        if cached is not None:
+            log.info("[RETRIEVAL_CACHE] hit key=%s question=%r", cache_key[:12], question)
+            result = retrieval_result_from_cache(cached)
+        else:
+            log.info("[RETRIEVAL_CACHE] miss key=%s question=%r", cache_key[:12], question)
+            result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
+            cache.set(cache_key, retrieval_result_to_cache(result))
+            log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
+    else:
+        result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
 
     if not result.selected_chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."
