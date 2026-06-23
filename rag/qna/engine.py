@@ -33,7 +33,7 @@ def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
         _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
     return _RETRIEVAL_CACHE
 
-def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
+def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     strict_fts_query_used: str | None = None
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
@@ -494,6 +494,30 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
         )
     finally:
         conn.close()
+
+def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
+    intent = detect_intent(question)
+    build_subtypes = detect_build_subtypes(question) if intent == "build" else set()
+    cache = get_retrieval_cache(cfg)
+
+    if cache is None:
+        return retrieve_question_context_uncached(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
+
+    db_path = resolve_db_path(cfg)
+    cache_cfg = cfg.get("retrieval_cache", {}) or {}
+    cache_version = int(cache_cfg.get("version", 1))
+    cache_key = make_retrieval_cache_key(question=question, retriever_name=retriever_name, backend=backend, direct_top_k=direct_top_k, intent=f"{intent}:v{cache_version}", subtypes=build_subtypes, db_path=db_path, index_meta={})
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        log.info("[RETRIEVAL_CACHE] hit key=%s question=%r", cache_key[:12], question)
+        return retrieval_result_from_cache(cached)
+
+    log.info("[RETRIEVAL_CACHE] miss key=%s question=%r", cache_key[:12], question)
+    result = retrieve_question_context_uncached(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
+    cache.set(cache_key, retrieval_result_to_cache(result))
+    log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
+    return result
 
 def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[dict], *, max_total: int, max_per_doc: int = 4) -> list[dict]:
     max_total = max(int(max_total), len(seed_chunks))
