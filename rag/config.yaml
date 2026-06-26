@@ -184,12 +184,12 @@ dataset_creation:
   direct_top_k: 50
   require_positive_document: true
 
-  workers: 32          #2 - 32
-  max_inflight: 30     #4 - 30
+  workers: 2          #2 - 32
+  max_inflight: 2     #4 - 30
   preserve_output_order: true
 
-  limit: 100
-  qa_per_chunk: 2 #2-10
+  limit: 1500
+  qa_per_chunk: 5 #2-10
   min_chars: 500
   max_chars: 2500
   seed: 1337
@@ -209,6 +209,10 @@ dataset_creation:
   validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 1
+
+  append: false
+  flush_every: 25
+  file_buffer_size: 1048576
 
   sources:
     - genshin_wiki

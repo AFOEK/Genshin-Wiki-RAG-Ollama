@@ -87,6 +87,35 @@ def clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
+def load_existing_sft_keys(path: Path) -> tuple[set[str], set[str]]:
+    record_ids: set[str] = set()
+    questions: set[str] = set()
+
+    if not path.exists() or path.stat().st_size == 0:
+        return record_ids, questions
+
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            record_id = str(row.get("id") or "").strip()
+            if record_id:
+                record_ids.add(record_id)
+
+            metadata = row.get("metadata") or {}
+            question = str(metadata.get("question") or "").strip().lower()
+            question = re.sub(r"\s+", " ", question).strip()
+            if question:
+                questions.add(question)
+
+    return record_ids, questions
+
 def is_good_chunk(text: str, title: str, source: str) -> bool:
     t = (text or "").lower()
     title_l = (title or "").lower()
@@ -1133,6 +1162,9 @@ def main() -> None:
     ap.add_argument("--easy-negatives", type=int, default=None)
     ap.add_argument("--negative-pool-size", type=int, default=None)
     ap.add_argument("--negative-text-chars", type=int, default=None)
+    ap.add_argument("--backend", default=None)
+    ap.add_argument("--append", action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument("--flush-every", type=int, default=None)
 
     args = ap.parse_args()
 
@@ -1143,7 +1175,9 @@ def main() -> None:
     )
     ds_cfg = cfg.get("dataset_creation", {}) or {}
     retriever_name = str(ds_cfg.get("retriever", "hybrid")).strip().lower()
-    backend = ds_cfg.get("backend", "ollama")
+    backend = str(args.backend or ds_cfg.get("backend") or cfg.get("runtime", {}).get("embedding_provider", "ollama")).strip().lower()
+    append_outputs = cfg_bool(args.append, cfg_bool(ds_cfg.get("append", True))
+    flush_every = cfg_int(args.flush_every, cfg_int(ds_cfg.get("flush_every", 25))
     direct_top_k = cfg_int(ds_cfg.get("direct_top_k"), 10)
     require_positive_document = cfg_bool(ds_cfg.get("require_positive_document"), True)
     ollama_cfg = cfg.get("ollama", {}) or {}
@@ -1250,6 +1284,7 @@ def main() -> None:
     log.info(f"[LORA_CONFIG] out={out_path}")
     log.info("[LORA_CONFIG] draft_model=%s answer_model=%s validator_model=%s", draft_model, answer_model, validator_model)
     log.info(f"[LORA_CONFIG] sources={sources}")
+    log.info("[LORA_CONFIG] append=%s flush_every=%d out=%s", append_outputs, flush_every, out_path)
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -1270,13 +1305,11 @@ def main() -> None:
     log.info(f"[LORA_DATASET] Loaded candidate chunks: {len(rows)}")
 
     with ExitStack() as stack:
-        output_f = stack.enter_context(
-            out_path.open("w", encoding="utf-8")
-        )
+        file_mode = "a" if append_outputs else "w"
+        buffer_size = int(ds_cfg.get("file_buffer_size", 1024 * 1024))
 
-        rejected_f = stack.enter_context(
-            rejected_path.open("w", encoding="utf-8")
-        )
+        output_f = stack.enter_context(out_path.open(file_mode, encoding="utf-8", buffering=buffer_size))
+        rejected_f = stack.enter_context(rejected_path.open(file_mode, encoding="utf-8", buffering=buffer_size))
 
         pair_f = None
         double_negative_f = None
@@ -1284,24 +1317,15 @@ def main() -> None:
 
         if make_negatives:
             pair_f = stack.enter_context(
-                retrieval_pairs_path.open(
-                    "w",
-                    encoding="utf-8",
-                )
+                retrieval_pairs_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
             )
 
             double_negative_f = stack.enter_context(
-                double_negative_path.open(
-                    "w",
-                    encoding="utf-8",
-                )
+                double_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
             )
 
             negative_sft_f = stack.enter_context(
-                sft_negative_path.open(
-                    "w",
-                    encoding="utf-8",
-                )
+                sft_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
             )
         completed_tasks = 0
         written = 0
@@ -1311,8 +1335,7 @@ def main() -> None:
         written_double_negatives = 0
         written_negative_sft = 0
 
-        seen_record_ids: set[str] = set()
-        seen_questions: set[str] = set()
+        seen_record_ids, seen_questions = load_existing_sft_keys(out_path) if append_outputs else (set(), set())
 
         result_buffer: dict[int, ChunkTaskResult] = {}
         next_write_index = 0
@@ -1481,10 +1504,7 @@ def main() -> None:
                         )
                         written_negative_sft += 1
 
-                if (
-                    completed_tasks % 10 == 0
-                    or completed_tasks == len(rows)
-                ):
+                if completed_tasks % flush_every == 0 or completed_tasks == len(rows):
                     log.info(
                         "[DATASET] tasks=%d/%d written=%d "
                         "skipped=%d retrieval_pairs=%d "
