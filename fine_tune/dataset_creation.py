@@ -1176,8 +1176,8 @@ def main() -> None:
     ds_cfg = cfg.get("dataset_creation", {}) or {}
     retriever_name = str(ds_cfg.get("retriever", "hybrid")).strip().lower()
     backend = str(args.backend or ds_cfg.get("backend") or cfg.get("runtime", {}).get("embedding_provider", "ollama")).strip().lower()
-    append_outputs = cfg_bool(args.append, cfg_bool(ds_cfg.get("append", True))
-    flush_every = cfg_int(args.flush_every, cfg_int(ds_cfg.get("flush_every", 25))
+    append_outputs = cfg_bool(args.append, cfg_bool(ds_cfg.get("append", True)))
+    flush_every = cfg_int(args.flush_every, cfg_int(ds_cfg.get("flush_every", 25), 25))
     direct_top_k = cfg_int(ds_cfg.get("direct_top_k"), 10)
     require_positive_document = cfg_bool(ds_cfg.get("require_positive_document"), True)
     ollama_cfg = cfg.get("ollama", {}) or {}
