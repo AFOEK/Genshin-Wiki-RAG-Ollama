@@ -50,15 +50,15 @@ context_expansion:
   enabled: true
   before: 2
   after: 2
-  max_total_chunks: 50
-  max_total_chunks_after_parent: 50
+  max_total_chunks: 75
+  max_total_chunks_after_parent: 85
   direct_only: true
 
 parent_child:
   enabled: true
-  children_per_parent: 8
-  max_parents: 12
-  max_total_chunks: 50
+  children_per_parent: 12
+  max_parents: 16
+  max_total_chunks: 85
 
 retrieval_cache:
   enabled: true
@@ -129,7 +129,7 @@ kaggle:
   embedding_model: Snowflake/snowflake-arctic-embed-l-v2.0
   dataset_slug: afoek88/genshin-rag-chunks    #Change this to your kaggle account
   kernel_slug: afoek88/genshin-rag-embeddings #Change this to your kaggle account
-  batch_size: 256
+  batch_size: 512
   max_text_chars: 1200
   use_fp16: true
   gpu_type: nvidiaTeslaT4   # nvidiaTeslaT4 | nvidiaTeslaP100
