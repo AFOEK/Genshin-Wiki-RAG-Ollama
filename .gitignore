@@ -9,3 +9,4 @@ rag/data/*
 *.log.*
 .vscode
 *.jsonl
+kaggle_results/
