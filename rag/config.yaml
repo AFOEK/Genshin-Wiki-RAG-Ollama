@@ -7,7 +7,7 @@ faiss_path: data/faiss
 
 ollama: 
   base_url: http://localhost:11434
-  embedding_model: all-minilm:latest #snowflake-arctic-embed:xs
+  embedding_model: snowflake-arctic-embed-l-v2.0 #snowflake-arctic-embed:xs | all-minilm:latest
   qa_model: llama3.2:3b
   timeout: 900
   qa_timeout: 900
