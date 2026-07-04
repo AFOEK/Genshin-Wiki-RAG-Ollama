@@ -338,14 +338,7 @@ python3 fine_tune/dataset_creation.py --model ollama --limit 10 --qa-per-chunk 5
 
 > [!NOTE]
 In order the dataset creation runs perfectly, it required 2 additional models such as qwen3:8b, and gemma3:12b. This combination can be controlled in [rag/config.yaml](rag/config.yaml). To pull the additional model:
-```
-ollama pull qwen3:8b
-```
-and 
-```
-ollama pull gemma3:12b
-```
-The model is flexible, it can accept other bigger and better model according with devices computational powers
+`ollama pull qwen3:8b` and `ollama pull gemma3:12b`. The model is flexible, it can accept other bigger and better model according with devices computational powers
 
 ## To-do list
 - [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
