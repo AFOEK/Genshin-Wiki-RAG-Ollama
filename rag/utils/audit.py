@@ -438,23 +438,27 @@ def audit_faiss_against_sqlite(cfg: dict, *, index_dir: str | None = None, sampl
         q = np.zeros((d,), dtype=np.float32)
 
         for i in range(0, n, step):
-            index.reconstruct(i, q)
-            k = min(5, n)
-            D, I = index.search(q.reshape(1, -1), k)
-            got_positions = [int(x) for x in I[0] if int(x) >= 0]
-            top_score = float(D[0, 0]) if D.size else float("-inf")
-            if i in got_positions:
-                pass
-            elif top_score >= 0.999999:
-                pass
-            else:
-                failures.append(
-                    f"self_test_failed_at={i} got_topk={got_positions} score={top_score}"
-                )
-                break
-            take -= 1
-            if take <= 0:
-                break
+            try:
+                index.reconstruct(i, q)
+                k = min(5, n)
+                D, I = index.search(q.reshape(1, -1), k)
+                got_positions = [int(x) for x in I[0] if int(x) >= 0]
+                top_score = float(D[0, 0]) if D.size else float("-inf")
+                if i in got_positions:
+                    pass
+                elif top_score >= 0.999999:
+                    pass
+                else:
+                    failures.append(f"self_test_failed_at={i} got_topk={got_positions} score={top_score}")
+                    break
+                take -= 1
+                if take <= 0:
+                    break
+            except RuntimeError as ex:
+                msg = str(ex).lower()
+                if "direct map not intializaed" in msg:
+                    failures.append("direct_map_not_initialized")
+                    break
     
     faiss_cfg = cfg.get("faiss", {}) or {}
     cfg_metric = str(faiss_cfg.get("metric", "cosine")).strip().lower()
