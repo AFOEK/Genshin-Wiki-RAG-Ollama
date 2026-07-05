@@ -342,7 +342,7 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 
 ## To-do list
 - [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
-- [ ] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
+- [x] Use better generator model Llama3.2:8b, Qwen3.5:9b, Qwen 2.5:7b, Llama 3.1:8b, or Mistral 7b.
 - [x] Add Vulkan and other accelerator support.
 - [x] Llama.cpp support.
 - [x] Use better embedding model mixebread-ai/mxbai-embed-large-v1, BAAI/bge-large-en-v1.5, and nomic-ai/nomic-embed-text-v1.5 [^1].
