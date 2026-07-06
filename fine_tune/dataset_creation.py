@@ -250,17 +250,18 @@ def get_worker_http_session() -> requests.Session:
 
     return session
 
-def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2) -> str:
+def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2, thinking: bool | str | None = None) -> str:
     payload = {
         "model": model, 
         "prompt": prompt, 
         "stream": False,
-        "think": False,
         "keep_alive": "10m", 
         "options": {
             "temperature": temperature, 
             "top_p": 0.9}
     }
+    if thinking is not None:
+        payload["think"] = thinking
     if response_format is not None: 
         payload["format"] = response_format
     with _ollama_semaphore:
@@ -269,6 +270,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     answer = str(response.json().get("response", "")).strip()
     if not answer: 
         raise ValueError("Ollama returned an empty response")
+    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
     return answer
 
 def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
@@ -296,7 +298,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     prompt = make_prompt(title=title, source=source, url=url, text=text[: settings["max_chars"]], n=settings["qa_per_chunk"])
 
     try:
-        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"])
+        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"])
         items = extract_json_array(raw)
 
     except Exception as exc:
@@ -370,7 +372,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 direct_top_k=settings["direct_top_k"],
                 backend=settings["backend"],
                 require_positive_document=settings["require_positive_document"],
-                answer_model=settings["answer_model"]
+                answer_model=settings["answer_model"],
+                answer_think=settings["answer_think"],
             )
 
         except Exception as exc:
@@ -422,7 +425,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                     min_confidence=settings[
                         "negative_min_confidence"
                     ],
-                    timeout=settings["request_timeout"]
+                    timeout=settings["request_timeout"],
+                    think=settings["validator_think"]
                 )
 
                 hard_doc_ids = {
@@ -461,7 +465,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                     min_confidence=settings[
                         "negative_min_confidence"
                     ],
-                    timeout= settings["request_timeout"]
+                    timeout= settings["request_timeout"],
+                    think=settings["validator_think"]
                 )
 
                 if hard_negatives or easy_negatives:
@@ -653,12 +658,12 @@ def extract_json_object(text: str) -> dict:
 
     return data
 
-def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int) -> tuple[bool, dict]:
+def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None) -> tuple[bool, dict]:
     candidate_context = f"Title: {candidate.get('title')}\nSource: {candidate.get('source')}\nURL: {candidate.get('url')}\n\nText:\n{clean_text(candidate.get('text') or '')[:1800]}"
     prompt = f"Determine whether the candidate passage answers the question or supports the reference answer. Return only the required JSON object.\n\nQuestion:\n{question}\n\nReference answer:\n{reference_answer}\n\nCandidate passage:\n{candidate_context}"
     last_error: Exception | None = None
     for attempt in range(5):
-        raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0)
+        raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0, thinking=think)
         try:
             result = json.loads(raw)
             break
@@ -700,7 +705,7 @@ def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, 
 
     return output
 
-def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float, timeout: int) -> list[dict]:
+def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None) -> list[dict]:
     accepted: list[dict] = []
 
     for candidate in candidates:
@@ -712,7 +717,8 @@ def select_validated_negatives(candidates: list[dict], *, question: str, referen
                 ollama_url=ollama_url,
                 validator_model=validator_model,
                 min_confidence=min_confidence,
-                timeout=timeout
+                timeout=timeout,
+                think=think
             )
         except Exception as exc:
             log.warning(
@@ -887,24 +893,10 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b") -> tuple[dict | None, dict | None, RetrievalResult]:
-    retrieval = retrieve_question_context(
-        cfg,
-        question,
-        retriever_name=retriever_name,
-        direct_top_k=direct_top_k,
-        backend=backend,
-    )
-
-    candidate_doc_rank = find_document_rank(
-        retrieval.candidate_chunks,
-        int(positive["doc_id"]),
-    )
-
-    selected_doc_rank = find_document_rank(
-        retrieval.selected_chunks,
-        int(positive["doc_id"]),
-    )
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
+    retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
+    candidate_doc_rank = find_document_rank(retrieval.candidate_chunks, int(positive["doc_id"]))
+    selected_doc_rank = find_document_rank(retrieval.selected_chunks, int(positive["doc_id"]))
 
     if (require_positive_document and selected_doc_rank is None):
         return None, {
@@ -938,7 +930,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     answer_style_cfg = cfg.get("answer_style", {}) or {}
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
-    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model)).strip()
+    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think)).strip()
 
     if not final_answer:
         return None, {
@@ -1207,6 +1199,10 @@ def main() -> None:
     preserve_output_order = cfg_bool(ds_cfg.get("preserve_output_order"), True)
     request_timeout = cfg_int(ds_cfg.get("request_timeout"), 600)
 
+    draft_think = ds_cfg.get("draft_think", False)
+    answer_think = ds_cfg.get("answer_think", False)
+    validator_think = ds_cfg.get("validator_think", False)
+
     db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).expanduser()
     default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
@@ -1266,6 +1262,10 @@ def main() -> None:
         "backend": backend,
         "require_positive_document": require_positive_document,
 
+        "draft_think": draft_think,
+        "answer_think": answer_think,
+        "validator_think": validator_think,
+
         "make_negatives": make_negatives,
         "hard_negative_count": hard_negative_count,
         "easy_negative_count": easy_negative_count,
@@ -1316,17 +1316,10 @@ def main() -> None:
         negative_sft_f = None
 
         if make_negatives:
-            pair_f = stack.enter_context(
-                retrieval_pairs_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
-            )
-
-            double_negative_f = stack.enter_context(
-                double_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
-            )
-
-            negative_sft_f = stack.enter_context(
-                sft_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size)
-            )
+            pair_f = stack.enter_context(retrieval_pairs_path.open(file_mode, encoding="utf-8", buffering=buffer_size))
+            double_negative_f = stack.enter_context(double_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size))
+            negative_sft_f = stack.enter_context(sft_negative_path.open(file_mode, encoding="utf-8", buffering=buffer_size))
+        
         completed_tasks = 0
         written = 0
         skipped = 0
@@ -1355,14 +1348,11 @@ def main() -> None:
                     cfg,
                     "Who is Venti?",
                     retriever_name=retriever_name,
-                    direct_top_k=25,
+                    direct_top_k=50,
                     backend=backend,
                 )
             except Exception as exc:
-                log.warning(
-                    "[DATASET] Retrieval warm-up failed: %s",
-                    exc,
-                )
+                log.warning("[DATASET] Retrieval warm-up failed: %s", exc)
 
         for result in run_bounded_workers(rows, workers=workers, max_inflight=max_inflight, cfg=cfg, settings=worker_settings):
             if preserve_output_order:
@@ -1370,9 +1360,7 @@ def main() -> None:
                 ready_results: list[ChunkTaskResult] = []
 
                 while next_write_index in result_buffer:
-                    ready_results.append(
-                        result_buffer.pop(next_write_index)
-                    )
+                    ready_results.append(result_buffer.pop(next_write_index))
                     next_write_index += 1
             else:
                 ready_results = [result]

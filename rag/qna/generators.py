@@ -31,7 +31,7 @@ def get_http_session() -> requests.Session:
         _thread_local.http_session = session
     return session
 
-def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, keep_alive: str = "10m", timeout:int = 300, connect_timeout: int = 15, options: dict[str, Any] | None = None) -> str:
+def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3, keep_alive: str = "10m", timeout: int = 300, connect_timeout: int = 15, options: dict[str, Any] | None = None, think: bool | str | None = None) -> str:
     if retries < 1:
         raise ValueError(f"retries must be at least 1, got {retries}")
 
@@ -53,6 +53,8 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
         "keep_alive": keep_alive,
         "options": request_options,
     }
+    if think is not None:
+        payload["think"] = think
 
     last_error: Exception | None = None
 
@@ -61,66 +63,20 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
         response: requests.Response | None = None
 
         try:
-            log.info(
-                "[OLLAMA] request model=%s "
-                "attempt=%d/%d prompt_chars=%d "
-                "num_ctx=%s num_predict=%s",
-                model,
-                attempt + 1,
-                retries,
-                len(prompt),
-                request_options.get("num_ctx"),
-                request_options.get("num_predict"),
-            )
-
-            response = session.post(
-                url,
-                json=payload,
-                timeout=(
-                    connect_timeout,
-                    timeout,
-                ),
-            )
-
-            if (
-                response.status_code
-                in RETRYABLE_STATUS_CODES
-            ):
-                raise requests.HTTPError(
-                    f"Retryable HTTP status "
-                    f"{response.status_code}",
-                    response=response,
-                )
+            log.info("[OLLAMA] request model=%s " "attempt=%d/%d prompt_chars=%d " "num_ctx=%s num_predict=%s", model, attempt + 1, retries, len(prompt), request_options.get("num_ctx"), request_options.get("num_predict"))
+            response = session.post(url, json=payload, timeout=(connect_timeout, timeout))
+            if (response.status_code in RETRYABLE_STATUS_CODES):
+                raise requests.HTTPError(f"Retryable HTTP status " f"{response.status_code}", response=response,)
 
             response.raise_for_status()
-
             data = response.json()
-            answer = str(
-                data.get("response", "")
-            ).strip()
+            answer = strip_thinking_blocks(str(data.get("response", "")))
 
             if not answer:
-                raise RuntimeError(
-                    "Ollama returned an empty response"
-                )
+                raise RuntimeError("[OLLAMA] Ollama returned an empty response")
 
             elapsed = time.perf_counter() - started
-
-            log.info(
-                "[OLLAMA] completed model=%s "
-                "elapsed=%.2fs "
-                "prompt_tokens=%s output_tokens=%s "
-                "total_duration=%.2fs",
-                model,
-                elapsed,
-                data.get("prompt_eval_count"),
-                data.get("eval_count"),
-                float(
-                    data.get("total_duration", 0)
-                )
-                / 1_000_000_000,
-            )
-
+            log.info("[OLLAMA] completed model=%s elapsed=%.2fs prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, elapsed, data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
             return answer
 
         except (
@@ -188,9 +144,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries:int = 3, 
 
 def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, connect_timeout: int = 15, retries: int = 8, temperature: float = 0.0, top_p: float = 0.9, max_tokens: int | None = None) -> str:
     if retries < 1:
-        raise ValueError(
-            f"retries must be at least 1, got {retries}"
-        )
+        raise ValueError(f"retries must be at least 1, got {retries}")
 
     session = get_http_session()
     url = (
@@ -346,7 +300,13 @@ def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, c
         f"last_error={last_error}"
     ) from last_error
 
-def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int | None = None, model_override: str | None = None, provider_override: str | None = None, options_override: dict[str, Any] | None = None) -> str:
+def strip_thinking_blocks(text: str) -> str:
+    import re
+    text = text or ""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
+
+def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int | None = None, model_override: str | None = None, provider_override: str | None = None, options_override: dict[str, Any] | None = None, think_override: bool | str | None = None) -> str:
     runtime = cfg.get("runtime", {}) or {}
 
     provider = str(provider_override or runtime.get("qa_provider", "ollama")).strip().lower()
@@ -360,6 +320,7 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
         effective_retries = int(retries if retries is not None else ollama.get("qa_retries", 3))
         effective_timeout = int(timeout if timeout is not None else ollama.get("qa_timeout", ollama.get("timeout", 300)))
         connect_timeout = int(ollama.get("connect_timeout", 15))
+        think = think_override if think_override is not None else ollama.get("qa_think", None)
 
         options: dict[str, Any] = {
             "temperature": float(ollama.get("qa_temperature", 0.0)),
@@ -384,24 +345,15 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
             options.update(options_override)
 
         return ollama_generate(
-            str(
-                ollama.get(
-                    "base_url",
-                    "http://localhost:11434",
-                )
-            ).strip(),
+            str(ollama.get("base_url", "http://localhost:11434")).strip(),
             model,
             prompt,
             retries=effective_retries,
-            keep_alive=str(
-                ollama.get(
-                    "qa_keep_alive",
-                    "10m",
-                )
-            ),
+            keep_alive=str(ollama.get("qa_keep_alive", "10m")),
             timeout=effective_timeout,
             connect_timeout=connect_timeout,
             options=options,
+            think=think,
         )
 
     if provider == "llamacpp":

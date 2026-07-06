@@ -176,8 +176,11 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3:8b  #llama3.2:3b | qwen3:8b | gemma3:12b
-  answer_model: gemma3:12b  #llama3.2:3b | qwen3:8b | gemma3:12b
+  draft_model: qwen3:8b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
+  draft_think: false
+  answer_think: true
+  validator_think: false
 
   retriever: hybrid
   backend: ollama
@@ -206,7 +209,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b
+  validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 1
 
