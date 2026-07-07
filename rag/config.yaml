@@ -65,7 +65,7 @@ retrieval_cache:
   path: data/cache/retrieval_cache.sqlite
   ttl_seconds: 86400
   max_entries: 50000
-  version: 2
+  version: 5
 
 versioning:
   current: 606
@@ -176,7 +176,7 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3:8b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  draft_model: qwen3.5:8b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
   answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
   draft_think: false
   answer_think: true
@@ -184,7 +184,7 @@ dataset_creation:
 
   retriever: hybrid
   backend: ollama
-  direct_top_k: 50
+  direct_top_k: 75
   require_positive_document: true
 
   workers: 2          #2 - 32
@@ -203,15 +203,15 @@ dataset_creation:
   double_negative_out: genshin_double_negative_pairs.jsonl
   sft_negative_out: genshin_sft_negative_answerability.jsonl
 
-  hard_negatives: 2
-  easy_negatives: 2
-  negative_pool_size: 20
+  hard_negatives: 5
+  easy_negatives: 5
+  negative_pool_size: 500
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3:8b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  validator_model: qwen3.5:8b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
   negative_validation_confidence: 0.85
-  negative_sft_per_positive: 1
+  negative_sft_per_positive: 5
 
   append: false
   flush_every: 25
