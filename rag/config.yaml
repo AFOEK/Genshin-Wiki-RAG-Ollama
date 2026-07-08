@@ -12,7 +12,7 @@ ollama:
   timeout: 900
   qa_timeout: 900
   qa_num_ctx: 16384   #16384 | 8192
-  qa_num_predict: 512 #512 | 256
+  qa_num_predict: 512 #1024| 512 | 256
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
@@ -65,7 +65,7 @@ retrieval_cache:
   path: data/cache/retrieval_cache.sqlite
   ttl_seconds: 86400
   max_entries: 50000
-  version: 5
+  version: 6
 
 versioning:
   current: 606
@@ -176,7 +176,7 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3.5:8b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  draft_model: qwen3.5:9b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
   answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
   draft_think: false
   answer_think: true
@@ -209,7 +209,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3.5:8b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  validator_model: qwen3.5:9b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 5
 
