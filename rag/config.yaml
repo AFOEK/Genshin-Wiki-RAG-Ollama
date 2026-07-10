@@ -11,13 +11,13 @@ ollama:
   qa_model: llama3.2:3b
   timeout: 900
   qa_timeout: 900
-  qa_num_ctx: 16384   #16384 | 8192
-  qa_num_predict: 512 #1024| 512 | 256
+  qa_num_ctx: 16384             #16384 | 8192
+  qa_num_predict: 2048          #2048 | 1024 | 512 | 256
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
 
-  qa_temperature: 0.0
+  qa_temperature: 0.0            # 0.0 | 0.1
   qa_top_p: 0.9
   embed_keep_alive: "15s"
 
@@ -40,7 +40,7 @@ retrieval:
   dedup_max_per_doc: 2
 
 reranker:
-  mode: feature        # none | feature | cross_encoder
+  mode: cross_encoder        # none | feature | cross_encoder
   cross_encoder_top_n: 32
   cross_encoder_batch_size: 8
   max_pair_text_chars: 1200

@@ -70,77 +70,43 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3,
 
             response.raise_for_status()
             data = response.json()
+            thinking_trace = str(data.get("thinking") or "").strip()
+            raw_answer = str(data.get("response") or "").strip()
+            done_reason = str(data.get("done_reason") or "").strip()
             answer = strip_thinking_blocks(str(data.get("response", "")))
 
             if not answer:
                 raise RuntimeError("[OLLAMA] Ollama returned an empty response")
 
             elapsed = time.perf_counter() - started
-            log.info("[OLLAMA] completed model=%s elapsed=%.2fs prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, elapsed, data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
+            if (think is not None) and (think == True or "true" in think): 
+                log.info("[OLLAMA_THINK] model=%s think=%r thinking_chars=%d response_chars=%d raw_response_chars=%d prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, think, len(thinking_trace), len(answer), len(raw_answer), data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
+            else:
+                log.info("[OLLAMA] completed model=%s elapsed=%.2fs prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, elapsed, data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
+            
+            if not answer:
+                if thinking_trace or "<think>" in raw_answer.lower() or done_reason == "length":
+                    raise ValueError(f"Ollama produced thinking but no final answer: model={model!r}, think={think!r}, done_reason={done_reason!r}, thinking_chars={len(thinking_trace)}, raw_response_chars={len(raw_answer)}")
+                raise ValueError("Ollama returned an empty response")
+            
             return answer
 
-        except (
-            requests.ConnectTimeout,
-            requests.ReadTimeout,
-            requests.ConnectionError,
-            requests.HTTPError,
-            ValueError,
-            RuntimeError,
-        ) as exc:
+        except (requests.ConnectTimeout, requests.ReadTimeout, requests.ConnectionError, requests.HTTPError, ValueError, RuntimeError,) as exc:
             last_error = exc
-
-            retryable = isinstance(
-                exc,
-                (
-                    requests.ConnectTimeout,
-                    requests.ReadTimeout,
-                    requests.ConnectionError,
-                ),
-            )
+            retryable = isinstance(exc, (requests.ConnectTimeout, requests.ReadTimeout, requests.ConnectionError,))
 
             if isinstance(exc, requests.HTTPError):
-                status = (
-                    exc.response.status_code
-                    if exc.response is not None
-                    else None
-                )
+                status = (exc.response.status_code if exc.response is not None else None)
+                retryable = (status in RETRYABLE_STATUS_CODES)
 
-                retryable = (
-                    status in RETRYABLE_STATUS_CODES
-                )
-
-            if (
-                not retryable
-                or attempt + 1 >= retries
-            ):
+            if (not retryable or attempt + 1 >= retries):
                 break
 
-            delay = retry_delay(
-                attempt,
-                response,
-            )
-
-            log.warning(
-                "[OLLAMA] request failed "
-                "model=%s attempt=%d/%d "
-                "error=%s: %s retrying_in=%.1fs",
-                model,
-                attempt + 1,
-                retries,
-                type(exc).__name__,
-                exc,
-                delay,
-            )
-
+            delay = retry_delay(attempt, response,)
+            log.warning("[OLLAMA] request failed " "model=%s attempt=%d/%d " "error=%s: %s retrying_in=%.1fs", model, attempt + 1, retries, type(exc).__name__, exc, delay)
             time.sleep(delay)
 
-    raise RuntimeError(
-        "Ollama generation failed after "
-        f"{retries} attempts: "
-        f"model={model!r}, "
-        f"prompt_chars={len(prompt)}, "
-        f"last_error={last_error}"
-    ) from last_error
+    raise RuntimeError("Ollama generation failed after " f"{retries} attempts: " f"model={model!r}, " f"prompt_chars={len(prompt)}, " f"last_error={last_error}") from last_error
 
 def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, connect_timeout: int = 15, retries: int = 8, temperature: float = 0.0, top_p: float = 0.9, max_tokens: int | None = None) -> str:
     if retries < 1:

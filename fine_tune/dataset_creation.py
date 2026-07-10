@@ -267,10 +267,21 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     with _ollama_semaphore:
         response = get_worker_http_session().post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
         response.raise_for_status()
-    answer = str(response.json().get("response", "")).strip()
-    if not answer: 
+    
+    data = response.json()
+    thinking_trace = str(data.get("thinking") or "").strip()
+    raw_answer = str(data.get("response") or "").strip()
+    done_reason = str(data.get("done_reason") or "").strip()
+
+    if not answer:
+        if thinking_trace or "<think>" in raw_answer.lower() or done_reason == "length":
+            raise ValueError(
+                f"Ollama produced thinking but no final answer: model={model!r}, "
+                f"think={thinking!r}, done_reason={done_reason!r}, "
+                f"thinking_chars={len(thinking_trace)}, raw_response_chars={len(raw_answer)}"
+            )
         raise ValueError("Ollama returned an empty response")
-    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
+    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL | re.IGNORECASE).strip()
     return answer
 
 def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
