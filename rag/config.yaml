@@ -9,16 +9,18 @@ ollama:
   base_url: http://localhost:11434
   embedding_model: snowflake-arctic-embed2:568m #snowflake-arctic-embed:xs | all-minilm:latest | snowflake-arctic-embed2:568m
   qa_model: llama3.2:3b
-  timeout: 900
   qa_timeout: 900
-  qa_num_ctx: 16384             #16384 | 8192
-  qa_num_predict: 2048          #2048 | 1024 | 512 | 256
+  timeout: 900
   connect_timeout: 15
   qa_retries: 3
   qa_keep_alive: 30m
 
+  qa_num_ctx: 16384             #16384 | 8192
+  qa_num_predict: 2048          #2048 | 1024 | 512 | 256
   qa_temperature: 0.0            # 0.0 | 0.1
   qa_top_p: 0.9
+  qa_top_k: 75
+  qa_min_p: 0.9
   qa_repeat_penalty: 1.08
   embed_keep_alive: "15s"
 
