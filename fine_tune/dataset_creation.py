@@ -195,6 +195,45 @@ def resolve_db_path_from_cfg(cfg: dict) -> Path:
 
     return Path(db_rel).resolve()
 
+def cfg_options(raw: Any, defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+    output: dict[str, Any] = dict(defaults or {})
+    if not raw:
+        return output
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"Expected options dict, got {type(raw).__name__}")
+
+    int_keys = {"num_ctx", "num_predict", "top_k", "seed"}
+    float_keys = {
+        "temperature",
+        "top_p",
+        "min_p",
+        "repeat_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+        "mirostat",
+        "mirostat_tau",
+        "mirostat_eta",
+    }
+
+    passthrough_keys = {"stop"}
+    allowed = int_keys | float_keys | passthrough_keys
+
+    for key, value in raw.items():
+        key = str(key).strip()
+        if value is None:
+            continue
+        if key not in allowed:
+            log.warning("[OPTIONS] ignoring unsupported Ollama option: %s=%r", key, value)
+            continue
+        if key in int_keys:
+            output[key] = int(value)
+        elif key in float_keys:
+            output[key] = float(value)
+        else:
+            output[key] = value
+
+    return output
 
 def resolve_output_path(path_value: str, cfg: dict) -> Path:
     p = expand_path(path_value)
@@ -250,29 +289,46 @@ def get_worker_http_session() -> requests.Session:
 
     return session
 
-def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2, thinking: bool | str | None = None) -> str:
-    payload = {
-        "model": model, 
-        "prompt": prompt, 
-        "stream": False,
-        "keep_alive": "10m", 
-        "options": {
-            "temperature": temperature, 
-            "top_p": 0.9}
+def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2, top_p: float = 0.9, repeat_penalty: float = 1.05, min_p: float = 0.05, thinking: bool | str | None = None, options: dict[str, Any] | None = None) -> str:
+    request_options: dict[str, Any] = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "min_p": min_p,
+        "repeat_penalty": repeat_penalty,
     }
+
+    if options:
+        request_options.update(options)
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": "10m",
+        "options": request_options,
+    }
+
     if thinking is not None:
         payload["think"] = thinking
-    if response_format is not None: 
+
+    if response_format is not None:
         payload["format"] = response_format
+
     with _ollama_semaphore:
         response = get_worker_http_session().post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=timeout)
-        response.raise_for_status()
-    
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise requests.HTTPError(
+                f"{exc}; body={response.text[:1000]!r}; model={model!r}; url={response.url!r}"
+            ) from exc
+
     data = response.json()
     thinking_trace = str(data.get("thinking") or "").strip()
     raw_answer = str(data.get("response") or "").strip()
     done_reason = str(data.get("done_reason") or "").strip()
-
+    answer = re.sub(r"<think>.*?</think>", "", raw_answer, flags=re.DOTALL | re.IGNORECASE,).strip()
+    log.info("[DATASET_OLLAMA] model=%s think=%r thinking_chars=%d response_chars=%d prompt_tokens=%s output_tokens=%s total_duration=%.2fs options=%s", model, thinking, len(thinking_trace), len(answer), data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000, request_options,)
     if not answer:
         if thinking_trace or "<think>" in raw_answer.lower() or done_reason == "length":
             raise ValueError(
@@ -280,8 +336,8 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
                 f"think={thinking!r}, done_reason={done_reason!r}, "
                 f"thinking_chars={len(thinking_trace)}, raw_response_chars={len(raw_answer)}"
             )
+
         raise ValueError("Ollama returned an empty response")
-    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL | re.IGNORECASE).strip()
     return answer
 
 def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
@@ -309,7 +365,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     prompt = make_prompt(title=title, source=source, url=url, text=text[: settings["max_chars"]], n=settings["qa_per_chunk"])
 
     try:
-        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"])
+        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"], options=settings["draft_options"])
         items = extract_json_array(raw)
 
     except Exception as exc:
@@ -385,6 +441,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 require_positive_document=settings["require_positive_document"],
                 answer_model=settings["answer_model"],
                 answer_think=settings["answer_think"],
+                answer_options=settings["answer_options"]
             )
 
         except Exception as exc:
@@ -437,7 +494,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                         "negative_min_confidence"
                     ],
                     timeout=settings["request_timeout"],
-                    think=settings["validator_think"]
+                    think=settings["validator_think"],
+                    options=settings["validator_options"],
                 )
 
                 hard_doc_ids = {
@@ -477,7 +535,8 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                         "negative_min_confidence"
                     ],
                     timeout= settings["request_timeout"],
-                    think=settings["validator_think"]
+                    think=settings["validator_think"],
+                    options=settings["validator_options"],
                 )
 
                 if hard_negatives or easy_negatives:
@@ -669,12 +728,12 @@ def extract_json_object(text: str) -> dict:
 
     return data
 
-def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None) -> tuple[bool, dict]:
+def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None, options: dict[str, Any] | None = None) -> tuple[bool, dict]:
     candidate_context = f"Title: {candidate.get('title')}\nSource: {candidate.get('source')}\nURL: {candidate.get('url')}\n\nText:\n{clean_text(candidate.get('text') or '')[:1800]}"
     prompt = f"Determine whether the candidate passage answers the question or supports the reference answer. Return only the required JSON object.\n\nQuestion:\n{question}\n\nReference answer:\n{reference_answer}\n\nCandidate passage:\n{candidate_context}"
     last_error: Exception | None = None
     for attempt in range(5):
-        raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0, thinking=think)
+        raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0, thinking=think, options=options)
         try:
             result = json.loads(raw)
             break
@@ -716,7 +775,7 @@ def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, 
 
     return output
 
-def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None) -> list[dict]:
+def select_validated_negatives(candidates: list[dict], *, question: str, reference_answer: str, count: int, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None, options: dict[str, Any] | None = None,) -> list[dict]:
     accepted: list[dict] = []
 
     for candidate in candidates:
@@ -729,7 +788,8 @@ def select_validated_negatives(candidates: list[dict], *, question: str, referen
                 validator_model=validator_model,
                 min_confidence=min_confidence,
                 timeout=timeout,
-                think=think
+                think=think,
+                options=options
             )
         except Exception as exc:
             log.warning(
@@ -904,7 +964,7 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None, answer_options: dict[str, Any] | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
     retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
     candidate_doc_rank = find_document_rank(retrieval.candidate_chunks, int(positive["doc_id"]))
     selected_doc_rank = find_document_rank(retrieval.selected_chunks, int(positive["doc_id"]))
@@ -941,7 +1001,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     answer_style_cfg = cfg.get("answer_style", {}) or {}
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
-    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think)).strip()
+    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think, option_override=answer_options)).strip()
 
     if not final_answer:
         return None, {
@@ -1214,6 +1274,45 @@ def main() -> None:
     answer_think = ds_cfg.get("answer_think", False)
     validator_think = ds_cfg.get("validator_think", False)
 
+    draft_options = cfg_options(
+        ds_cfg.get("draft_options"),
+        {
+            "temperature": 0.25,
+            "top_p": 0.9,
+            "top_k": 50,
+            "min_p": 0.05,
+            "repeat_penalty": 1.05,
+            "num_predict": 1024,
+            "num_ctx": (ollama_cfg.get("qa_num_ctx", 16384))
+        }
+    )
+
+    answer_options = cfg_options(
+        ds_cfg.get("answer_options"),
+        {
+            "temperature": 0.0,
+            "top_p": 0.9,
+            "top_k": 40,
+            "min_p": 0.05,
+            "repeat_penalty": 1.08,
+            "num_predict": 1024,
+            "num_ctx": (ollama_cfg.get("qa_num_ctx", 16384))
+        },
+    )
+
+    validator_options = cfg_options(
+        ds_cfg.get("validator_options"),
+        {
+            "temperature": 0.0,
+            "top_p": 0.8,
+            "top_k": 20,
+            "min_p": 0.05,
+            "repeat_penalty": 1.0,
+            "num_predict": 1024,
+            "num_ctx": (ollama_cfg.get("qa_num_ctx", 16384))
+        },
+    )
+
     db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).expanduser()
     default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
@@ -1276,6 +1375,10 @@ def main() -> None:
         "draft_think": draft_think,
         "answer_think": answer_think,
         "validator_think": validator_think,
+
+        "draft_options": draft_options,
+        "answer_options": answer_options,
+        "validator_options": validator_options,
 
         "make_negatives": make_negatives,
         "hard_negative_count": hard_negative_count,

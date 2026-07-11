@@ -291,7 +291,7 @@ def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int
         options: dict[str, Any] = {
             "temperature": float(ollama.get("qa_temperature", 0.0)),
             "top_p": float(ollama.get("qa_top_p", 0.9,)),
-            "num_ctx": int(ollama.get("qa_num_ctx", 8129)),
+            "num_ctx": int(ollama.get("qa_num_ctx", 16384)),
             "num_predict": int(ollama.get("qa_num_predict", 256))
         }
 

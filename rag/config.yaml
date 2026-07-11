@@ -19,6 +19,7 @@ ollama:
 
   qa_temperature: 0.0            # 0.0 | 0.1
   qa_top_p: 0.9
+  qa_repeat_penalty: 1.08
   embed_keep_alive: "15s"
 
 llamacpp:
@@ -216,6 +217,27 @@ dataset_creation:
   append: false
   flush_every: 25
   file_buffer_size: 1048576
+
+  draft_options:
+    temperature: 0.25
+    top_p: 0.9
+    top_k: 50
+    min_p: 0.05
+    repeat_penalty: 1.05
+
+  answer_options:
+    temperature: 0.0
+    top_p: 0.9
+    top_k: 40
+    min_p: 0.05
+    repeat_penalty: 1.08
+
+  validator_options:
+    temperature: 0.0
+    top_p: 0.8
+    top_k: 20
+    min_p: 0.05
+    repeat_penalty: 1.0
 
   sources:
     - genshin_wiki
