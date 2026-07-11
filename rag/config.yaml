@@ -223,21 +223,21 @@ dataset_creation:
   draft_options:
     temperature: 0.25
     top_p: 0.9
-    top_k: 50
+    top_k: 75
     min_p: 0.05
     repeat_penalty: 1.05
 
   answer_options:
     temperature: 0.0
     top_p: 0.9
-    top_k: 40
+    top_k: 50
     min_p: 0.05
     repeat_penalty: 1.08
 
   validator_options:
     temperature: 0.0
     top_p: 0.8
-    top_k: 20
+    top_k: 25
     min_p: 0.05
     repeat_penalty: 1.0
 
