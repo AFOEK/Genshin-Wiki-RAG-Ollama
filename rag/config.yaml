@@ -8,7 +8,7 @@ faiss_path: data/faiss
 ollama: 
   base_url: http://localhost:11434
   embedding_model: snowflake-arctic-embed2:568m #snowflake-arctic-embed:xs | all-minilm:latest | snowflake-arctic-embed2:568m
-  qa_model: llama3.2:3b
+  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
   qa_timeout: 900
   timeout: 900
   connect_timeout: 15
@@ -20,7 +20,7 @@ ollama:
   qa_temperature: 0.0            # 0.0 | 0.1
   qa_top_p: 0.9
   qa_top_k: 75
-  qa_min_p: 0.9
+  qa_min_p: 0.5
   qa_repeat_penalty: 1.08
   embed_keep_alive: "15s"
 
@@ -190,8 +190,8 @@ dataset_creation:
   direct_top_k: 75
   require_positive_document: true
 
-  workers: 2          #2 - 32
-  max_inflight: 2     #4 - 30
+  workers: 32          #2 - 32
+  max_inflight: 30     #4 - 30
   preserve_output_order: true
 
   limit: 1500
