@@ -1001,7 +1001,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     answer_style_cfg = cfg.get("answer_style", {}) or {}
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
-    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think, option_override=answer_options)).strip()
+    final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think, options_override=answer_options)).strip()
 
     if not final_answer:
         return None, {
