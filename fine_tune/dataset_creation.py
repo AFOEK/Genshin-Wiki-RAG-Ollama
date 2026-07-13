@@ -373,6 +373,11 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
         raise ValueError("Ollama returned an empty response")
     return answer
 
+def stable_seed(*parts: Any) -> int:
+    text = "|".join(str(part) for part in parts)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
 def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[str, Any]) -> ChunkTaskResult:
     chunk_id = int(row["chunk_id"])
     result = ChunkTaskResult(task_index=task_index, chunk_id=chunk_id)
@@ -384,7 +389,9 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     # uid7 = uuid.uuid7()
     # uid4 = uuid.uuid4()
     # rng = random.Random(int(uid7.hex[:5], 16) + settings["seed"] + chunk_id + int(uid4.hex[:-5], 16))
-    rng = random.Random(settings["seed"] + chunk_id)
+    draft_rng = random.Random(stable_seed(settings["seed"], chunk_id, "draft"))
+    answer_rng = random.Random(stable_seed(settings["seed"], chunk_id, "answer"))
+    validator_rng = random.Random(stable_seed(settings["seed"], chunk_id, "validator"))
 
     if not is_good_chunk(text, title, source):
         result.skipped += 1
@@ -405,7 +412,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         draft_options = jitter_options(
             settings.get("draft_options") or {},
             settings.get("draft_jitter") or {},
-            rng
+            draft_rng
         )
         raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"], options=draft_options)
         items = extract_json_array(raw)
@@ -475,7 +482,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
             answer_options = jitter_options(
                 settings.get("answer_options") or {},
                 settings.get("answer_jitter") or {},
-                rng,
+                answer_rng,
             )
             record, rejection, retrieval = process_generated_pair(
                 cfg,
@@ -524,6 +531,11 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
 
         if settings["make_negatives"]:
             try:
+                validator_options = jitter_options(
+                    settings.get("validator_options") or {},
+                    settings.get("validator_jitter") or {},
+                    validator_rng,
+                )
                 hard_candidates = get_hard_negative_candidates(
                     retrieval,
                     positive,
@@ -542,7 +554,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                     ],
                     timeout=settings["request_timeout"],
                     think=settings["validator_think"],
-                    options=settings["validator_options"],
+                    options=validator_options,
                 )
 
                 hard_doc_ids = {
@@ -583,7 +595,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                     ],
                     timeout= settings["request_timeout"],
                     think=settings["validator_think"],
-                    options=settings["validator_options"],
+                    options=validator_options,
                 )
 
                 if hard_negatives or easy_negatives:
