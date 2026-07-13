@@ -195,7 +195,7 @@ dataset_creation:
   preserve_output_order: true
 
   limit: 1500
-  qa_per_chunk: 5 #2-10
+  qa_per_chunk: 1 #1-5, recommended: 1
   min_chars: 500
   max_chars: 2500
   seed: 1337

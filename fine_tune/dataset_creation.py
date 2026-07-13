@@ -902,19 +902,63 @@ Use ONLY the source context below.
 
 Generate {n} high-quality question and reference-answer pairs.
 
-Rules:
+Return format:
 - Return valid JSON only.
 - Return a JSON array.
-- Each item must have:
+- Each item must have exactly:
   - question
   - reference_answer
-- Questions should sound like real user questions.
-- The reference answer must be directly supported by the source.
+
+Hard rules:
+- The reference_answer must be directly supported by the source context.
 - Do not use external knowledge.
 - Do not ask questions requiring information absent from the source.
-- If the source is navigation, comments, boilerplate, membership
-  text, or otherwise not useful, return [].
+- Do not generate questions about page metadata, comments, navigation, ads, membership prompts, unrelated links, or boilerplate.
+- If the source context is navigation, comments, boilerplate, membership text, an empty list, or otherwise not useful, return [].
+- Do not generate questions where the answer is only identical to the page title.
+- Do not generate vague questions like "What is this page about?"
 - Keep reference answers concise but complete.
+
+Retrieval-friendly question rules:
+- Every question must include the main entity name from the Source title when applicable.
+- Prefer questions that a real player would ask.
+- Prefer gameplay, build, material, location, quest, lore, event, enemy, item-use, or mechanic questions.
+- Avoid alternate-language-name questions unless the source context is clearly a language table.
+- Avoid asking about Japanese, Korean, Spanish, French, Thai, German, Portuguese, Chinese, or pronunciation unless the source is specifically about names/translations.
+- Avoid questions about lists of unrelated names unless the source clearly explains the relationship between them.
+- Avoid questions whose answer depends only on one isolated title line.
+
+Quality rules:
+- Each question should be answerable from the source context alone.
+- Each reference_answer should use the same entity names and terminology found in the source.
+- Do not over-explain.
+- Do not invent recommendations, rankings, locations, versions, materials, or mechanics.
+- If only one good question can be made, return only one item.
+- If no good question can be made, return [].
+
+Good example:
+[
+  {{
+    "question": "What materials are needed to ascend Zhongli?",
+    "reference_answer": "Zhongli's ascension materials include ... "
+  }}
+]
+
+Bad examples:
+[
+  {{
+    "question": "What is the official English name?",
+    "reference_answer": "The official English name is Brightwood Room Doors."
+  }},
+  {{
+    "question": "What are the Japanese and Korean names?",
+    "reference_answer": "..."
+  }},
+  {{
+    "question": "What is this page about?",
+    "reference_answer": "..."
+  }}
+]
 
 Source title:
 {title}
