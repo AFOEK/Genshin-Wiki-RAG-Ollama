@@ -13,6 +13,7 @@ import sys
 import time
 import yaml
 import threading
+import uuid
 
 from pathlib import Path
 from contextlib import ExitStack
@@ -235,6 +236,38 @@ def cfg_options(raw: Any, defaults: dict[str, Any] | None = None) -> dict[str, A
 
     return output
 
+def jitter_options(options: dict[str, Any], jitter_cfg: dict[str, Any] | None, rng: random.Random) -> dict[str, Any]:
+    out = dict(options or {})
+
+    jitter_cfg = jitter_cfg or {}
+    if not cfg_bool(jitter_cfg.get("enabled"), False):
+        return out
+
+    def jfloat(name: str):
+        lo_key = f"{name}_min"
+        hi_key = f"{name}_max"
+
+        if lo_key in jitter_cfg and hi_key in jitter_cfg:
+            out[name] = float(rng.uniform(float(jitter_cfg[lo_key]), float(jitter_cfg[hi_key])))
+
+    def jint(name: str):
+        lo_key = f"{name}_min"
+        hi_key = f"{name}_max"
+
+        if lo_key in jitter_cfg and hi_key in jitter_cfg:
+            out[name] = int(rng.randint(int(jitter_cfg[lo_key]), int(jitter_cfg[hi_key])))
+
+    jfloat("temperature")
+    jfloat("top_p")
+    jfloat("min_p")
+    jfloat("repeat_penalty")
+    jfloat("presence_penalty")
+    jfloat("frequency_penalty")
+    jint("top_k")
+    jint("num_predict")
+
+    return out
+
 def resolve_output_path(path_value: str, cfg: dict) -> Path:
     p = expand_path(path_value)
 
@@ -348,6 +381,10 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     url = str(row.get("url") or "")
     title = str(row.get("title") or "")
     text = clean_text(str(row.get("text") or ""))
+    # uid7 = uuid.uuid7()
+    # uid4 = uuid.uuid4()
+    # rng = random.Random(int(uid7.hex[:5], 16) + settings["seed"] + chunk_id + int(uid4.hex[:-5], 16))
+    rng = random.Random(settings["seed"] + chunk_id)
 
     if not is_good_chunk(text, title, source):
         result.skipped += 1
@@ -365,7 +402,12 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     prompt = make_prompt(title=title, source=source, url=url, text=text[: settings["max_chars"]], n=settings["qa_per_chunk"])
 
     try:
-        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"], options=settings["draft_options"])
+        draft_options = jitter_options(
+            settings.get("draft_options") or {},
+            settings.get("draft_jitter") or {},
+            rng
+        )
+        raw = ollama_generate(settings["ollama_url"], settings["draft_model"], prompt, timeout=settings["request_timeout"], thinking=settings["draft_think"], options=draft_options)
         items = extract_json_array(raw)
 
     except Exception as exc:
@@ -430,6 +472,11 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
             continue
 
         try:
+            answer_options = jitter_options(
+                settings.get("answer_options") or {},
+                settings.get("answer_jitter") or {},
+                rng,
+            )
             record, rejection, retrieval = process_generated_pair(
                 cfg,
                 question=question,
@@ -441,7 +488,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 require_positive_document=settings["require_positive_document"],
                 answer_model=settings["answer_model"],
                 answer_think=settings["answer_think"],
-                answer_options=settings["answer_options"]
+                answer_options=answer_options
             )
 
         except Exception as exc:
@@ -1357,6 +1404,10 @@ def main() -> None:
         },
     )
 
+    draft_jitter = dict(ds_cfg.get("draft_jitter") or {})
+    answer_jitter = dict(ds_cfg.get("answer_jitter") or {})
+    validator_jitter = dict(ds_cfg.get("validator_jitter") or {})
+
     db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).expanduser()
     default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
@@ -1423,6 +1474,10 @@ def main() -> None:
         "draft_options": draft_options,
         "answer_options": answer_options,
         "validator_options": validator_options,
+
+        "draft_jitter": draft_jitter,
+        "answer_jitter": answer_jitter,
+        "validator_jitter": validator_jitter,
 
         "make_negatives": make_negatives,
         "hard_negative_count": hard_negative_count,

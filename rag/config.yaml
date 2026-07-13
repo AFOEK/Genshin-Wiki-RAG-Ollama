@@ -241,6 +241,17 @@ dataset_creation:
     min_p: 0.05
     repeat_penalty: 1.0
 
+  draft_jitter:
+    enabled: true
+    temperature_min: 0.05
+    temperature_max: 0.25
+    top_p_min: 0.85
+    top_p_max: 0.95
+    top_k_min: 40
+    top_k_max: 75
+    repeat_penalty_min: 1.00
+    repeat_penalty_max: 1.06
+
   sources:
     - genshin_wiki
     - kqm_tcl
