@@ -70,6 +70,20 @@ retrieval_cache:
   max_entries: 50000
   version: 6
 
+hyde:
+  enabled: true
+  model: qwen3.5:9b # deepseek-r1:14b
+  think: false
+  temperature: 0.0
+  top_p: 0.9
+  top_k: 45
+  num_predict: 1024   # 512 | 256
+  candidate_k: 300
+  rrf_weight: 0.75
+  mode: fallback    #fallback | always
+  cache_enable: true
+  timeout: 300
+
 versioning:
   current: 606
   aliases:

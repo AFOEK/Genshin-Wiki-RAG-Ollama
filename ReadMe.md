@@ -361,6 +361,35 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 - [x] Recency weighting. [^3]
 - [x] Parent-child retriever.
 - [x] Cache layer retriever.
+- [ ] Intent-specific retrieval pipelines.
+- [ ] Query decomposition.
+- [ ] Sub-query retrieval and fusion.
+- [ ] HyDE retrieval support.
+- [ ] Multi-query retrieval.
+- [ ] Adaptive HyDE fallback.
+- [ ] Adaptive retrieval routing.
+- [ ] SPLADE support.
+- [ ] RAG-Fusion retrieval.
+- [ ] Query complexity classification.
+- [ ] LLM query expansion.
+- [ ] Retrieval confidence scoring.
+- [ ] Corrective RAG support.
+- [ ] Automatic retrieval retry/fallback.
+- [ ] Multi-hop query detection.
+- [ ] ColBERT late-interaction retriever.
+- [ ] ColBERT hybrid retrieval.
+- [ ] Learned sparse retrieval.
+- [ ] Learned-to-rank reranker.
+- [ ] LambdaMART feature fusion.
+- [ ] Trained retrieval score calibration.
+- [ ] Claim-level grounding verification.
+- [ ] Unsupported-claim detection.
+- [ ] Answer regeneration on grounding failure.
+- [ ] SearXNG query result validations. 
+- [ ] Native retrieval benchmark suite.
+- [ ] Recall@K, MRR@K, nDCG@K evaluation.
+- [ ] Retriever latency and memory benchmark.
+- [ ] End-to-end RAG faithfulness evaluation.
 
 ## Foot note
 [^1]: It's get processed on Kaggle
