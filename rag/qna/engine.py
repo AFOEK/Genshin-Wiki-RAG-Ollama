@@ -20,17 +20,16 @@ from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
 _RETRIEVAL_CACHE : RetrievalCache | None = None
-_HYDE_DOCUMENT_CACHE : str | None = None
 
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     global _RETRIEVAL_CACHE
     cache_cfg = cfg.get("retrieval_cache", {}) or {}
-    if not as_bool(cache_cfg.get("enable", False)):
+    if not as_bool(cache_cfg.get("enabled", False)):
         return None
     
     if _RETRIEVAL_CACHE is None:
         root = resolve_storage_root(cfg)
-        rel = Path(str(cache_cfg.get("path", "/data/cache/retrieval_cache.sqlite")))
+        rel = Path(str(cache_cfg.get("path", "data/cache/retrieval_cache.sqlite")))
         path = rel if rel.is_absolute() else root / rel
         _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
     return _RETRIEVAL_CACHE
@@ -70,6 +69,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     turbovec_ret_cache = None
     q_vec_cache = None
     q_dims_cache = None
+    hyde_document_cache: str | None = None
 
     def get_q_vec(ret):
         nonlocal q_vec_cache, q_dims_cache
@@ -137,29 +137,24 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         return faiss_ret_cache
 
     def search_hyde(k: int) -> list[tuple[int, float]]:
-        nonlocal _HYDE_DOCUMENT_CACHE
-
         hyde_cfg = cfg.get("hyde", {}) or {}
-
         if not as_bool(hyde_cfg.get("enabled"), False):
             return []
         
         faiss_ret = get_faiss_ret()
-        if _HYDE_DOCUMENT_CACHE is None:
-            _HYDE_DOCUMENT_CACHE = generate_hyde_document(cfg, question)
+        if hyde_document_cache is None:
+            hyde_document_cache = generate_hyde_document(cfg, question)
         
-        if not _HYDE_DOCUMENT_CACHE:
+        if not hyde_document_cache:
             return []
         
-        hyde_blob, hyde_dims = embed(cfg, _HYDE_DOCUMENT_CACHE, backend=backend, mode="query")
-
+        hyde_blob, hyde_dims = embed(cfg, hyde_document_cache, backend=backend, mode="query")
         if hyde_dims != faiss_ret.dims:
-            raise RuntimeError("HyDE embedding dimension mismatch: query=%s faiss=%s", str(hyde_dims), str(faiss_ret.dims))
+            raise RuntimeError("HyDE embedding dimension mismatch: " f"query={hyde_dims} faiss={faiss_ret.dims}")
         
         hyde_vec = normalize_query_vec(hyde_blob, hyde_dims)
         configured_k = int(hyde_cfg.get("candidate_k", k))
         effective_k = min(k, configured_k)
-
         results = faiss_ret.search(hyde_vec, effective_k)
         log.info("[HYDE] retrieved candidates=%d requested_k=%d", len(results), effective_k)
         return results
@@ -552,7 +547,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             default_max_chars = 12000
 
         selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
-
+        hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
         context = build_context(selected_chunks)
         log.info("[CONTEXT] final chunk IDs=%s", [int(row["chunk_id"]) for row in selected_chunks])
         return RetrievalResult(
@@ -582,6 +577,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     "hyde_enabled": hyde_enabled,
                     "hyde_used": hyde_used,
                     "hyde_candidate_count": hyde_signal_count,
+                    "hyde_selected_count": hyde_selected_count,
             },
         )
     finally:
