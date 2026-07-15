@@ -70,6 +70,12 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     q_vec_cache = None
     q_dims_cache = None
     hyde_document_cache: str | None = None
+    
+    hyde_cfg = cfg.get("hyde", {}) or {}
+    hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
+    hyde_mode = str(hyde_cfg.get("mode", "fallback")).strip().lower()
+    if hyde_mode not in {"always", "fallback", "off", "disabled", "never"}:
+        raise ValueError(f"Unsupported HyDE mode: {hyde_mode!r}")
 
     def get_q_vec(ret):
         nonlocal q_vec_cache, q_dims_cache
@@ -137,6 +143,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         return faiss_ret_cache
 
     def search_hyde(k: int) -> list[tuple[int, float]]:
+        nonlocal hyde_document_cache
         hyde_cfg = cfg.get("hyde", {}) or {}
         if not as_bool(hyde_cfg.get("enabled"), False):
             return []
@@ -261,6 +268,84 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
+    
+    def should_trigger_hyde(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]]) -> tuple[bool, str]:
+        if not hyde_enabled:
+            return False, "hyde_disabled"
+        
+        if hyde_mode == "always":
+            return True, "mode_always"
+        
+        if hyde_mode in {"off", "disabled", "never"}:
+            return False, "mode_disabled"
+        
+        if not faiss_results and not bm25_results:
+            return True, "both_channels_empty"
+
+        if not faiss_results:
+            return True, "faiss_empty"
+
+        if not bm25_results:
+            return True, "bm25_empty"
+
+        top_n = max(1, int(hyde_cfg.get("fallback_top_n", 12)))
+
+        faiss_chunk_ids = [int(chunk_id) for chunk_id, _ in faiss_results[:top_n]]
+        bm25_chunk_ids = [int(chunk_id) for chunk_id, _ in bm25_results[:top_n]]
+
+        top_chunk_ids = list(
+            dict.fromkeys(
+                faiss_chunk_ids + bm25_chunk_ids
+            )
+        )
+
+        rows = fetch_chunks(conn, top_chunk_ids)
+
+        chunk_to_doc = {
+            int(row["chunk_id"]): int(row["doc_id"])
+            for row in rows
+        }
+
+        faiss_doc_ids = {
+            chunk_to_doc[chunk_id]
+            for chunk_id in faiss_chunk_ids
+            if chunk_id in chunk_to_doc
+        }
+
+        bm25_doc_ids = {
+            chunk_to_doc[chunk_id]
+            for chunk_id in bm25_chunk_ids
+            if chunk_id in chunk_to_doc
+        }
+
+        shared_doc_ids = (
+            faiss_doc_ids & bm25_doc_ids
+        )
+
+        minimum_shared_docs = max(
+            0,
+            int(
+                hyde_cfg.get(
+                    "fallback_min_shared_docs",
+                    1,
+                )
+            ),
+        )
+
+        if len(shared_doc_ids) < minimum_shared_docs:
+            return (
+                True,
+                "low_channel_agreement:"
+                f"shared_docs={len(shared_doc_ids)}"
+                f"<{minimum_shared_docs}",
+            )
+
+        return (
+            False,
+            "normal_retrieval_sufficient:"
+            f"shared_docs={len(shared_doc_ids)}",
+        )
+
     
     def search_hybrid_hyde(k: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
         hyde_cfg = cfg.get("hyde", {}) or {}
