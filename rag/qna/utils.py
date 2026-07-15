@@ -563,6 +563,57 @@ def build_hybrid_signal(faiss_results: list[tuple[int, float]], bm25_results: li
 
     return signals
 
+def build_hybrid_hyde_signal(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]], hyde_results: list[tuple[int, float]], *, rrf_k: int = 60, rrf_scale: float = 10.0, hyde_weight: float = 0.75) -> dict[int, dict]:
+    signals: dict[int, dict] = {}
+
+    def ensure(chunk_id: int) -> dict:
+        if chunk_id not in signals:
+            signals[chunk_id] = {
+                "rrf_score": 0.0,
+                "faiss_score": 0.0,
+                "bm25_score": 0.0,
+                "hyde_score": 0.0,
+                "faiss_rank": None,
+                "bm25_rank": None,
+                "hyde_rank": None,
+                "in_faiss": False,
+                "in_bm25": False,
+                "in_hyde": False,
+            }
+        return signals[chunk_id]
+
+    for rank, (chunk_id, score) in enumerate(faiss_results, start=1):
+        chunk_id = int(chunk_id)
+        signal = ensure(chunk_id)
+
+        signal["faiss_score"] = float(score)
+        signal["faiss_rank"] = rank
+        signal["in_faiss"] = True
+        signal["rrf_score"] += (1.0 / (rrf_k + rank))
+
+    for rank, (chunk_id, score) in enumerate(bm25_results, start=1,):
+        chunk_id = int(chunk_id)
+        signal = ensure(chunk_id)
+
+        signal["bm25_score"] = float(score)
+        signal["bm25_rank"] = rank
+        signal["in_bm25"] = True
+        signal["rrf_score"] += (1.0 / (rrf_k + rank))
+
+    for rank, (chunk_id, score) in enumerate(hyde_results, start=1):
+        chunk_id = int(chunk_id)
+        signal = ensure(chunk_id)
+
+        signal["hyde_score"] = float(score)
+        signal["hyde_rank"] = rank
+        signal["in_hyde"] = True
+        signal["rrf_score"] += (hyde_weight / (rrf_k + rank))
+
+    for signal in signals.values():
+        signal["rrf_score"] *= rrf_scale
+
+    return signals
+
 def get_bm25_weights(intent: str) -> tuple[float, float, float, float, float]:
     profile = INTENT_PROFILES.get(
         intent,
@@ -580,9 +631,7 @@ def get_bm25_weights(intent: str) -> tuple[float, float, float, float, float]:
     )
 
     if any(weight < 0 for weight in weights):
-        raise ValueError(
-            f"BM25 weights must be non-negative, got {weights}"
-        )
+        raise ValueError(f"BM25 weights must be non-negative, got {weights}")
 
     return weights
 
@@ -1206,6 +1255,8 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             in_bm25 = bool(signal.get("in_bm25", False))
             faiss_rank = signal.get("faiss_rank")
             bm25_rank = signal.get("bm25_rank")
+            in_hyde = bool(signal.get("in_hyde", False))
+            hyde_rank = signal.get("hyde_rank")
         else:
             base_score = float(signal)
             in_faiss = False
@@ -1285,6 +1336,15 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             retrieval_bonus += 0.05
         elif faiss_rank is not None and faiss_rank <= 15:
             retrieval_bonus += 0.03
+
+        if in_hyde:
+            retrieval_bonus += 0.02
+        if in_hyde and (in_faiss or in_bm25):
+            retrieval_bonus += 0.04
+        if (hyde_rank is not None and hyde_rank <= 5):
+            retrieval_bonus += 0.03
+        elif (hyde_rank is not None and hyde_rank <= 15):
+            retrieval_bonus += 0.02
         
         penalty = 0.0
         media_count = sum(text.count(ext) for ext in media_exts)

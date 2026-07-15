@@ -6,7 +6,8 @@ from pathlib import Path
 
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache
+from core.hyde import generate_hyde_document
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -19,6 +20,7 @@ from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
 _RETRIEVAL_CACHE : RetrievalCache | None = None
+_HYDE_DOCUMENT_CACHE : str | None = None
 
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     global _RETRIEVAL_CACHE
@@ -28,7 +30,7 @@ def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     
     if _RETRIEVAL_CACHE is None:
         root = resolve_storage_root(cfg)
-        rel = Path(str(cache_cfg("path", "/data/cache/retrieval_cache.sqlite")))
+        rel = Path(str(cache_cfg.get("path", "/data/cache/retrieval_cache.sqlite")))
         path = rel if rel.is_absolute() else root / rel
         _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
     return _RETRIEVAL_CACHE
@@ -61,16 +63,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     top_k = broad_top_k if broad else direct_top_k
     bm25_weights = get_bm25_weights(intent)
     candidate_k = max(top_k, candidate_k_cfg)
-    log.info(
-        "[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s subtypes=%s broad=%s",
-        top_k,
-        candidate_k,
-        deep_candidate_multiplier,
-        dedup_max_per_doc,
-        intent,
-        sorted(build_subtypes),
-        broad,
-    )
+    log.info("[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s subtypes=%s broad=%s", top_k, candidate_k, deep_candidate_multiplier, dedup_max_per_doc, intent, sorted(build_subtypes), broad)
 
     faiss_ret_cache = None
     bm25_ret_cache = None
@@ -143,6 +136,33 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             faiss_ret_cache = FaissRetriever(faiss_dir, expected_model=expected_faiss_model, mismatch_policy=faiss_mismatch_policy)
         return faiss_ret_cache
 
+    def search_hyde(k: int) -> list[tuple[int, float]]:
+        nonlocal _HYDE_DOCUMENT_CACHE
+
+        hyde_cfg = cfg.get("hyde", {}) or {}
+
+        if not as_bool(hyde_cfg.get("enabled"), False):
+            return []
+        
+        faiss_ret = get_faiss_ret()
+        if _HYDE_DOCUMENT_CACHE is None:
+            _HYDE_DOCUMENT_CACHE = generate_hyde_document(cfg, question)
+        
+        if not _HYDE_DOCUMENT_CACHE:
+            return []
+        
+        hyde_blob, hyde_dims = embed(cfg, _HYDE_DOCUMENT_CACHE, backend=backend, mode="query")
+
+        if hyde_dims != faiss_ret.dims:
+            raise RuntimeError("HyDE embedding dimension mismatch: query=%s faiss=%s", str(hyde_dims), str(faiss_ret.dims))
+        
+        hyde_vec = normalize_query_vec(hyde_blob, hyde_dims)
+        configured_k = int(hyde_cfg.get("candidate_k", k))
+        effective_k = min(k, configured_k)
+
+        results = faiss_ret.search(hyde_vec, effective_k)
+        log.info("[HYDE] retrieved candidates=%d requested_k=%d", len(results), effective_k)
+        return results
 
     def get_bm25_ret():
         nonlocal bm25_ret_cache
@@ -206,7 +226,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         q_vec = get_q_vec(ret)
         return ret.search(q_vec, k)
 
-
     def search_hybrid(k: int):
         faiss_ret = get_faiss_ret()
         q_vec = get_q_vec(faiss_ret)
@@ -247,6 +266,34 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
+    
+    def search_hybrid_hyde(k: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+        hyde_cfg = cfg.get("hyde", {}) or {}
+
+        faiss_ret = get_faiss_ret()
+        query_vec = get_q_vec(faiss_ret)
+
+        faiss_results = faiss_ret.search(query_vec, k)
+
+        bm25_results = search_bm25(k)
+        hyde_results = search_hyde(k)
+
+        signals = build_hybrid_hyde_signal(
+            faiss_results,
+            bm25_results,
+            hyde_results,
+            rrf_k=rrf_k,
+            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)),
+            hyde_weight=float(hyde_cfg.get("rrf_weight", 0.75)))
+
+        results = sorted(
+            (
+                (chunk_id, signal["rrf_score"])
+                for chunk_id, signal in signals.items()
+            ), key=lambda item: item[1], reverse=True)
+
+        log.info("[HYDE] fusion normal_faiss=%d bm25=%d hyde=%d fused=%d", len(faiss_results), len(bm25_results), len(hyde_results), len(results))
+        return results, signals
 
     try:
         conn = read_only_connect(str(db_path))
@@ -286,6 +333,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             log.info("[QNA] using HYBRID retriever (FAISS + TurboVec + BM25)")
             retriever = None
             results, retrieval_signals = search_hybrid_all(candidate_k)
+        elif retriever_name == "hybrid_hyde":
+            log.info("[QNA] using HYBRID HYDE retriever (FAISS + BM25 + HyDE FAISS)")
+            retriever = None
+            results, retrieval_signals = (search_hybrid_hyde(candidate_k))
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -316,6 +367,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 deep_results, retrieval_signals = search_hybrid_turbovec(deep_k)
             elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
                 deep_results, retrieval_signals = search_hybrid_all(deep_k)
+            elif retriever_name == "hybrid_hyde":
+                deep_results, retrieval_signals = (search_hybrid_hyde(deep_k))
             else:
                 raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -375,6 +428,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         for row in chunks:
             row.pop("_rerank_score", None)
 
+        hyde_cfg = cfg.get("hyde", {}) or {}
+        hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
+        hyde_used = (retriever_name == "hybrid_hyde")
+        hyde_signal_count = sum(1 for signal in (retrieval_signals or {}).values() if isinstance(signal, dict) and signal.get("in_hyde"))
+
         if not chunks:
             return RetrievalResult(
                 question=question,
@@ -394,6 +452,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     "top_k": top_k,
                     "candidate_chunk_ids": [],
                     "selected_chunk_ids": [],
+                    "hyde_enabled": hyde_enabled,
+                    "hyde_used": hyde_used,
+                    "hyde_candidate_count": hyde_signal_count,
                 },
             )
 
@@ -518,6 +579,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     int(row["chunk_id"])
                     for row in selected_chunks
                 ],
+                    "hyde_enabled": hyde_enabled,
+                    "hyde_used": hyde_used,
+                    "hyde_candidate_count": hyde_signal_count,
             },
         )
     finally:

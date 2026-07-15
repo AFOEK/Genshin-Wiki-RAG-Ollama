@@ -68,7 +68,7 @@ retrieval_cache:
   path: data/cache/retrieval_cache.sqlite
   ttl_seconds: 86400
   max_entries: 50000
-  version: 6
+  version: 7
 
 hyde:
   enabled: true
@@ -77,11 +77,13 @@ hyde:
   temperature: 0.0
   top_p: 0.9
   top_k: 45
-  num_predict: 1024   # 512 | 256
+  min_p: 0.05
+  repeat_penalty: 1.05
+  num_predict: 256   # 512 | 256
   candidate_k: 300
   rrf_weight: 0.75
   mode: fallback    #fallback | always
-  cache_enable: true
+  cache_enable: false
   timeout: 300
 
 versioning:

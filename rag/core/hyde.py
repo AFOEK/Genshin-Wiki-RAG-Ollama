@@ -4,6 +4,8 @@ import logging
 from qna.generators import generate
 from qna.utils import as_bool
 
+log = logging.getLogger(__name__)
+
 def build_hyde_prompt(question: str) -> str:
     return f"""
 Write a short hypothetical Genshin Impact reference passage that would
@@ -25,12 +27,37 @@ Question:
 {question}
 """.strip()
 
-def retrieve_hyde_candidate(cfg: dict, question: str, *, candidate_k: int, backend: str) -> list[dict]:
+def generate_hyde_document(cfg: dict, question: str) -> str:
     hyde_cfg = cfg.get("hyde", {}) or {}
-    hypothetical_documents = generate(cfg, build_hyde_prompt(question), model_override=str(hyde_cfg.get("model", "qwen3.5:9b")), think_override=hyde_cfg.get("think", False), options_override={
-        "temperature": float(hyde_cfg.get("temperature", 0.0)),
-        "top_p": float(hyde_cfg.get("top_p", 0.9)),
-        "top_k": int(hyde_cfg.get("top_k", 40)),
-        "num_predict": int(hyde_cfg.get("num_predict", 256))
-    })
-    return FaissRetriever.search(FaissRetriever, hypothetical_documents, candidate_k)
+
+    if not as_bool(hyde_cfg.get("enabled", False)):
+        return ""
+
+    document = str(
+        generate(cfg, build_hyde_prompt(question), model_override=str(hyde_cfg.get("model", "qwen3.5:9b")).strip(), timeout=int(hyde_cfg.get("timeout", 300)), think_override=hyde_cfg.get("think", False), options_override={
+                "temperature": float(
+                    hyde_cfg.get("temperature", 0.0)
+                ),
+                "top_p": float(
+                    hyde_cfg.get("top_p", 0.9)
+                ),
+                "top_k": int(
+                    hyde_cfg.get("top_k", 40)
+                ),
+                "min_p": float(
+                    hyde_cfg.get("min_p", 0.05)
+                ),
+                "repeat_penalty": float(
+                    hyde_cfg.get("repeat_penalty", 1.05)
+                ),
+                "num_predict": int(
+                    hyde_cfg.get("num_predict", 256)
+                ),
+            },
+        )
+    ).strip()
+
+    if not document:
+        raise RuntimeError("HyDE generator returned an empty hypothetical document")
+    log.info("[HYDE] generated hypothetical document question_chars=%d document_chars=%d", len(question), len(document))
+    return document

@@ -55,6 +55,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3,
     }
     if think is not None:
         payload["think"] = think
+        thinking_enabled = (think is True or (isinstance(think, str) and think.strip().lower() not in {"", "false", "off", "none", "no"}))
 
     last_error: Exception | None = None
 
@@ -79,7 +80,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3,
                 raise RuntimeError("[OLLAMA] Ollama returned an empty response")
 
             elapsed = time.perf_counter() - started
-            if (think is not None) and (think == True or "true" in think): 
+            if thinking_enabled: 
                 log.info("[OLLAMA_THINK] model=%s think=%r thinking_chars=%d response_chars=%d raw_response_chars=%d prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, think, len(thinking_trace), len(answer), len(raw_answer), data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
             else:
                 log.info("[OLLAMA] completed model=%s elapsed=%.2fs prompt_tokens=%s output_tokens=%s total_duration=%.2fs", model, elapsed, data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000)
