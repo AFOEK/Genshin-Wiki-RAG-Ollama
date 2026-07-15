@@ -84,6 +84,8 @@ hyde:
   rrf_weight: 0.75
   mode: fallback    #fallback | always
   cache_enable: false
+  fallback_top_n: 12
+  fallback_min_shared_docs: 1
   timeout: 300
 
 versioning:

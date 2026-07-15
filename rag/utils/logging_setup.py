@@ -10,7 +10,7 @@ class ColorFormatter(logging.Formatter):
         logging.INFO: "",
         logging.WARNING: "\033[33m",
         logging.ERROR: "\033[31m",
-        logging.CRITCAL: "\033[38;5;88m"
+        logging.CRITICAL: "\033[38;5;88m"
     }
 
     EXCEPTION_COLOR = "\033[38;5;5;88m"
@@ -27,14 +27,14 @@ class ColorFormatter(logging.Formatter):
         
         return f"{color}{message}{self.RESET}"
 
-def setup_logging(log_path: str | None = None, level: str = "INFO"):
+def setup_logging(log_path: str | None = None, level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     for handler in root.handlers[:]:
         handler.close()
         root.removeHandler(handler)
 
-    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    fmt = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     stream = logging.StreamHandler()
     stream.setFormatter(ColorFormatter(fmt))
     root.addHandler(stream)

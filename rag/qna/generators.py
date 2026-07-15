@@ -53,6 +53,8 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3,
         "keep_alive": keep_alive,
         "options": request_options,
     }
+
+    thinking_enabled = False
     if think is not None:
         payload["think"] = think
         thinking_enabled = (think is True or (isinstance(think, str) and think.strip().lower() not in {"", "false", "off", "none", "no"}))
@@ -75,9 +77,6 @@ def ollama_generate(base_url: str, model: str, prompt: str, *, retries: int = 3,
             raw_answer = str(data.get("response") or "").strip()
             done_reason = str(data.get("done_reason") or "").strip()
             answer = strip_thinking_blocks(str(data.get("response", "")))
-
-            if not answer:
-                raise RuntimeError("[OLLAMA] Ollama returned an empty response")
 
             elapsed = time.perf_counter() - started
             if thinking_enabled: 
@@ -143,13 +142,7 @@ def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, c
 
         try:
             log.info(
-                "[LLAMACPP] request model=%s "
-                "attempt=%d/%d prompt_chars=%d",
-                model,
-                attempt + 1,
-                retries,
-                len(prompt),
-            )
+                "[LLAMACPP] request model=%s attempt=%d/%d prompt_chars=%d", model, attempt + 1, retries, len(prompt))
 
             response = session.post(
                 url,
@@ -160,15 +153,10 @@ def llamacpp_generate(base_url: str, model: str, prompt: str, *, timeout: int, c
                 ),
             )
 
-            if (
-                response.status_code
-                in RETRYABLE_STATUS_CODES
-            ):
+            if (response.status_code in RETRYABLE_STATUS_CODES):
                 raise requests.HTTPError(
                     f"Retryable HTTP status "
-                    f"{response.status_code}",
-                    response=response,
-                )
+                    f"{response.status_code}", response=response)
 
             response.raise_for_status()
 

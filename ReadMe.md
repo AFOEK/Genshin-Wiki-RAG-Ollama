@@ -364,9 +364,9 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 - [ ] Intent-specific retrieval pipelines.
 - [ ] Query decomposition.
 - [ ] Sub-query retrieval and fusion.
-- [ ] HyDE retrieval support.
+- [x] HyDE retrieval support.
 - [ ] Multi-query retrieval.
-- [ ] Adaptive HyDE fallback.
+- [x] Adaptive HyDE fallback.
 - [ ] Adaptive retrieval routing.
 - [ ] SPLADE support.
 - [ ] RAG-Fusion retrieval.

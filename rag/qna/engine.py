@@ -70,6 +70,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     q_vec_cache = None
     q_dims_cache = None
     hyde_document_cache: str | None = None
+    hyde_used_for_request = False
+    hyde_fallback_reason: str | None = None
+    hyde_error: str | None = None
     
     hyde_cfg = cfg.get("hyde", {}) or {}
     hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
@@ -145,7 +148,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     def search_hyde(k: int) -> list[tuple[int, float]]:
         nonlocal hyde_document_cache
         hyde_cfg = cfg.get("hyde", {}) or {}
-        if not as_bool(hyde_cfg.get("enabled"), False):
+        if not as_bool(hyde_cfg.get("enabled", False)):
             return []
         
         faiss_ret = get_faiss_ret()
@@ -347,32 +350,50 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         )
 
     
-    def search_hybrid_hyde(k: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
-        hyde_cfg = cfg.get("hyde", {}) or {}
+    def search_hybrid_hyde(k: int, *, force_hyde: bool = False, force_reason: str | None = None,) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+        nonlocal hyde_used_for_request
+        nonlocal hyde_fallback_reason
+        nonlocal hyde_error
 
         faiss_ret = get_faiss_ret()
         query_vec = get_q_vec(faiss_ret)
-
         faiss_results = faiss_ret.search(query_vec, k)
-
         bm25_results = search_bm25(k)
-        hyde_results = search_hyde(k)
+        use_hyde = False
+        reason = "not_evaluated"
+
+        if force_hyde and hyde_enabled:
+            use_hyde = True
+            reason = force_reason or "forced_fallback"
+        else:
+            use_hyde, reason = should_trigger_hyde(faiss_results, bm25_results)
+
+        hyde_results: list[tuple[int, float]] = []
+
+        if use_hyde:
+            try:
+                hyde_results = search_hyde(k)
+                hyde_used_for_request = True
+                hyde_fallback_reason = reason
+            except Exception as exc:
+                hyde_error = (f"{type(exc).__name__}: {exc}")
+                hyde_fallback_reason = (f"{reason};hyde_failed")
+                log.warning(
+                    "[HYDE] fallback generation/search failed continuing with normal hybrid retrieval: %s", hyde_error)
+        else:
+            if hyde_fallback_reason is None:
+                hyde_fallback_reason = reason
 
         signals = build_hybrid_hyde_signal(
             faiss_results,
             bm25_results,
             hyde_results,
             rrf_k=rrf_k,
-            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)),
+            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), 
             hyde_weight=float(hyde_cfg.get("rrf_weight", 0.75)))
 
-        results = sorted(
-            (
-                (chunk_id, signal["rrf_score"])
-                for chunk_id, signal in signals.items()
-            ), key=lambda item: item[1], reverse=True)
-
-        log.info("[HYDE] fusion normal_faiss=%d bm25=%d hyde=%d fused=%d", len(faiss_results), len(bm25_results), len(hyde_results), len(results))
+        results = sorted(((chunk_id, signal["rrf_score"]) for chunk_id, signal in signals.items()), key=lambda item: item[1], reverse=True)
+        log.info("[HYDE] mode=%s used=%s reason=%s normal_faiss=%d bm25=%d hyde=%d fused=%d", hyde_mode, bool(hyde_results), reason, len(faiss_results), len(bm25_results), len(hyde_results), len(results))
         return results, signals
 
     try:
@@ -448,7 +469,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
                 deep_results, retrieval_signals = search_hybrid_all(deep_k)
             elif retriever_name == "hybrid_hyde":
-                deep_results, retrieval_signals = (search_hybrid_hyde(deep_k))
+                deep_results, retrieval_signals = (search_hybrid_hyde(deep_k, force_hyde=True, force_reason=(f"intent_filter_too_few: count={len(filtered_ids)}")))
             else:
                 raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -508,10 +529,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         for row in chunks:
             row.pop("_rerank_score", None)
 
-        hyde_cfg = cfg.get("hyde", {}) or {}
         hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
-        hyde_used = (retriever_name == "hybrid_hyde")
         hyde_signal_count = sum(1 for signal in (retrieval_signals or {}).values() if isinstance(signal, dict) and signal.get("in_hyde"))
+        hyde_used = hyde_signal_count > 0
 
         if not chunks:
             return RetrievalResult(
@@ -534,6 +554,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     "selected_chunk_ids": [],
                     "hyde_enabled": hyde_enabled,
                     "hyde_used": hyde_used,
+                    "hyde_fallback_reason": hyde_fallback_reason,
+                    "hyde_error": hyde_error,
                     "hyde_candidate_count": hyde_signal_count,
                 },
             )
@@ -633,6 +655,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
         hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
+        hyde_used = hyde_selected_count > 0
         context = build_context(selected_chunks)
         log.info("[CONTEXT] final chunk IDs=%s", [int(row["chunk_id"]) for row in selected_chunks])
         return RetrievalResult(
@@ -651,20 +674,13 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "retriever": retriever_name,
                 "candidate_k": candidate_k,
                 "top_k": top_k,
-                "candidate_chunk_ids": [
-                    int(row["chunk_id"])
-                    for row in candidate_chunks
-                ],
-                "selected_chunk_ids": [
-                    int(row["chunk_id"])
-                    for row in selected_chunks
-                ],
-                    "hyde_enabled": hyde_enabled,
-                    "hyde_used": hyde_used,
-                    "hyde_candidate_count": hyde_signal_count,
-                    "hyde_selected_count": hyde_selected_count,
-            },
-        )
+                "candidate_chunk_ids": [int(row["chunk_id"]) for row in candidate_chunks],
+                "selected_chunk_ids": [int(row["chunk_id"]) for row in selected_chunks],
+                "hyde_enabled": hyde_enabled,
+                "hyde_used": hyde_used,
+                "hyde_candidate_count": hyde_signal_count,
+                "hyde_selected_count": hyde_selected_count,
+            })
     finally:
         conn.close()
 
