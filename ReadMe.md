@@ -361,7 +361,6 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 - [x] Recency weighting. [^3]
 - [x] Parent-child retriever.
 - [x] Cache layer retriever.
-- [ ] Intent-specific retrieval pipelines.
 - [ ] Query decomposition.
 - [ ] Sub-query retrieval and fusion.
 - [x] HyDE retrieval support.

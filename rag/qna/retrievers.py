@@ -5,13 +5,19 @@ from pathlib import Path
 from turbovec import IdMapIndex
 import faiss
 import logging
+import threading
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match, get_cached_splade_model
+from core.splade import encode_query_sparse, load_csc_shard, load_splade_model, search_csc_shard
 
 log = logging.getLogger(__name__)
 
 faiss_retriever_cache: dict[str, FaissRetriever] = {}
+splade_retriever_cache = {}
+splade_model_cache = {}
+splade_cache_guard = threading.Lock()
+splade_query_locks = {}
 
 class FaissRetriever:
     def __new__(cls, faiss_dir: Path, *, expected_model: str | None = None, mismatch_policy:str = "error"):
@@ -200,3 +206,168 @@ class TurboVecRetriever:
             ids = ids[0]
 
         return [(int(cid), float(score)) for cid, score in zip(ids, scores) if int(cid) >= 0]
+    
+class SpladeRetriever:
+    def __new__(
+        cls,
+        index_dir: Path,
+        *,
+        model_name: str,
+        device: str,
+        max_length: int,
+        max_active_dims: int | None,
+        cache_folder: str | None = None,
+    ):
+        key = (
+            str(index_dir.resolve()),
+            model_name,
+            device,
+            max_length,
+            max_active_dims,
+            cache_folder,
+        )
+
+        if key not in splade_retriever_cache:
+            instance = super().__new__(cls)
+            instance._initialized = False
+            splade_retriever_cache[key] = instance
+
+        return splade_retriever_cache[key]
+
+    def __init__(
+        self,
+        index_dir: Path,
+        *,
+        model_name: str,
+        device: str,
+        max_length: int,
+        max_active_dims: int | None,
+        cache_folder: str | None = None,
+    ):
+        if self._initialized:
+            return
+
+        current = index_dir / "current"
+        manifest_path = current / "manifest.json"
+
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"SPLADE manifest missing: {manifest_path}"
+            )
+
+        self.manifest = json.loads(
+            manifest_path.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        expected = {
+            "model": model_name,
+            "max_length": max_length,
+            "max_active_dims": max_active_dims,
+        }
+
+        for key, expected_value in expected.items():
+            actual_value = self.manifest.get(key)
+
+            if actual_value != expected_value:
+                raise RuntimeError(
+                    "SPLADE configuration mismatch: "
+                    f"{key}={actual_value!r}, "
+                    f"expected={expected_value!r}"
+                )
+
+        self.model, self.query_lock = (
+            get_cached_splade_model(
+                model_name,
+                device=device,
+                max_length=max_length,
+                max_active_dims=max_active_dims,
+                cache_folder=cache_folder,
+            )
+        )
+
+        self.max_active_dims = max_active_dims
+        self.vocabulary_size = int(
+            self.manifest["vocabulary_size"]
+        )
+
+        shard_directories = sorted(
+            path
+            for path in current.glob("shard_*")
+            if path.is_dir()
+        )
+
+        if not shard_directories:
+            raise RuntimeError(
+                f"No SPLADE shards found under {current}"
+            )
+
+        self.shards = [
+            load_csc_shard(path)
+            for path in shard_directories
+        ]
+
+        log.info(
+            "[SPLADE] loaded shards=%d chunks=%d model=%s",
+            len(self.shards),
+            int(self.manifest["chunk_count"]),
+            model_name,
+        )
+
+        self._initialized = True
+
+    def search(
+        self,
+        query: str,
+        k: int,
+    ) -> list[tuple[int, float]]:
+        if k <= 0:
+            return []
+
+        with self.query_lock:
+            (
+                query_indices,
+                query_values,
+                dimensions,
+            ) = encode_query_sparse(
+                self.model,
+                query,
+                max_active_dims=self.max_active_dims,
+            )
+
+        if dimensions != self.vocabulary_size:
+            raise RuntimeError(
+                "SPLADE query dimension mismatch: "
+                f"query={dimensions} "
+                f"index={self.vocabulary_size}"
+            )
+
+        candidates: list[tuple[int, float]] = []
+
+        for matrix, chunk_ids, _ in self.shards:
+            candidates.extend(
+                search_csc_shard(
+                    matrix,
+                    chunk_ids,
+                    query_indices,
+                    query_values,
+                    k=k,
+                )
+            )
+
+        candidates.sort(
+            key=lambda item: item[1],
+            reverse=True,
+        )
+
+        results = candidates[:k]
+
+        log.info(
+            "[SPLADE] query_dims=%d candidates=%d returned=%d",
+            query_indices.size,
+            len(candidates),
+            len(results),
+        )
+
+        return results

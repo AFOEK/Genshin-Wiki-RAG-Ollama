@@ -11,15 +11,7 @@ def get_cross_encoder(model_name:str):
     log.info("[CROSS_ENCODER] Loading cross-encoder model=%s", model_name)
     return CrossEncoder(model_name)
 
-def cross_encoder_rerank(
-        question: str,
-        chunks: list[dict],
-        *,
-        model_name: str,
-        top_n: int = 32,
-        batch_size: int = 8,
-        max_pair_text_chars: int = 1200
-) -> list[dict]:
+def cross_encoder_rerank(question: str, chunks: list[dict], *, model_name: str, top_n: int = 32, batch_size: int = 8, max_pair_text_chars: int = 1200) -> list[dict]:
     if not chunks:
         return chunks
     

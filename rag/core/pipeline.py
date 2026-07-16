@@ -12,8 +12,6 @@ from core.parent import mark_parent_dirty_doc
 from core.fts import mark_fts_dirty_docs
 
 log = logging.getLogger(__name__)
-
-# MOVED_URL_SOURCE = {"honey", "game8", "genshin_gg"}
 MOVED_URL_SOURCE = set()
 
 

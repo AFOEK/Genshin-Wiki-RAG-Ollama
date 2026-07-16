@@ -6,6 +6,7 @@ import re
 import json
 import hashlib
 import yaml
+import threading
 
 import numpy as np
 
@@ -922,6 +923,34 @@ def dedupe_chunks(chunks: list[dict], initial_scores: dict[int, float], *, max_p
         seen_counts[key] = n+1
         kept.append(row)
     return kept
+
+def build_weighted_rrf_signal(channels: dict[str, list[tuple[int, float]]], *, weights: dict[str, float] | None = None, rrf_k: int = 60, rrf_scale: float = 10.0) -> dict[int, dict]:
+    weights = weights or {}
+    signals: dict[int, dict] = {}
+
+    for channel, results in channels.items():
+        weight = float(weights.get(channel, 1.0))
+
+        for rank, (chunk_id, raw_score) in enumerate(results, start=1):
+            chunk_id = int(chunk_id)
+            signal = signals.setdefault(chunk_id, {
+                "rrf_score": 0.0,
+            },)
+            signal[f"{channel}_score"] = float(raw_score)
+            signal[f"{channel}_rank"] = rank
+            signal[f"in_{channel}"] = True
+            signal["rrf_score"] += (rrf_scale * weight / (rrf_k + rank))
+
+    return signals
+
+def get_cached_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None, splade_cache_guard, splade_model_cache, load_splade_model, splade_query_locks):
+    key = (model_name, device, max_length, max_active_dims, cache_folder)
+    with splade_cache_guard:
+        if key not in splade_model_cache:
+            splade_model_cache[key] = (
+                load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder))
+            splade_query_locks[key] = (threading.Lock())
+    return (splade_model_cache[key], splade_query_locks[key])
 
 def detect_intent(question: str) -> str:
     q = question.lower()

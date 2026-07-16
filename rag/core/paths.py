@@ -77,3 +77,25 @@ def resolve_faiss_paths(cfg: dict):
         d / "ids.npy",
         d / "meta.json",
     )
+
+def resolve_splade_dir(cfg: dict) -> Path:
+    root = resolve_storage_root(cfg)
+    splade_cfg = cfg.get("splade", {}) or {}
+    raw_path = expand_path(Path(str(splade_cfg.get("path", "data/splade"))))
+    splade_dir = (raw_path if raw_path.is_absolute() else (root / raw_path).resolve())
+    splade_dir.mkdir(parents=True, exist_ok=True)
+    log.info("[SPLADE] directory resolved at %s", splade_dir)
+    return splade_dir
+
+def resolve_cache_folder(cfg: dict) -> str | None:
+    splade_cfg = cfg.get("splade", {}) or {}
+    raw_value = splade_cfg.get("cache_folder")
+    if not raw_value:
+        return None
+
+    path = Path(str(raw_value)).expanduser()
+    if not path.is_absolute():
+        path = resolve_storage_root(cfg) / path
+
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path.resolve())

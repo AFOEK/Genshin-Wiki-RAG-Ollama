@@ -35,6 +35,38 @@ llamacpp:
 fts5:
   batch_size: 2000
 
+faiss:
+  index_mode: flat_ip      # flat_ip | ivf_flat | hnsw | ivf_sqfp16
+  metric: cosine           # cosine | ip | l2
+  # IVF only
+  nlist: 8192
+  nprobe: 64
+  # HNSW only
+  hnsw_m: 32
+  hnsw_ef_construction: 200
+  hnsw_ef_search: 64
+
+turbovec:
+  path: data/turbovec
+  bit_width: 4  #2 | 4
+  batch_size: 4096
+  calibration_size: 50000
+  normalize: true
+  model_source: runtime   # runtime | kaggle | ollama | llamacpp
+  model_mismatch: warn   # error | warn | ignore
+
+splade:
+  enabled: true
+  path: data/splade
+  cache_folder: data/models
+  model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledisti
+  batch_size: 16  # 2-16, 2-4 for CPU
+  max_length: 256 # 512 | 256
+  max_active_dims: 128
+  shard_size: 50000
+  candidate_k: 300
+  rrf_weight: 0.75
+
 retrieval:
   candidate_k: 950
   deep_candidate_multiplier: 5
@@ -168,26 +200,6 @@ kaggle:
 
     train_size: 1550000
     batch_add: 2500
-
-faiss:
-  index_mode: flat_ip      # flat_ip | ivf_flat | hnsw | ivf_sqfp16
-  metric: cosine           # cosine | ip | l2
-  # IVF only
-  nlist: 8192
-  nprobe: 64
-  # HNSW only
-  hnsw_m: 32
-  hnsw_ef_construction: 200
-  hnsw_ef_search: 64
-
-turbovec:
-  path: data/turbovec
-  bit_width: 4  #2 | 4
-  batch_size: 4096
-  calibration_size: 50000
-  normalize: true
-  model_source: runtime   # runtime | kaggle | ollama | llamacpp
-  model_mismatch: warn   # error | warn | ignore
 
 dataset_creation:
   db_path: null

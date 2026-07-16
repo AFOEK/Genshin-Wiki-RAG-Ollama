@@ -17,10 +17,6 @@ from adapters.kqm import load_kqm_tcl_docs
 from adapters.wiki import load_fandom_docs
 from adapters.html import crawl_site
 
-# TEST_DOCS = [
-#     ("test", "local://xiangling", "Xiangling", "Xiangling is a Pyro polearm character. Guoba breathes fire.")
-# ]
-
 def parse_bool(x: str) -> bool:
     return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
 
@@ -113,10 +109,7 @@ def main():
     fts_cfg = cfg.get("fts5", {})
     fts_batch_size = int(fts_cfg.get("batch_size", 1500))
 
-    log.info(
-        "[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d",
-        embed_queue_size, document_queue_size, embed_workers
-    )
+    log.info("[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d", embed_queue_size, document_queue_size, embed_workers)
 
     log.info(
         "runtime embedding_provider=%s qa_provider=%s accelerator=%s",
