@@ -6,6 +6,7 @@ from core.faiss import build_faiss_from_sqlite
 from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_chunks_fts
 from core.parent import rebuild_parent_map, sync_dirty_parent_docs, mark_all_active_docs_parent_dirty
 from core.turbovec import build_turbovec_from_sqlite
+from core.splade import build_splade_from_sqlite
 
 from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite, audit_turbovec_against_sqlite
@@ -42,6 +43,9 @@ def main():
     ap.add_argument("--TURBOVEC_MIGRATE", default="False")
     ap.add_argument("--TURBOVEC_AUDIT", default="False")
     ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
+    ap.add_argument("--SPLADE_MIGRATE", default="False",)
+    ap.add_argument("--SPLADE_OVERWRITE", default="False",)
+    ap.add_argument("--SPLADE_LIMIT", type=int, default=None,)
     ap.add_argument("--DB_REPAIR", default="False")
     ap.add_argument("--FTS_SYNC", default="False")
     ap.add_argument("--FTS_INIT", default="False")
@@ -67,6 +71,8 @@ def main():
     do_parent_sync = parse_bool(args.PARENT_SYNC)
     do_parent_init = parse_bool(args.PARENT_INIT)
     do_parent_rebuild = parse_bool(args.PARENT_REBUILD)
+    do_splade_migrate = parse_bool(args.SPLADE_MIGRATE)
+    splade_overwrite = parse_bool(args.SPLADE_OVERWRITE)
 
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -329,6 +335,11 @@ def main():
         log.info("[TURBOVEC] migrate from SQLite3 starting")
         meta = build_turbovec_from_sqlite(cfg, overwrite=turbovec_overwrite, backend=args.BACKEND)
         log.info("[TURBOVEC] migrate done count=%d dims=%d bit_width=%d model=%s", meta["count"], meta["dims"], meta["bit_width"], meta["embedding_model"])
+
+    if do_splade_migrate:
+        log.info("[SPLADE] migrate from SQLite starting")
+        meta = build_splade_from_sqlite(cfg, overwrite=splade_overwrite, limit=args.SPLADE_LIMIT)
+        log.info("[SPLADE] migrate done chunks=%d shards=%d completed=%s", meta["chunk_count"], meta["shard_count"], meta["completed"],)
 
     if do_faiss_audit:
         log.info("[FAISS_AUDIT] FAISS audit starting")

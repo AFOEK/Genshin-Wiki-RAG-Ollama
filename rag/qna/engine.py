@@ -5,7 +5,7 @@ import logging, re
 from pathlib import Path
 
 from core.embed import embed
-from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root
+from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
 from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
@@ -38,6 +38,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     strict_fts_query_used: str | None = None
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
+    splade_dir = resolve_splade_dir(cfg)
     tv_cfg = cfg.get("turbovec", {}) or {}
     tv_raw = Path(str(tv_cfg.get("path", "data/turbovec")))
     turbovec_dir = tv_raw if tv_raw.is_absolute() else db_path.parent.parent / tv_raw
@@ -118,12 +119,19 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "bm25_rank": None,
                 "in_faiss": False,
                 "in_bm25": False,
+                "splade_score": 0.0,
+                "splade_rank": None,
+                "in_splade": False,
             }
 
             if channel == "bm25":
                 signal["bm25_score"] = float(raw_score)
                 signal["bm25_rank"] = rank
                 signal["in_bm25"] = True
+            elif channel == "splade":
+                signal["splade_score"] = float(raw_score)
+                signal["splade_rank"] = rank
+                signal["in_splade"] = True
             else:
                 signal["faiss_score"] = float(raw_score)
                 signal["faiss_rank"] = rank
@@ -178,6 +186,28 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             bm25_ret_cache = BM25Retriever(conn)
 
         return bm25_ret_cache
+    
+    def get_splade_ret():
+        nonlocal splade_ret_cache
+
+        if splade_ret_cache is None:
+            splade_cfg = (cfg.get("splade", {}) or {})
+            if not as_bool(splade_cfg.get("enabled"), False):
+                raise RuntimeError("[SPLADE] SPLADE is disabled")
+            cache_folder_value = (splade_cfg.get("cache_folder"))
+            cache_folder = None
+            if cache_folder_value:
+                cache_path = Path(str(cache_folder_value)).expanduser()
+                if not cache_path.is_absolute():
+                    cache_path = (resolve_storage_root(cfg) / cache_path)
+
+                cache_path.mkdir(parents=True, exist_ok=True,)
+                cache_folder = str(cache_path.resolve())
+
+            active_dims_value = (splade_cfg.get("max_active_dims", 128))
+            max_active_dims = (int(active_dims_value) if active_dims_value is not None else None)
+            splade_ret_cache = SpladeRetriever(splade_dir, model_name=str(splade_cfg["model"]), device=str(splade_cfg.get("device", "cpu")), max_length=int(splade_cfg.get("max_length", 256)), max_active_dims=max_active_dims, cache_folder=cache_folder)
+        return splade_ret_cache
 
     def merge_ranked_results(primary: list[tuple[int, float]], fallback: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
         merged = []
@@ -275,6 +305,59 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
     
+    def search_splade(k: int) -> list[tuple[int, float]]:
+        return get_splade_ret().search(question, k)
+    
+    def search_hybrid_splade(k: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+        splade_cfg = (cfg.get("splade", {}) or {})
+        faiss_ret = get_faiss_ret()
+        query_vector = get_q_vec(faiss_ret)
+        faiss_results = faiss_ret.search(query_vector, k)
+        bm25_results = search_bm25(k)
+        configured_splade_k = int(splade_cfg.get("candidate_k", 300))
+        splade_results = search_splade(min(k, configured_splade_k))
+
+        signals = build_weighted_rrf_signal(
+            {
+                "faiss": faiss_results,
+                "bm25": bm25_results,
+                "splade": splade_results,
+            },
+            weights={
+                "faiss": 1.0,
+                "bm25": 1.0,
+                "splade": float(
+                    splade_cfg.get(
+                        "rrf_weight",
+                        0.75,
+                    )
+                ),
+            },
+            rrf_k=rrf_k,
+            rrf_scale=float(
+                retrieval_cfg.get(
+                    "rrf_scale",
+                    10.0,
+                )
+            ),
+        )
+
+        results = sorted(
+            (
+                (
+                    chunk_id,
+                    signal["rrf_score"],
+                )
+                for chunk_id, signal
+                in signals.items()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+
+        log.info("[SPLADE] fusion faiss=%d bm25=%d splade=%d fused=%d", len(faiss_results), len(bm25_results), len(splade_results), len(results),)
+        return results, signals
+
     def should_trigger_hyde(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]]) -> tuple[bool, str]:
         if not hyde_enabled:
             return False, "hyde_disabled"
@@ -312,21 +395,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             for row in rows
         }
 
-        faiss_doc_ids = {
-            chunk_to_doc[chunk_id]
-            for chunk_id in faiss_chunk_ids
-            if chunk_id in chunk_to_doc
-        }
-
-        bm25_doc_ids = {
-            chunk_to_doc[chunk_id]
-            for chunk_id in bm25_chunk_ids
-            if chunk_id in chunk_to_doc
-        }
-
-        shared_doc_ids = (
-            faiss_doc_ids & bm25_doc_ids
-        )
+        faiss_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in faiss_chunk_ids if chunk_id in chunk_to_doc}
+        bm25_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in bm25_chunk_ids if chunk_id in chunk_to_doc}
+        shared_doc_ids = (faiss_doc_ids & bm25_doc_ids)
 
         minimum_shared_docs = max(
             0,
@@ -420,6 +491,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             retriever = get_bm25_ret()
             raw_results = search_bm25(candidate_k)
             results, retrieval_signals = build_single_channel_results(raw_results, "bm25")
+        elif retriever_name == "splade":
+            log.info("[QNA] using SPLADE retriever")
+            retriever = get_splade_ret()
+            raw_results = search_splade(candidate_k)
+            results, retrieval_signals = (build_single_channel_results(raw_results, "splade"))
         elif retriever_name == "hybrid":
             log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
             retriever = None
@@ -441,6 +517,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             log.info("[QNA] using HYBRID HYDE retriever (FAISS + BM25 + HyDE FAISS)")
             retriever = None
             results, retrieval_signals = (search_hybrid_hyde(candidate_k))
+        elif retriever_name == "hybrid_splade":
+            log.info("[QNA] using HYBRID SPLADE (FAISS + BM25 + SPLADE)")
+            retriever = None
+            results, retrieval_signals = (search_hybrid_splade(candidate_k))
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -462,6 +542,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             elif retriever_name == "bm25":
                 raw_deep_results = search_bm25(deep_k)
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "bm25")
+            elif retriever_name == "splade":
+                raw_deep_results = search_splade(deep_k)
+                deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "splade",)
             elif retriever_name == "hybrid":
                 deep_results, retrieval_signals = search_hybrid(deep_k)
             elif retriever_name == "turbovec":
@@ -473,6 +556,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 deep_results, retrieval_signals = search_hybrid_all(deep_k)
             elif retriever_name == "hybrid_hyde":
                 deep_results, retrieval_signals = (search_hybrid_hyde(deep_k, force_hyde=True, force_reason=(f"intent_filter_too_few: count={len(filtered_ids)}")))
+            elif retriever_name == "hybrid_splade":
+                deep_results, retrieval_signals = search_hybrid_splade(deep_k)
             else:
                 raise RuntimeError(f"Unknown retriever: {retriever_name}")
 

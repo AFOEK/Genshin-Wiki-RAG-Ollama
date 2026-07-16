@@ -234,16 +234,7 @@ class SpladeRetriever:
 
         return splade_retriever_cache[key]
 
-    def __init__(
-        self,
-        index_dir: Path,
-        *,
-        model_name: str,
-        device: str,
-        max_length: int,
-        max_active_dims: int | None,
-        cache_folder: str | None = None,
-    ):
+    def __init__(self, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None,):
         if self._initialized:
             return
 
@@ -251,15 +242,9 @@ class SpladeRetriever:
         manifest_path = current / "manifest.json"
 
         if not manifest_path.exists():
-            raise FileNotFoundError(
-                f"SPLADE manifest missing: {manifest_path}"
-            )
+            raise FileNotFoundError(f"SPLADE manifest missing: {manifest_path}")
 
-        self.manifest = json.loads(
-            manifest_path.read_text(
-                encoding="utf-8"
-            )
-        )
+        self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         expected = {
             "model": model_name,
@@ -277,97 +262,39 @@ class SpladeRetriever:
                     f"expected={expected_value!r}"
                 )
 
-        self.model, self.query_lock = (
-            get_cached_splade_model(
-                model_name,
-                device=device,
-                max_length=max_length,
-                max_active_dims=max_active_dims,
-                cache_folder=cache_folder,
-            )
-        )
+        self.model, self.query_lock = (get_cached_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder))
 
         self.max_active_dims = max_active_dims
-        self.vocabulary_size = int(
-            self.manifest["vocabulary_size"]
-        )
+        self.vocabulary_size = int(self.manifest["vocabulary_size"])
 
-        shard_directories = sorted(
-            path
-            for path in current.glob("shard_*")
-            if path.is_dir()
-        )
+        shard_directories = sorted(path for path in current.glob("shard_*") if path.is_dir())
 
         if not shard_directories:
-            raise RuntimeError(
-                f"No SPLADE shards found under {current}"
-            )
+            raise RuntimeError(f"No SPLADE shards found under {current}")
 
-        self.shards = [
-            load_csc_shard(path)
-            for path in shard_directories
-        ]
+        self.shards = [load_csc_shard(path) for path in shard_directories]
 
-        log.info(
-            "[SPLADE] loaded shards=%d chunks=%d model=%s",
-            len(self.shards),
-            int(self.manifest["chunk_count"]),
-            model_name,
-        )
+        log.info("[SPLADE] loaded shards=%d chunks=%d model=%s", len(self.shards), int(self.manifest["chunk_count"]), model_name,)
 
         self._initialized = True
 
-    def search(
-        self,
-        query: str,
-        k: int,
-    ) -> list[tuple[int, float]]:
+    def search(self, query: str, k: int,) -> list[tuple[int, float]]:
         if k <= 0:
             return []
 
         with self.query_lock:
-            (
-                query_indices,
-                query_values,
-                dimensions,
-            ) = encode_query_sparse(
-                self.model,
-                query,
-                max_active_dims=self.max_active_dims,
-            )
+            (query_indices, query_values, dimensions,) = encode_query_sparse(self.model, query, max_active_dims=self.max_active_dims,)
 
         if dimensions != self.vocabulary_size:
             raise RuntimeError(
                 "SPLADE query dimension mismatch: "
                 f"query={dimensions} "
-                f"index={self.vocabulary_size}"
-            )
+                f"index={self.vocabulary_size}")
 
         candidates: list[tuple[int, float]] = []
-
         for matrix, chunk_ids, _ in self.shards:
-            candidates.extend(
-                search_csc_shard(
-                    matrix,
-                    chunk_ids,
-                    query_indices,
-                    query_values,
-                    k=k,
-                )
-            )
-
-        candidates.sort(
-            key=lambda item: item[1],
-            reverse=True,
-        )
-
+            candidates.extend(search_csc_shard(matrix, chunk_ids, query_indices, query_values, k=k))
+        candidates.sort(key=lambda item: item[1], reverse=True)
         results = candidates[:k]
-
-        log.info(
-            "[SPLADE] query_dims=%d candidates=%d returned=%d",
-            query_indices.size,
-            len(candidates),
-            len(results),
-        )
-
+        log.info("[SPLADE] query_dims=%d candidates=%d returned=%d", query_indices.size, len(candidates), len(results))
         return results

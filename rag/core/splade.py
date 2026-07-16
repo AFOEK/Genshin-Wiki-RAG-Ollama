@@ -10,9 +10,11 @@ import logging
 import torch
 import json
 
-log = logging.getLogger(__name__)
+from utils.io import write_json_atomic
+from .db import connect
+from .paths import resolve_db_path, resolve_splade_dir, resolve_storage_root
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+log = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2)
 def load_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None) -> SparseEncoder:
@@ -102,3 +104,99 @@ def search_csc_shard(matrix: sparse.csc_matrix, chunk_ids: np.ndarray, query_ind
     selected = selected[np.argsort(scores[selected])[::-1]]
 
     return [(int(chunk_ids[row_index]), float(scores[row_index])) for row_index in selected]
+
+def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int | None = None) -> dict:
+    splade_cfg = cfg.get("splade", {}) or {}
+
+    if not splade_cfg.get("enabled", False):
+        raise RuntimeError("SPLADE is disabled in config")
+
+    db_path = resolve_db_path(cfg)
+    splade_dir = resolve_splade_dir(cfg)
+    current_dir = splade_dir / "current"
+    manifest_path = (current_dir / "manifest.json")
+    if overwrite and current_dir.exists():
+        import shutil
+        shutil.rmtree(current_dir)
+
+    current_dir.mkdir(
+        parents=True, exist_ok=True)
+    model_name = str(splade_cfg["model"])
+    device = str(splade_cfg.get("device", "cpu")) or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    batch_size = int(splade_cfg.get("batch_size", 4))
+    shard_size = int(splade_cfg.get("shard_size", 50_000))
+    max_length = int(splade_cfg.get("max_length", 256))
+    raw_active_dims = splade_cfg.get("max_active_dims", 128)
+    max_active_dims = (int(raw_active_dims) if raw_active_dims is not None else None)
+
+    model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=_resolve_cache_folder(cfg))
+    vocabulary_size = int(model.get_embedding_dimension())
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = {
+            "format": (
+                "scipy_csc_memmap_v1"
+            ),
+            "model": model_name,
+            "vocabulary_size": (
+                vocabulary_size
+            ),
+            "max_length": max_length,
+            "max_active_dims": (
+                max_active_dims
+            ),
+            "shard_size": shard_size,
+            "last_chunk_id": 0,
+            "chunk_count": 0,
+            "shard_count": 0,
+            "completed": False,
+        }
+
+        write_json_atomic(manifest_path, manifest)
+    
+    expected = {
+        "model": model_name,
+        "vocabulary_size": (vocabulary_size),
+        "max_length": max_length,
+        "max_active_dims": (max_active_dims)}
+
+    for key, expected_value in expected.items():
+        actual_value = manifest.get(key)
+        if actual_value != expected_value:
+            raise RuntimeError(
+                "SPLADE manifest mismatch: "
+                f"{key}={actual_value!r}, "
+                f"expected={expected_value!r}. "
+                "Rebuild with overwrite=True.")
+
+def _fetch_active_chunks(conn, *, after_chunk_id: int, limit: int):
+    return conn.execute(
+        """
+        SELECT
+            c.chunk_id,
+            d.title,
+            c.text
+        FROM chunks c
+        JOIN docs d
+          ON d.doc_id = c.doc_id
+        WHERE c.is_active = 1
+          AND c.chunk_id > ?
+        ORDER BY c.chunk_id
+        LIMIT ?
+        """,
+        (int(after_chunk_id), int(limit))).fetchall()
+
+def _resolve_cache_folder(cfg: dict) -> str | None:
+    splade_cfg = cfg.get("splade", {}) or {}
+    raw_value = splade_cfg.get("cache_folder")
+    if not raw_value:
+        return None
+    cache_path = Path(str(raw_value)).expanduser()
+
+    if not cache_path.is_absolute():
+        cache_path = (resolve_storage_root(cfg) / cache_path)
+
+    cache_path.mkdir(parents=True, exist_ok=True)
+    return str(cache_path.resolve())
+
