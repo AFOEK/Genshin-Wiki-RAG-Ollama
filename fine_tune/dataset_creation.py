@@ -361,7 +361,21 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     raw_answer = str(data.get("response") or "").strip()
     done_reason = str(data.get("done_reason") or "").strip()
     answer = re.sub(r"<think>.*?</think>", "", raw_answer, flags=re.DOTALL | re.IGNORECASE,).strip()
-    log.info("[DATASET_OLLAMA] model=%s think=%r thinking_chars=%d response_chars=%d prompt_tokens=%s output_tokens=%s total_duration=%.2fs options=%s", model, thinking, len(thinking_trace), len(answer), data.get("prompt_eval_count"), data.get("eval_count"), float(data.get("total_duration", 0)) / 1_000_000_000, request_options,)
+    log.info(
+    "[DATASET_OLLAMA] model=%s think=%r thinking_chars=%d "
+    "response_chars=%d response_preview=%r "
+    "prompt_tokens=%s output_tokens=%s "
+    "done_reason=%r total_duration=%.2fs options=%s",
+    model,
+    thinking,
+    len(thinking_trace),
+    len(answer),
+    answer[:120],
+    data.get("prompt_eval_count"),
+    data.get("eval_count"),
+    done_reason,
+    float(data.get("total_duration", 0)) / 1_000_000_000,
+    request_options)
     if not answer:
         if thinking_trace or "<think>" in raw_answer.lower() or done_reason == "length":
             raise ValueError(
@@ -431,15 +445,56 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         return result
 
     if not items:
-        result.skipped += 1
-        result.rejected.append(
+        log.warning("[DRAFT_EMPTY] Retrying chunk_id=%d source=%s title=%r raw=%r", chunk_id, source, title, raw[:120])
+        retry_prompt = (
+        prompt + """
+    Retry instruction:
+    The source passed programmatic content filtering.
+    If it contains even one explicit factual statement, return exactly one
+    useful and directly supported question-reference_answer pair.
+
+    Do not return [] merely because the text is fragmentary, contains tables,
+    or lacks a complete article introduction.
+
+    Return [] only if there is genuinely no factual statement in the source.
+    """)
+        retry_options = dict(draft_options)
+        retry_options.update(
             {
-                "reason": "draft_generator_returned_empty_array",
-                "positive_chunk_id": chunk_id,
-                "positive_doc_id": doc_id,
+                "temperature": 0.0,
+                "top_p": 0.9,
+                "top_k": 20,
+                "min_p": 0.0,
+                "repeat_penalty": 1.0,
+                "num_predict": 512,
             }
         )
-        return result
+
+        try:
+            retry_raw = ollama_generate(
+                settings["ollama_url"],
+                settings["draft_model"],
+                retry_prompt,
+                timeout=settings["request_timeout"],
+                thinking=False,
+                options=retry_options,
+            )
+
+            items = extract_json_array(retry_raw)
+
+        except Exception as exc:
+            log.warning("[DRAFT_EMPTY] retry failed chunk_id=%d error=%s: %s", chunk_id, type(exc).__name__, exc)
+        
+        if not items:
+            result.skipped += 1
+            result.rejected.append(
+                {
+                    "reason": "draft_generator_returned_empty_array",
+                    "positive_chunk_id": chunk_id,
+                    "positive_doc_id": doc_id,
+                }
+            )
+            return result
 
     positive = {
         "chunk_id": chunk_id,
@@ -973,7 +1028,9 @@ Hard rules:
 - Do not use external knowledge.
 - Do not ask questions requiring information absent from the source.
 - Do not generate questions about page metadata, comments, navigation, ads, membership prompts, unrelated links, or boilerplate.
-- If the source context is navigation, comments, boilerplate, membership text, an empty list, or otherwise not useful, return [].
+- The source has already passed a programmatic usefulness filter.
+- Even if the text is fragmentary, extract the clearest explicit factual claim that can support a useful question.
+- Do not return an empty array merely because the source is imperfectly formatted.
 - Do not generate questions where the answer is only identical to the page title.
 - Do not generate vague questions like "What is this page about?"
 - Keep reference answers concise but complete.
@@ -993,7 +1050,7 @@ Quality rules:
 - Do not over-explain.
 - Do not invent recommendations, rankings, locations, versions, materials, or mechanics.
 - If only one good question can be made, return only one item.
-- If no good question can be made, return [].
+- Return [] only when the source contains no explicit factual claim from which any directly supported question can be formed.
 
 Good example:
 [

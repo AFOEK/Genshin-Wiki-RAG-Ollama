@@ -8,16 +8,16 @@ import logging
 import threading
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match, get_cached_splade_model
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match
 from core.splade import encode_query_sparse, load_csc_shard, load_splade_model, search_csc_shard
 
 log = logging.getLogger(__name__)
 
 faiss_retriever_cache: dict[str, FaissRetriever] = {}
+
 splade_retriever_cache = {}
-splade_model_cache = {}
-splade_cache_guard = threading.Lock()
-splade_query_locks = {}
+splade_model_locks = {}
+splade_model_locks_guard = threading.Lock()
 
 class FaissRetriever:
     def __new__(cls, faiss_dir: Path, *, expected_model: str | None = None, mismatch_policy:str = "error"):
@@ -208,24 +208,8 @@ class TurboVecRetriever:
         return [(int(cid), float(score)) for cid, score in zip(ids, scores) if int(cid) >= 0]
     
 class SpladeRetriever:
-    def __new__(
-        cls,
-        index_dir: Path,
-        *,
-        model_name: str,
-        device: str,
-        max_length: int,
-        max_active_dims: int | None,
-        cache_folder: str | None = None,
-    ):
-        key = (
-            str(index_dir.resolve()),
-            model_name,
-            device,
-            max_length,
-            max_active_dims,
-            cache_folder,
-        )
+    def __new__(cls, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None,):
+        key = (str(index_dir.resolve()), model_name, device, max_length, max_active_dims, cache_folder)
 
         if key not in splade_retriever_cache:
             instance = super().__new__(cls)
@@ -262,7 +246,10 @@ class SpladeRetriever:
                     f"expected={expected_value!r}"
                 )
 
-        self.model, self.query_lock = (get_cached_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder))
+        model_key = (model_name, device, max_length, max_active_dims, cache_folder,)
+        self.model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder,)
+        with splade_model_locks_guard:
+            self.query_lock = splade_model_locks.setdefault(model_key, threading.Lock())
 
         self.max_active_dims = max_active_dims
         self.vocabulary_size = int(self.manifest["vocabulary_size"])

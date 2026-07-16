@@ -761,8 +761,22 @@ def load_cfg(path: str = "rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
     
-def as_bool(x) -> bool:
-    return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
+def as_bool(x, default: bool = False) -> bool:
+    if x is None:
+        return default
+
+    if isinstance(x, bool):
+        return x
+
+    value = str(x).strip().lower()
+
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+
+    return default
 
 def read_only_connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -942,15 +956,6 @@ def build_weighted_rrf_signal(channels: dict[str, list[tuple[int, float]]], *, w
             signal["rrf_score"] += (rrf_scale * weight / (rrf_k + rank))
 
     return signals
-
-def get_cached_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None, splade_cache_guard, splade_model_cache, load_splade_model, splade_query_locks):
-    key = (model_name, device, max_length, max_active_dims, cache_folder)
-    with splade_cache_guard:
-        if key not in splade_model_cache:
-            splade_model_cache[key] = (
-                load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder))
-            splade_query_locks[key] = (threading.Lock())
-    return (splade_model_cache[key], splade_query_locks[key])
 
 def detect_intent(question: str) -> str:
     q = question.lower()

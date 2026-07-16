@@ -192,7 +192,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         if splade_ret_cache is None:
             splade_cfg = (cfg.get("splade", {}) or {})
-            if not as_bool(splade_cfg.get("enabled"), False):
+            if not as_bool(splade_cfg.get("enabled", False)):
                 raise RuntimeError("[SPLADE] SPLADE is disabled")
             cache_folder_value = (splade_cfg.get("cache_folder"))
             cache_folder = None
@@ -308,15 +308,15 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     def search_splade(k: int) -> list[tuple[int, float]]:
         return get_splade_ret().search(question, k)
     
-    def search_hybrid_splade(k: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+    def search_hybrid_splade(k: int, *, splade_k: int | None = None) -> tuple[list[tuple[int, float]], dict[int, dict]]:
         splade_cfg = (cfg.get("splade", {}) or {})
         faiss_ret = get_faiss_ret()
         query_vector = get_q_vec(faiss_ret)
         faiss_results = faiss_ret.search(query_vector, k)
         bm25_results = search_bm25(k)
         configured_splade_k = int(splade_cfg.get("candidate_k", 300))
-        splade_results = search_splade(min(k, configured_splade_k))
-
+        effective_splade_k = (splade_k if splade_k is not None else min(k, configured_splade_k))
+        splade_results = search_splade(effective_splade_k)
         signals = build_weighted_rrf_signal(
             {
                 "faiss": faiss_results,
@@ -334,27 +334,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 ),
             },
             rrf_k=rrf_k,
-            rrf_scale=float(
-                retrieval_cfg.get(
-                    "rrf_scale",
-                    10.0,
-                )
-            ),
-        )
+            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
 
-        results = sorted(
-            (
-                (
-                    chunk_id,
-                    signal["rrf_score"],
-                )
-                for chunk_id, signal
-                in signals.items()
-            ),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-
+        results = sorted(((chunk_id, signal["rrf_score"]) for chunk_id, signal in signals.items()), key=lambda item: item[1], reverse=True)
         log.info("[SPLADE] fusion faiss=%d bm25=%d splade=%d fused=%d", len(faiss_results), len(bm25_results), len(splade_results), len(results),)
         return results, signals
 
@@ -382,32 +364,15 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         faiss_chunk_ids = [int(chunk_id) for chunk_id, _ in faiss_results[:top_n]]
         bm25_chunk_ids = [int(chunk_id) for chunk_id, _ in bm25_results[:top_n]]
 
-        top_chunk_ids = list(
-            dict.fromkeys(
-                faiss_chunk_ids + bm25_chunk_ids
-            )
-        )
-
+        top_chunk_ids = list(dict.fromkeys(faiss_chunk_ids + bm25_chunk_ids))
         rows = fetch_chunks(conn, top_chunk_ids)
-
-        chunk_to_doc = {
-            int(row["chunk_id"]): int(row["doc_id"])
-            for row in rows
-        }
+        chunk_to_doc = {int(row["chunk_id"]): int(row["doc_id"]) for row in rows}
 
         faiss_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in faiss_chunk_ids if chunk_id in chunk_to_doc}
         bm25_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in bm25_chunk_ids if chunk_id in chunk_to_doc}
         shared_doc_ids = (faiss_doc_ids & bm25_doc_ids)
 
-        minimum_shared_docs = max(
-            0,
-            int(
-                hyde_cfg.get(
-                    "fallback_min_shared_docs",
-                    1,
-                )
-            ),
-        )
+        minimum_shared_docs = max(0, int(hyde_cfg.get("fallback_min_shared_docs",1)))
 
         if len(shared_doc_ids) < minimum_shared_docs:
             return (

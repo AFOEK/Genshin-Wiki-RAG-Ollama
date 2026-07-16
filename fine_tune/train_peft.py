@@ -126,7 +126,7 @@ def main() -> None:
         save_total_limit=int(tcfg.get("save_total_limit", 2)),
         bf16=as_bool(tcfg.get("bf16"), False),
         fp16=as_bool(tcfg.get("fp16"), False),
-        gradient_checkpointing=as_bool(tcfg.get("gradient_checkpointing"), True),
+        gradient_checkpointing=as_bool(tcfg.get("gradient_checkpointing", True), True),
         max_length=int(train_cfg.get("max_seq_length", 2048)),
         packing=as_bool(train_cfg.get("packing"), False),
         eval_strategy="steps",

@@ -60,6 +60,7 @@ splade:
   path: data/splade
   cache_folder: data/models
   model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledisti
+  device: auto    # auto | cpu | cuda
   batch_size: 16  # 2-16, 2-4 for CPU
   max_length: 256 # 512 | 256
   max_active_dims: 128
