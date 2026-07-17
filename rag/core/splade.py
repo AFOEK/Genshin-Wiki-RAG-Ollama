@@ -44,26 +44,32 @@ def get_splade_output_dimension(model: SparseEncoder) -> int:
     return int(probe.shape[-1])
 
 def encode_documents_to_csc(model: SparseEncoder, texts: list[str], *, batch_size: int, max_active_dims: int | None) -> sparse.csc_matrix:
-    with torch.inference_mode():
-        embeddings = model.encode_document(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims,)
-    embeddings = embeddings.coalesce()
-    coordinates = embeddings.indices().cpu().numpy()
-    values = (embeddings.values().float().cpu().numpy().astype(np.float32, copy=False))
-    matrix = sparse.coo_matrix((values, (coordinates[0], coordinates[1],),), shape=tuple(embeddings.shape), dtype=np.float32,)
-    return matrix.tocsc()
+    embeddings = model.encode_document(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims)
+    if embeddings.layout != torch.sparse_coo:
+        raise RuntimeError(f"Expected sparse COO embeddings, got layout={embeddings.layout}")
+
+    coordinates = embeddings._indices().cpu().numpy()
+    values = embeddings._values().float().cpu().numpy().astype(np.float32, copy=False)
+    matrix = sparse.coo_matrix((values, (coordinates[0], coordinates[1])), shape=tuple(embeddings.shape), dtype=np.float32).tocsc()
+    matrix.sum_duplicates()
+    matrix.sort_indices()
+    return matrix
 
 def encode_query_sparse(model: SparseEncoder, query: str, *, max_active_dims: int | None) -> tuple[np.ndarray, np.ndarray, int]:
-    embedding = model.encode_query(query, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims,)
-    embedding = embedding.coalesce()
-    if embedding.ndim != 1:
-        raise ValueError(
-            "Expected one-dimensional SPLADE query vector, "
-            f"got shape={tuple(embedding.shape)}"
-        )
+    embedding = model.encode_query(query, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims)
 
-    indices = (embedding.indices()[0].cpu().numpy().astype(np.int32, copy=False))
-    values = (embedding.values().float().cpu().numpy().astype(np.float32, copy=False))
-    return indices, values, int(embedding.shape[0])
+    if embedding.layout != torch.sparse_coo:
+        raise RuntimeError(f"Expected sparse COO query, got layout={embedding.layout}")
+
+    if embedding.ndim != 1:
+        raise ValueError(f"Expected one-dimensional SPLADE query vector, got shape={tuple(embedding.shape)}")
+
+    raw_indices = embedding._indices()[0].cpu().numpy().astype(np.int32, copy=False)
+    raw_values = embedding._values().float().cpu().numpy().astype(np.float32, copy=False)
+    dimension = int(embedding.shape[0])
+    query_matrix = sparse.coo_matrix((raw_values, (np.zeros(raw_indices.size, dtype=np.int32), raw_indices)), shape=(1, dimension), dtype=np.float32).tocsr()
+    query_matrix.sum_duplicates()
+    return query_matrix.indices.astype(np.int32, copy=False), query_matrix.data.astype(np.float32, copy=False), dimension
 
 def save_csc_shard(shard_dir: Path, matrix: sparse.csc_matrix, chunk_ids: np.ndarray) -> None:
     shard_dir.mkdir(parents=True, exist_ok=True)
@@ -195,9 +201,9 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
         if actual_value != expected_value:
             raise RuntimeError("SPLADE manifest mismatch: " f"{key}={actual_value!r}, " f"expected={expected_value!r}. " "Rebuild with overwrite=True.")
 
-        conn = read_only_connect(str(db_path))
-        built_this_run = 0
-        exhausted = False
+    conn = read_only_connect(str(db_path))
+    built_this_run = 0
+    exhausted = False
 
     try:
         while limit is None or built_this_run < limit:
