@@ -68,6 +68,28 @@ splade:
   candidate_k: 300
   rrf_weight: 0.75
 
+query_decomposition:
+  enabled: true
+  mode: auto  # auto | always | off
+  model: qwen3.5:9b
+  think: false
+  timeout: 120
+
+  max_subqueries: 3
+  min_words: 8
+  candidate_k_subquery: 300
+  max_total_candidates: 1800
+  
+  original_weight: 1.0
+  subquery_weight: 0.8
+
+  temperature: 0.0
+  top_p: 0.9
+  top_k: 45
+  min_p: 0.05
+  repeat_penalty: 1.0
+  num_predict: 256  # 512 | 256
+
 retrieval:
   candidate_k: 950
   deep_candidate_multiplier: 5

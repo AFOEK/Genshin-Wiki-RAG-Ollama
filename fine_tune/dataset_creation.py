@@ -365,17 +365,8 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     "[DATASET_OLLAMA] model=%s think=%r thinking_chars=%d "
     "response_chars=%d response_preview=%r "
     "prompt_tokens=%s output_tokens=%s "
-    "done_reason=%r total_duration=%.2fs options=%s",
-    model,
-    thinking,
-    len(thinking_trace),
-    len(answer),
-    answer[:120],
-    data.get("prompt_eval_count"),
-    data.get("eval_count"),
-    done_reason,
-    float(data.get("total_duration", 0)) / 1_000_000_000,
-    request_options)
+    "done_reason=%r total_duration=%.2fs options=%s", model, thinking, len(thinking_trace), len(answer), answer[:120], data.get("prompt_eval_count"), data.get("eval_count"), done_reason, float(data.get("total_duration", 0)) / 1_000_000_000, request_options)
+
     if not answer:
         if thinking_trace or "<think>" in raw_answer.lower() or done_reason == "length":
             raise ValueError(
@@ -400,9 +391,6 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
     url = str(row.get("url") or "")
     title = str(row.get("title") or "")
     text = clean_text(str(row.get("text") or ""))
-    # uid7 = uuid.uuid7()
-    # uid4 = uuid.uuid4()
-    # rng = random.Random(int(uid7.hex[:5], 16) + settings["seed"] + chunk_id + int(uid4.hex[:-5], 16))
     draft_rng = random.Random(stable_seed(settings["seed"], chunk_id, "draft"))
     answer_rng = random.Random(stable_seed(settings["seed"], chunk_id, "answer"))
     validator_rng = random.Random(stable_seed(settings["seed"], chunk_id, "validator"))

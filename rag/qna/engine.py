@@ -18,6 +18,7 @@ from .generators import generate
 from .cross_encoder import cross_encoder_rerank
 from .context_expand import expand_context_windows
 from .parent_child import fetch_parent_context_chunks
+from .query_decomposition import decompose_query, merge_decomposition_runs
 from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
@@ -66,7 +67,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     build_subtypes = (detect_build_subtypes(question) if intent == "build" else set())
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
-    bm25_weights = get_bm25_weights(intent)
     candidate_k = max(top_k, candidate_k_cfg)
     log.info("[QNA] retrieval cfg: top_k=%d candidate_k=%d deep_multiplier=%d dedup_max_per_doc=%d intent=%s subtypes=%s broad=%s", top_k, candidate_k, deep_candidate_multiplier, dedup_max_per_doc, intent, sorted(build_subtypes), broad)
 
@@ -75,13 +75,13 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     turbovec_ret_cache = None
     splade_ret_cache = None
     hyde_document_cache: str | None = None
-    q_vec_cache = None
-    q_dims_cache = None
+    q_vec_cache: dict[tuple[str, int], object] = {}
     log.info("[CACHE] Initialize cache FAISS cache: %s, BM25 cache: %s, TurboVec cache: %s, HyDE cache: %s, SPLADE cache: %s", str(faiss_ret_cache), str(bm25_ret_cache), str(turbovec_ret_cache), str(hyde_document_cache), "unimplemented")
 
     hyde_used_for_request = False
     hyde_fallback_reason: str | None = None
     hyde_error: str | None = None
+    decomposition_subqueries: list[str] = []
     
     hyde_cfg = cfg.get("hyde", {}) or {}
     hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
@@ -89,22 +89,25 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     if hyde_mode not in {"always", "fallback", "off", "disabled", "never"}:
         raise ValueError(f"Unsupported HyDE mode: {hyde_mode!r}")
 
-    def get_q_vec(ret):
-        nonlocal q_vec_cache, q_dims_cache
-        if q_vec_cache is None:
-            q_blob, q_dims = embed(cfg, question, backend=backend, mode="query")
+    def get_q_vec(ret, query_text: str | None):
+        effective_query = (query_text or question).strip()
+        cache_key = (effective_query, int(ret.dims))
 
-            if q_dims != ret.dims:
-                raise RuntimeError(f"query embedding dims mismatch: query={q_dims} retriever={ret.dims}")
+        if cache_key in q_vec_cache:
+            return q_vec_cache[cache_key]
 
-            q_vec_cache = normalize_query_vec(q_blob, q_dims)
-            q_dims_cache = q_dims
-            return q_vec_cache
+        q_blob, q_dims = embed(cfg, effective_query, backend=backend, mode="query",)
 
-        if q_dims_cache != ret.dims:
-            raise RuntimeError(f"cached query embedding dims mismatch: query={q_dims_cache} retriever={ret.dims}")
+        if q_dims != ret.dims:
+            raise RuntimeError(
+                "query embedding dims mismatch: "
+                f"query={q_dims} "
+                f"retriever={ret.dims}"
+            )
 
-        return q_vec_cache
+        query_vector = normalize_query_vec(q_blob, q_dims,)
+        q_vec_cache[cache_key] = query_vector
+        return query_vector
 
     expected_faiss_model = expected_model_from_cfg(cfg, backend=backend)
     faiss_mismatch_policy = str(retrieval_cfg.get("faiss_model_mismatch", "error")).strip().lower()
@@ -194,7 +197,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     
     def get_splade_ret():
         nonlocal splade_ret_cache
-
         if splade_ret_cache is None:
             splade_cfg = (cfg.get("splade", {}) or {})
             if not as_bool(splade_cfg.get("enabled", False)):
@@ -232,27 +234,31 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         return merged
     
-    def search_bm25(k: int):
+    def search_bm25(k: int, query_text: str | None = None):
         nonlocal strict_fts_query_used
-        strict_query = make_intent_fts5_query(question, intent)
-        strict_fts_query_used = strict_query
+        effective_query = (query_text or question).strip()
+        query_intent = detect_intent(effective_query)
+        query_weights = get_bm25_weights(query_intent)
+        strict_query = make_intent_fts5_query(effective_query, query_intent)
+        if effective_query == question:
+            strict_fts_query_used = strict_query
+
         bm25_ret = get_bm25_ret()
-        log.info("[BM25] intent=%s weights=%s", intent, bm25_weights)
+        log.info("[BM25] query=%r intent=%s weights=%s", effective_query, query_intent, query_weights,)
 
         if not strict_query:
-            return bm25_ret.search(question, k, weights=bm25_weights)
+            return bm25_ret.search(effective_query, k, weights=query_weights)
 
         log.info("[BM25] strict intent query=%s", strict_query)
 
-        strict_results = bm25_ret.search_fts(strict_query, k, weights=bm25_weights)
+        strict_results = bm25_ret.search_fts(strict_query, k, weights=query_weights)
         minimum_strict = min(5, k)
 
         if len(strict_results) >= minimum_strict:
             return strict_results
 
         log.info("[BM25] strict query returned only %d rows; adding broad fallback", len(strict_results))
-        broad_results = bm25_ret.search(question, k, weights=bm25_weights)
-
+        broad_results = bm25_ret.search(effective_query, k, weights=query_weights)
         return merge_ranked_results(strict_results, broad_results, k)
 
     def get_turbovec_ret():
@@ -269,11 +275,12 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         q_vec = get_q_vec(ret)
         return ret.search(q_vec, k)
 
-    def search_hybrid(k: int):
+    def search_hybrid(k: int, query_text: str | None =  None):
+        effective_query = (query_text or question).strip() 
         faiss_ret = get_faiss_ret()
-        q_vec = get_q_vec(faiss_ret)
+        q_vec = get_q_vec(faiss_ret, effective_query)
         faiss_results = faiss_ret.search(q_vec, k)
-        bm25_results = search_bm25(k)
+        bm25_results = search_bm25(k, effective_query)
         signals = build_hybrid_signal(faiss_results, bm25_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
@@ -344,6 +351,30 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         results = sorted(((chunk_id, signal["rrf_score"]) for chunk_id, signal in signals.items()), key=lambda item: item[1], reverse=True)
         log.info("[SPLADE] fusion faiss=%d bm25=%d splade=%d fused=%d", len(faiss_results), len(bm25_results), len(splade_results), len(results),)
         return results, signals
+    
+    def search_hybrid_decomposed(k: int, *, original_uses_hyde: bool, force_hyde: bool = False, force_reason: str | None = None):
+        decomp_cfg = (cfg.get("query_decomposition", {}) or {})
+
+        if original_uses_hyde:
+            original_results, original_signals = (search_hybrid_hyde(k, force_hyde=force_hyde, force_reason=force_reason))
+        else:
+            original_results, original_signals = (search_hybrid(k, question))
+
+        if not decomposition_subqueries:
+            return (original_results, original_signals)
+
+        runs = [(question, original_results, original_signals, float(decomp_cfg.get("original_weight", 1.0,)))]
+        configured_subquery_k = int(decomp_cfg.get("candidate_k_per_subquery", 300))
+        subquery_k = min(k, configured_subquery_k)
+
+        for subquery in decomposition_subqueries:
+            sub_results, sub_signals = (search_hybrid(subquery_k, subquery))
+            runs.append((subquery, sub_results, sub_signals, float(decomp_cfg.get("subquery_weight", 0.8))))
+
+        merged_results, merged_signals = (merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0,)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800))))
+        log.info("[DECOMP] merged original=%d subqueries=%d candidates=%d", len(original_results), len(decomposition_subqueries), len(merged_results))
+
+        return merged_results, merged_signals
 
     def should_trigger_hyde(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]]) -> tuple[bool, str]:
         if not hyde_enabled:
@@ -365,18 +396,14 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             return True, "bm25_empty"
 
         top_n = max(1, int(hyde_cfg.get("fallback_top_n", 12)))
-
         faiss_chunk_ids = [int(chunk_id) for chunk_id, _ in faiss_results[:top_n]]
         bm25_chunk_ids = [int(chunk_id) for chunk_id, _ in bm25_results[:top_n]]
-
         top_chunk_ids = list(dict.fromkeys(faiss_chunk_ids + bm25_chunk_ids))
         rows = fetch_chunks(conn, top_chunk_ids)
         chunk_to_doc = {int(row["chunk_id"]): int(row["doc_id"]) for row in rows}
-
         faiss_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in faiss_chunk_ids if chunk_id in chunk_to_doc}
         bm25_doc_ids = {chunk_to_doc[chunk_id] for chunk_id in bm25_chunk_ids if chunk_id in chunk_to_doc}
         shared_doc_ids = (faiss_doc_ids & bm25_doc_ids)
-
         minimum_shared_docs = max(0, int(hyde_cfg.get("fallback_min_shared_docs",1)))
 
         if len(shared_doc_ids) < minimum_shared_docs:
@@ -446,6 +473,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         if retriever_name == "sql":
             retriever_name = "sqlite"
 
+        if retriever_name in {"hybrid", "hybrid_hyde"}:
+            decompose_subqueries = (decompose_query(cfg, question, backend=backend))
+
         if retriever_name == "faiss":
             log.info("[QNA] using FAISS retriever")
             retriever = get_faiss_ret()
@@ -469,7 +499,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         elif retriever_name == "hybrid":
             log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
             retriever = None
-            results, retrieval_signals = search_hybrid(candidate_k)
+            results, retrieval_signals = search_hybrid_decomposed(candidate_k, original_uses_hyde=False)
         elif retriever_name == "turbovec":
             log.info("[QNA] using TurboVec retriever")
             retriever = get_turbovec_ret()
@@ -486,7 +516,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         elif retriever_name == "hybrid_hyde":
             log.info("[QNA] using HYBRID HYDE retriever (FAISS + BM25 + HyDE FAISS)")
             retriever = None
-            results, retrieval_signals = (search_hybrid_hyde(candidate_k))
+            results, retrieval_signals = (search_hybrid_decomposed(candidate_k, original_uses_hyde=True))
         elif retriever_name == "hybrid_splade":
             log.info("[QNA] using HYBRID SPLADE (FAISS + BM25 + SPLADE)")
             retriever = None
@@ -516,7 +546,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 raw_deep_results = search_splade(deep_k)
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "splade",)
             elif retriever_name == "hybrid":
-                deep_results, retrieval_signals = search_hybrid(deep_k)
+                deep_results, retrieval_signals = search_hybrid_decomposed(deep_k, original_uses_hyde=False)
             elif retriever_name == "turbovec":
                 raw_deep_results = search_embedding_retriever(retriever, deep_k)
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "semantic")
@@ -525,7 +555,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
                 deep_results, retrieval_signals = search_hybrid_all(deep_k)
             elif retriever_name == "hybrid_hyde":
-                deep_results, retrieval_signals = (search_hybrid_hyde(deep_k, force_hyde=True, force_reason=(f"intent_filter_too_few: count={len(filtered_ids)}")))
+                deep_results, retrieval_signals = (search_hybrid_decomposed(deep_k, original_uses_hyde=True, force_hyde=True, force_reason=(f"intent_filter_too_few: count={len(filtered_ids)}")))
             elif retriever_name == "hybrid_splade":
                 deep_results, retrieval_signals = search_hybrid_splade(deep_k)
             else:
@@ -554,19 +584,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             max_per_doc = max(dedup_max_per_doc, 2)
 
         baseline_label, baseline_ord = get_kqm_news_fetch_version_baseline(conn)
-        log.info(
-            "[QNA] current version baseline from kqm_news: label=%s ord=%s",
-            baseline_label,
-            baseline_ord,
-        )
+        log.info("[QNA] current version baseline from kqm_news: label=%s ord=%s", baseline_label, baseline_ord,)
 
         if reranker_mode in ("feature", "cross_encoder"):
-            chunks = rerank_chunks(
-                question,
-                chunks,
-                retrieval_signals,
-                baseline_ord,
-            )
+            chunks = rerank_chunks(question, chunks, retrieval_signals, baseline_ord,)
             dedupe_scores = {int(row["chunk_id"]): float(row["_rerank_score"]) for row in chunks}
         else:
             dedupe_scores = initial_scores
@@ -574,13 +595,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         chunks = dedupe_chunks(chunks, dedupe_scores, max_per_doc=max_per_doc)
         
         if reranker_mode == "cross_encoder":
-            chunks = cross_encoder_rerank(
-                question, 
-                chunks, 
-                model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), 
-                top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)),
-                batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)),
-                max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
+            chunks = cross_encoder_rerank(question, chunks, model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)), batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)), max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
         elif reranker_mode not in ("none", "feature", "cross_encoder"):
             raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
@@ -615,6 +630,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     "hyde_fallback_reason": hyde_fallback_reason,
                     "hyde_error": hyde_error,
                     "hyde_candidate_count": hyde_signal_count,
+                    "query_decomposition_enabled": as_bool((cfg.get( "query_decomposition",{}) or {}).get("enabled", False,)),
+                    "query_decomposition_used": bool(decomposition_subqueries), "decomposition_subqueries": list(decomposition_subqueries),
                 },
             )
 
