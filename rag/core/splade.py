@@ -18,14 +18,34 @@ from .paths import resolve_db_path, resolve_splade_dir, resolve_storage_root, re
 log = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2)
-def load_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None) -> SparseEncoder:
+def load_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None, precision: str = "fp32") -> SparseEncoder:
     model = SparseEncoder(model_name, device=device, cache_folder=cache_folder, max_active_dims=max_active_dims)
     model.max_seq_length = max_length
+    if device.startswith("cuda"):
+        if precision == "fp16":
+            model.half()
+        elif precision == "bf16":
+            model.bfloat16()
     model.eval()
     return model
 
+def get_splade_output_dimension(model: SparseEncoder) -> int:
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is not None:
+        return int(len(tokenizer))
+
+    transformer = getattr(model, "transformers_model", None)
+    config = getattr(transformer, "config", None)
+    vocab_size = getattr(config, "vocab_size", None)
+    if vocab_size is not None:
+        return int(vocab_size)
+
+    probe = model.encode_document(["dimension probe"], batch_size=1, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True)
+    return int(probe.shape[-1])
+
 def encode_documents_to_csc(model: SparseEncoder, texts: list[str], *, batch_size: int, max_active_dims: int | None) -> sparse.csc_matrix:
-    embeddings = model.encode_document(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims,)
+    with torch.inference_mode():
+        embeddings = model.encode_document(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims,)
     embeddings = embeddings.coalesce()
     coordinates = embeddings.indices().cpu().numpy()
     values = (embeddings.values().float().cpu().numpy().astype(np.float32, copy=False))
@@ -119,8 +139,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     if overwrite and current_dir.exists():
         shutil.rmtree(current_dir)
 
-    current_dir.mkdir(
-        parents=True, exist_ok=True)
+    current_dir.mkdir(parents=True, exist_ok=True)
     model_name = str(splade_cfg["model"])
     requested_device = str(splade_cfg.get("device", "auto")).strip().lower()
     if requested_device == "auto":
@@ -131,10 +150,16 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     shard_size = int(splade_cfg.get("shard_size", 50_000))
     max_length = int(splade_cfg.get("max_length", 256))
     raw_active_dims = splade_cfg.get("max_active_dims", 128)
+    precision = str(splade_cfg.get("precision", "fp32")).strip().lower()
     max_active_dims = (int(raw_active_dims) if raw_active_dims is not None else None)
+    encode_block_size = max(batch_size, int(splade_cfg.get("encode_block_size", 512)))
 
-    model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=resolve_cache_folder(cfg))
-    vocabulary_size = int(model.get_embedding_dimension())
+    model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=resolve_cache_folder(cfg), precision=precision)
+    vocabulary_size = get_splade_output_dimension(model)
+    parameter = next(model.parameters())
+    parameter = next(model.parameters())
+    log.info("[SPLADE] vocabulary=%d hidden=%s device=%s dtype=%s batch=%d block=%d", vocabulary_size, getattr(model.transformers_model.config, "hidden_size", None), parameter.device, parameter.dtype, batch_size, encode_block_size)
+    
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     else:
@@ -168,86 +193,83 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     for key, expected_value in expected.items():
         actual_value = manifest.get(key)
         if actual_value != expected_value:
-            raise RuntimeError(
-                "SPLADE manifest mismatch: "
-                f"{key}={actual_value!r}, "
-                f"expected={expected_value!r}. "
-                "Rebuild with overwrite=True.")
+            raise RuntimeError("SPLADE manifest mismatch: " f"{key}={actual_value!r}, " f"expected={expected_value!r}. " "Rebuild with overwrite=True.")
+
         conn = read_only_connect(str(db_path))
         built_this_run = 0
         exhausted = False
 
-        try:
-            while (limit is None or built_this_run < limit):
-                target_rows = (shard_size if limit is None else min(shard_size, limit - built_this_run))
-                if target_rows <= 0:
+    try:
+        while limit is None or built_this_run < limit:
+            target_rows = (shard_size if limit is None else min(shard_size, limit - built_this_run))
+            if target_rows <= 0:
+                break
+
+            shard_matrices = []
+            shard_chunk_ids: list[int] = []
+            last_chunk_id = int(manifest["last_chunk_id"])
+
+            while len(shard_chunk_ids) < target_rows:
+                fetch_size = min(encode_block_size, target_rows - len(shard_chunk_ids))
+                rows = _fetch_active_chunks(conn, after_chunk_id=last_chunk_id, limit=fetch_size)
+
+                if not rows:
+                    exhausted = True
                     break
 
-                shard_matrices = []
-                shard_chunk_ids: list[int] = []
-                last_chunk_id = int(manifest["last_chunk_id"])
+                texts = [(f"{row['title'] or ''}\n{row['text'] or ''}").strip() or "[empty chunk]" for row in rows]
+                batch_matrix = encode_documents_to_csc(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
+                if batch_matrix.shape[1] != vocabulary_size:
+                    raise RuntimeError(
+                        "SPLADE vocabulary mismatch: "
+                        f"matrix={batch_matrix.shape[1]} "
+                        f"model={vocabulary_size}"
+                    )
 
-                while len(shard_chunk_ids) < target_rows:
-                    fetch_size = min(batch_size, target_rows - len(shard_chunk_ids))
-                    rows = _fetch_active_chunks(conn, after_chunk_id=last_chunk_id, limit=fetch_size)
+                batch_ids = [int(row["chunk_id"]) for row in rows]
+                shard_matrices.append(batch_matrix)
+                shard_chunk_ids.extend(batch_ids)
+                last_chunk_id = batch_ids[-1]
+                log.info("[SPLADE] encoded run=%d " "current_shard=%d/%d " "last_chunk_id=%d", built_this_run + len(shard_chunk_ids), len(shard_chunk_ids), target_rows, last_chunk_id,)
 
-                    if not rows:
-                        exhausted = True
-                        break
+            if not shard_chunk_ids:
+                break
 
-                    texts = [(f"{row['title'] or ''}\n{row['text'] or ''}").strip() or "[empty chunk]" for row in rows]
-                    batch_matrix = encode_documents_to_csc(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
-                    if batch_matrix.shape[1] != vocabulary_size:
-                        raise RuntimeError(
-                            "SPLADE vocabulary mismatch: "
-                            f"matrix={batch_matrix.shape[1]} "
-                            f"model={vocabulary_size}"
-                        )
+            shard_matrix = sparse.vstack(shard_matrices, format="csc", dtype=np.float32,)
+            chunk_ids = np.asarray(shard_chunk_ids, dtype=np.int64,)
+            shard_number = int(manifest["shard_count"])
+            shard_name = (f"shard_{shard_number:05d}")
+            temporary_dir = (current_dir / f".{shard_name}.tmp")
+            final_dir = (current_dir / shard_name)
 
-                    batch_ids = [int(row["chunk_id"]) for row in rows]
-                    shard_matrices.append(batch_matrix)
-                    shard_chunk_ids.extend(batch_ids)
-                    last_chunk_id = batch_ids[-1]
-                    log.info("[SPLADE] encoded run=%d " "current_shard=%d/%d " "last_chunk_id=%d", built_this_run + len(shard_chunk_ids), len(shard_chunk_ids), target_rows, last_chunk_id,)
+            if temporary_dir.exists():
+                shutil.rmtree(temporary_dir)
 
-                if not shard_chunk_ids:
-                    break
+            if final_dir.exists():
+                shutil.rmtree(final_dir)
 
-                shard_matrix = sparse.vstack(shard_matrices, format="csc", dtype=np.float32,)
-                chunk_ids = np.asarray(shard_chunk_ids, dtype=np.int64,)
-                shard_number = int(manifest["shard_count"])
-                shard_name = (f"shard_{shard_number:05d}")
-                temporary_dir = (current_dir / f".{shard_name}.tmp")
-                final_dir = (current_dir / shard_name)
+            save_csc_shard(temporary_dir, shard_matrix, chunk_ids,)
+            temporary_dir.replace(final_dir)
+            manifest["last_chunk_id"] = (last_chunk_id)
+            manifest["chunk_count"] = (int(manifest["chunk_count"]) + len(shard_chunk_ids))
+            manifest["shard_count"] = (shard_number + 1)
+            manifest["completed"] = exhausted
+            
+            write_json_atomic(manifest_path, manifest)
+            built_this_run += len(shard_chunk_ids)
+            average_active_dims = (shard_matrix.nnz / max(shard_matrix.shape[0], 1))
+            log.info("[SPLADE] saved shard=%d rows=%d nnz=%d avg_active_dims=%.2f", shard_number, shard_matrix.shape[0], shard_matrix.nnz, average_active_dims,)
 
-                if temporary_dir.exists():
-                    shutil.rmtree(temporary_dir)
+            del shard_matrix
+            del shard_matrices
 
-                if final_dir.exists():
-                    shutil.rmtree(final_dir)
+            if exhausted:
+                break
+    finally:
+        conn.close()
 
-                save_csc_shard(temporary_dir, shard_matrix, chunk_ids,)
-                temporary_dir.replace(final_dir)
-                manifest["last_chunk_id"] = (last_chunk_id)
-                manifest["chunk_count"] = (int(manifest["chunk_count"]) + len(shard_chunk_ids))
-                manifest["shard_count"] = (shard_number + 1)
-                manifest["completed"] = exhausted
-                
-                write_json_atomic(manifest_path, manifest)
-                built_this_run += len(shard_chunk_ids)
-                average_active_dims = (shard_matrix.nnz / max(shard_matrix.shape[0], 1))
-                log.info("[SPLADE] saved shard=%d rows=%d nnz=%d avg_active_dims=%.2f", shard_number, shard_matrix.shape[0], shard_matrix.nnz, average_active_dims,)
-
-                del shard_matrix
-                del shard_matrices
-
-                if exhausted:
-                    break
-        finally:
-            conn.close()
-
-        log.info("[SPLADE] build finished built_this_run=%d total=%d shards=%d completed=%s", built_this_run, manifest["chunk_count"], manifest["shard_count"], manifest["completed"],)
-        return dict(manifest)
+    log.info("[SPLADE] build finished built_this_run=%d total=%d shards=%d completed=%s", built_this_run, manifest["chunk_count"], manifest["shard_count"], manifest["completed"])
+    return dict(manifest)
 
 def _fetch_active_chunks(conn, *, after_chunk_id: int, limit: int):
     return conn.execute(

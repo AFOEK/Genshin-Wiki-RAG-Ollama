@@ -1024,6 +1024,239 @@ def detect_build_subtypes(question: str) -> set[str]:
 
     return found
 
+def build_grounded_answer_prompt(question: str, context: str, *, intent: str | None =  None, build_subtypes: set[str] | None = None, max_recommendations: int = 5) -> str:
+    subtypes = set(build_subtypes or ())
+    format_rules = ""
+    is_comparison = bool(re.search(r"\b(compare|comparison|versus|vs\.?|difference)\b", question, re.IGNORECASE))
+
+    if intent == "build" and "weapon" in subtypes and is_comparison:
+        format_rules = """
+    This is a weapon comparison question.
+
+    Answer format:
+    1. Compare only the weapons explicitly requested.
+    2. Use a compact table with: weapon, Energy Recharge, energy generation, team buffs, and best use case.
+    3. State which weapon is preferable for each requested criterion.
+    4. Do not introduce additional weapons unless needed for brief context.
+    5. Do not infer stats, passives, rankings, or trade-offs not explicitly supported by the context.
+    6. If evidence for one criterion is missing, state that the retrieved context does not provide it.
+    """
+        
+    elif intent == "build" and "weapon" in subtypes:
+        format_rules = f"""
+This is a weapon recommendation question.
+
+Answer format:
+1. Give the top recommendation first.
+2. Then list up to {max_recommendations} explicitly supported weapon options in ranked order.
+3. For each weapon, explain why it is recommended using only evidence from the context.
+4. Mention the relevant role, stat, passive, utility, or trade-off only when the context supports it.
+5. If the context provides a ranking but no reason, state that it is ranked by the source and do not invent a reason.
+6. Even if the question says "best weapon" in the singular, include supported alternatives after the top choice.
+7. Do not infer weapon stats, passives, damage, Energy Recharge, Elemental Mastery, or role from prior knowledge.
+8. Every explanation must be explicitly supported by the supplied context.
+9. If the context contains only a ranked list, say: "Ranked #N by the source; the retrieved context does not provide a reason."
+"""
+
+    elif intent == "build" and "artifact" in subtypes:
+        format_rules = f"""
+This is an artifact recommendation question.
+
+Answer format:
+1. Give the top artifact set first.
+2. Then list up to {max_recommendations} explicitly supported artifact options in ranked order.
+3. For each option, explain its use case, set effect, role, or trade-off only when supported by the context.
+4. Distinguish full sets from mixed 2-piece combinations when the context does so.
+5. If the context provides only a ranking and no explanation, state that clearly instead of inventing a reason.
+6. Even if the question says "best artifact set" in the singular, include supported alternatives after the top choice.
+7. An artifact may be recommended only when the context explicitly associates that artifact with the requested character.
+8. Do not recommend artifacts merely because they appear in a generic artifact mechanics page.
+9. Preserve the ranking from the character's build section.
+"""
+
+    elif intent == "build" and "team" in subtypes:
+        format_rules = f"""
+This is a team recommendation question.
+
+List up to {max_recommendations} supported team compositions in ranked order.
+For each team, identify the members and briefly explain their roles and synergy using only the context.
+
+Answer format:
+1. List a team only when the context explicitly presents those characters together as one team, party, lineup, or team composition.
+2. Do not construct a team by combining character names found in separate passages.
+3. Do not infer synergy solely from isolated descriptions of individual characters.
+4. If no explicit team composition for the requested character appears in the context, state that the retrieved context does not contain a supported team composition.
+"""
+
+    elif intent == "build" and "talent" in subtypes:
+        format_rules = """
+This is a talent-priority question.
+
+Give the priority as an ordered sequence such as:
+1. Elemental Skill
+2. Elemental Burst
+3. Normal Attack
+
+Explain each priority only when the context provides enough evidence.
+"""
+
+    return f"""
+You are a retrieval-grounded Genshin Impact assistant.
+
+Answer the question using only the supplied context.
+
+General rules:
+- Do not invent unsupported facts.
+- Treat headings, numbered rankings, bullet lists, tables, and item descriptions as explicit evidence.
+- Preserve the ranking order shown in the context.
+- Before refusing, inspect all headings, lists, tables, and descriptions.
+- Cite supporting chunk IDs where practical.
+- If the context supports fewer than {max_recommendations} recommendations, list only those supported.
+- If the context contains no answer, say that there is not enough evidence.
+
+{format_rules}
+
+Question:
+{question}
+
+Context:
+{context}
+""".strip()
+
+def build_three_way_signal(faiss_results: list[tuple[int, float]], turbovec_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]], *, rrf_k: int = 60, rrf_scale: float = 10.0) -> dict[int, dict]:
+    signals: dict[int, dict] = {}
+
+    def ensure(cid: int) -> dict:
+        if cid not in signals:
+            signals[cid] = {
+                "rrf_score": 0.0,
+                "faiss_score": 0.0,
+                "turbovec_score": 0.0,
+                "bm25_score": 0.0,
+                "faiss_rank": None,
+                "turbovec_rank": None,
+                "bm25_rank": None,
+                "in_faiss": False,
+                "in_turbovec": False,
+                "in_bm25": False,
+            }
+        return signals[cid]
+
+    for rank, (cid, score) in enumerate(faiss_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["faiss_score"] = float(score)
+        s["faiss_rank"] = rank
+        s["in_faiss"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, (cid, score) in enumerate(turbovec_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["turbovec_score"] = float(score)
+        s["turbovec_rank"] = rank
+        s["in_turbovec"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, (cid, score) in enumerate(bm25_results, start=1):
+        cid = int(cid)
+        s = ensure(cid)
+        s["bm25_score"] = float(score)
+        s["bm25_rank"] = rank
+        s["in_bm25"] = True
+        s["rrf_score"] += 1.0 / (rrf_k + rank)
+
+    for s in signals.values():
+        s["rrf_score"] *= rrf_scale
+
+    return signals
+
+def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[dict], *, max_total: int, max_per_doc: int = 4) -> list[dict]:
+    max_total = max(int(max_total), len(seed_chunks))
+    output: list[dict] = []
+    seen_chunk_ids: set[int] = set()
+    doc_counts: dict[int, int] = {}
+
+    for row in seed_chunks:
+        chunk_id = int(row["chunk_id"])
+
+        if chunk_id in seen_chunk_ids:
+            continue
+
+        output.append(row)
+        seen_chunk_ids.add(chunk_id)
+
+        doc_id = int(row["doc_id"])
+        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+
+    for row in extra_chunks:
+        if len(output) >= max_total:
+            break
+
+        chunk_id = int(row["chunk_id"])
+
+        if chunk_id in seen_chunk_ids:
+            continue
+
+        doc_id = int(row["doc_id"])
+
+        if doc_counts.get(doc_id, 0) >= max_per_doc:
+            continue
+
+        output.append(row)
+        seen_chunk_ids.add(chunk_id)
+        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+
+    return output
+
+def trim_chunks_to_context_budget(chunks: list[dict], *, max_chunks: int, max_chars: int, max_chars_per_chunk: int) -> list[dict]:
+    output: list[dict] = []
+    total_chars = 0
+
+    for row in chunks:
+        if len(output) >= max_chunks:
+            break
+
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+
+        remaining = max_chars - total_chars
+        if remaining < 200:
+            break
+
+        allowed = min(len(text), max_chars_per_chunk, remaining)
+
+        copied = dict(row)
+        copied["text"] = text[:allowed]
+
+        output.append(copied)
+        total_chars += allowed
+
+    return output
+
+
+def normalized_phrase(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+def has_lookup_phrase(chunks: list[dict], entity: str) -> bool:
+    entity_key = normalized_phrase(entity)
+
+    if not entity_key:
+        return False
+
+    for row in chunks:
+        title_key = normalized_phrase(str(row.get("title") or ""))
+        text_key = normalized_phrase(str(row.get("text") or "")[:2500])
+
+        if entity_key in title_key:
+            return True
+
+        if entity_key in text_key:
+            return True
+
+    return False
+
 def is_recency_sensitive_question(question: str) -> bool:
     q = question.lower()
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, build_three_way_signal, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, has_lookup_phrase
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -36,9 +36,10 @@ def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
             if _RETRIEVAL_CACHE is None:
                 root = resolve_storage_root(cfg)
                 rel = Path(str(cache_cfg.get("path", "data/cache/retrieval_cache.sqlite")))
-                path = rel if rel.is_absolute() else root / rel
-                _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
-            return _RETRIEVAL_CACHE
+                path = (rel if rel.is_absolute() else root / rel)
+                _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000,)))
+
+    return _RETRIEVAL_CACHE
 
 def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     strict_fts_query_used: str | None = None
@@ -65,6 +66,16 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
     intent = detect_intent(question)
     build_subtypes = (detect_build_subtypes(question) if intent == "build" else set())
+    if (intent == "build" and re.search(
+            r"\b("
+            r"weapon|weapons|"
+            r"sword|swords|"
+            r"claymore|claymores|"
+            r"polearm|polearms|"
+            r"bow|bows|warbow|"
+            r"catalyst|catalysts"
+            r")\b", question, re.IGNORECASE)):
+        build_subtypes.add("weapon")
     broad = is_broad_question(question)
     top_k = broad_top_k if broad else direct_top_k
     candidate_k = max(top_k, candidate_k_cfg)
@@ -89,8 +100,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     if hyde_mode not in {"always", "fallback", "off", "disabled", "never"}:
         raise ValueError(f"Unsupported HyDE mode: {hyde_mode!r}")
 
-    def get_q_vec(ret, query_text: str | None):
-        effective_query = (query_text or question).strip()
+    def get_q_vec(ret, query_text: str | None = None):
+        effective_query = (query_text if query_text is not None else question).strip()
         cache_key = (effective_query, int(ret.dims))
 
         if cache_key in q_vec_cache:
@@ -427,7 +438,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         nonlocal hyde_error
 
         faiss_ret = get_faiss_ret()
-        query_vec = get_q_vec(faiss_ret)
+        query_vec = get_q_vec(faiss_ret, question)
         faiss_results = faiss_ret.search(query_vec, k)
         bm25_results = search_bm25(k)
         use_hyde = False
@@ -474,7 +485,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             retriever_name = "sqlite"
 
         if retriever_name in {"hybrid", "hybrid_hyde"}:
-            decompose_subqueries = (decompose_query(cfg, question, backend=backend))
+            decomposition_subqueries = (decompose_query(cfg, question, backend=backend))
 
         if retriever_name == "faiss":
             log.info("[QNA] using FAISS retriever")
@@ -576,6 +587,15 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
         chunks = fetch_chunks(conn, chunk_ids)
         max_per_doc = dedup_max_per_doc
+
+        if intent == "build":
+            entity = extract_lookup_entity(question)
+            if entity:
+                entity_key = normalized_phrase(entity)
+                matching = [row for row in chunks if entity_key in normalized_phrase(str(row.get("title") or ""))]
+                if len(matching) >= 5:
+                    chunks = matching
+
         if intent == "build":
             max_per_doc = max(dedup_max_per_doc, 6)
         elif intent == "lookup":
@@ -755,6 +775,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "hyde_used": hyde_used,
                 "hyde_candidate_count": hyde_signal_count,
                 "hyde_selected_count": hyde_selected_count,
+                "query_decomposition_enabled": as_bool((cfg.get("query_decomposition", {}) or {}).get("enabled", False)),
+                "query_decomposition_used": bool(decomposition_subqueries),
+                "decomposition_subqueries": list(decomposition_subqueries)
             })
     finally:
         conn.close()
@@ -782,224 +805,6 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
     cache.set(cache_key, retrieval_result_to_cache(result))
     log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
     return result
-
-def build_three_way_signal(faiss_results: list[tuple[int, float]], turbovec_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]], *, rrf_k: int = 60, rrf_scale: float = 10.0) -> dict[int, dict]:
-    signals: dict[int, dict] = {}
-
-    def ensure(cid: int) -> dict:
-        if cid not in signals:
-            signals[cid] = {
-                "rrf_score": 0.0,
-                "faiss_score": 0.0,
-                "turbovec_score": 0.0,
-                "bm25_score": 0.0,
-                "faiss_rank": None,
-                "turbovec_rank": None,
-                "bm25_rank": None,
-                "in_faiss": False,
-                "in_turbovec": False,
-                "in_bm25": False,
-            }
-        return signals[cid]
-
-    for rank, (cid, score) in enumerate(faiss_results, start=1):
-        cid = int(cid)
-        s = ensure(cid)
-        s["faiss_score"] = float(score)
-        s["faiss_rank"] = rank
-        s["in_faiss"] = True
-        s["rrf_score"] += 1.0 / (rrf_k + rank)
-
-    for rank, (cid, score) in enumerate(turbovec_results, start=1):
-        cid = int(cid)
-        s = ensure(cid)
-        s["turbovec_score"] = float(score)
-        s["turbovec_rank"] = rank
-        s["in_turbovec"] = True
-        s["rrf_score"] += 1.0 / (rrf_k + rank)
-
-    for rank, (cid, score) in enumerate(bm25_results, start=1):
-        cid = int(cid)
-        s = ensure(cid)
-        s["bm25_score"] = float(score)
-        s["bm25_rank"] = rank
-        s["in_bm25"] = True
-        s["rrf_score"] += 1.0 / (rrf_k + rank)
-
-    for s in signals.values():
-        s["rrf_score"] *= rrf_scale
-
-    return signals
-
-def merge_context_preserving_seeds(seed_chunks: list[dict], extra_chunks: list[dict], *, max_total: int, max_per_doc: int = 4) -> list[dict]:
-    max_total = max(int(max_total), len(seed_chunks))
-    output: list[dict] = []
-    seen_chunk_ids: set[int] = set()
-    doc_counts: dict[int, int] = {}
-
-    for row in seed_chunks:
-        chunk_id = int(row["chunk_id"])
-
-        if chunk_id in seen_chunk_ids:
-            continue
-
-        output.append(row)
-        seen_chunk_ids.add(chunk_id)
-
-        doc_id = int(row["doc_id"])
-        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-
-    for row in extra_chunks:
-        if len(output) >= max_total:
-            break
-
-        chunk_id = int(row["chunk_id"])
-
-        if chunk_id in seen_chunk_ids:
-            continue
-
-        doc_id = int(row["doc_id"])
-
-        if doc_counts.get(doc_id, 0) >= max_per_doc:
-            continue
-
-        output.append(row)
-        seen_chunk_ids.add(chunk_id)
-        doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
-
-    return output
-
-def trim_chunks_to_context_budget(chunks: list[dict], *, max_chunks: int, max_chars: int, max_chars_per_chunk: int) -> list[dict]:
-    output: list[dict] = []
-    total_chars = 0
-
-    for row in chunks:
-        if len(output) >= max_chunks:
-            break
-
-        text = str(row.get("text") or "").strip()
-        if not text:
-            continue
-
-        remaining = max_chars - total_chars
-        if remaining < 200:
-            break
-
-        allowed = min(len(text), max_chars_per_chunk, remaining)
-
-        copied = dict(row)
-        copied["text"] = text[:allowed]
-
-        output.append(copied)
-        total_chars += allowed
-
-    return output
-
-def build_grounded_answer_prompt(question: str, context: str, *, intent: str | None =  None, build_subtypes: set[str] | None = None, max_recommendations: int = 5) -> str:
-    subtypes = set(build_subtypes or ())
-    format_rules = ""
-
-    if intent == "build" and "weapon" in subtypes:
-        format_rules = f"""
-This is a weapon recommendation question.
-
-Answer format:
-1. Give the top recommendation first.
-2. Then list up to {max_recommendations} explicitly supported weapon options in ranked order.
-3. For each weapon, explain why it is recommended using only evidence from the context.
-4. Mention the relevant role, stat, passive, utility, or trade-off only when the context supports it.
-5. If the context provides a ranking but no reason, state that it is ranked by the source and do not invent a reason.
-6. Even if the question says "best weapon" in the singular, include supported alternatives after the top choice.
-7. Do not infer weapon stats, passives, damage, Energy Recharge, Elemental Mastery, or role from prior knowledge.
-8. Every explanation must be explicitly supported by the supplied context.
-9. If the context contains only a ranked list, say: "Ranked #N by the source; the retrieved context does not provide a reason."
-"""
-
-    elif intent == "build" and "artifact" in subtypes:
-        format_rules = f"""
-This is an artifact recommendation question.
-
-Answer format:
-1. Give the top artifact set first.
-2. Then list up to {max_recommendations} explicitly supported artifact options in ranked order.
-3. For each option, explain its use case, set effect, role, or trade-off only when supported by the context.
-4. Distinguish full sets from mixed 2-piece combinations when the context does so.
-5. If the context provides only a ranking and no explanation, state that clearly instead of inventing a reason.
-6. Even if the question says "best artifact set" in the singular, include supported alternatives after the top choice.
-7. An artifact may be recommended only when the context explicitly associates that artifact with the requested character.
-8. Do not recommend artifacts merely because they appear in a generic artifact mechanics page.
-9. Preserve the ranking from the character's build section.
-"""
-
-    elif intent == "build" and "team" in subtypes:
-        format_rules = f"""
-This is a team recommendation question.
-
-List up to {max_recommendations} supported team compositions in ranked order.
-For each team, identify the members and briefly explain their roles and synergy using only the context.
-
-Anser format:
-1. List a team only when the context explicitly presents those characters together as one team, party, lineup, or team composition.
-2. Do not construct a team by combining character names found in separate passages.
-3. Do not infer synergy solely from isolated descriptions of individual characters.
-4. If no explicit Zhongli team composition appears in the context, state that the retrieved context does not contain a supported team.
-"""
-
-    elif intent == "build" and "talent" in subtypes:
-        format_rules = """
-This is a talent-priority question.
-
-Give the priority as an ordered sequence such as:
-1. Elemental Skill
-2. Elemental Burst
-3. Normal Attack
-
-Explain each priority only when the context provides enough evidence.
-"""
-
-    return f"""
-You are a retrieval-grounded Genshin Impact assistant.
-
-Answer the question using only the supplied context.
-
-General rules:
-- Do not invent unsupported facts.
-- Treat headings, numbered rankings, bullet lists, tables, and item descriptions as explicit evidence.
-- Preserve the ranking order shown in the context.
-- Before refusing, inspect all headings, lists, tables, and descriptions.
-- Cite supporting chunk IDs where practical.
-- If the context supports fewer than {max_recommendations} recommendations, list only those supported.
-- If the context contains no answer, say that there is not enough evidence.
-
-{format_rules}
-
-Question:
-{question}
-
-Context:
-{context}
-""".strip()
-
-def normalized_phrase(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-
-def has_lookup_phrase(chunks: list[dict], entity: str) -> bool:
-    entity_key = normalized_phrase(entity)
-
-    if not entity_key:
-        return False
-
-    for row in chunks:
-        title_key = normalized_phrase(str(row.get("title") or ""))
-        text_key = normalized_phrase(str(row.get("text") or "")[:2500])
-
-        if entity_key in title_key:
-            return True
-
-        if entity_key in text_key:
-            return True
-
-    return False
 
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
     result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)

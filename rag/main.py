@@ -45,7 +45,7 @@ def main():
     ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
     ap.add_argument("--SPLADE_MIGRATE", default="False",)
     ap.add_argument("--SPLADE_OVERWRITE", default="False",)
-    ap.add_argument("--SPLADE_LIMIT", type=int, default=None,)
+    ap.add_argument("--SPLADE_LIMIT", type=int, default=None)
     ap.add_argument("--DB_REPAIR", default="False")
     ap.add_argument("--FTS_SYNC", default="False")
     ap.add_argument("--FTS_INIT", default="False")

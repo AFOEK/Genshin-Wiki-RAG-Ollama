@@ -126,7 +126,7 @@ Original question:
             provider_override=backend,
             model_override=(model_value or None),
             timeout=int(decomp_cfg.get("timeout", 120)),
-            think_override=decomp_cfg.get("think", False)
+            think_override=decomp_cfg.get("think", False),
             options_override={
                 "temperature": float(
                     decomp_cfg.get(

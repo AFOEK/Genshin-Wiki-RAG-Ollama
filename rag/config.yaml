@@ -61,9 +61,11 @@ splade:
   cache_folder: data/models
   model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledisti
   device: auto    # auto | cpu | cuda
-  batch_size: 16  # 2-16, 2-4 for CPU
+  batch_size: 64  # 32-64, 64 for GPU
   max_length: 256 # 512 | 256
-  max_active_dims: 128
+  max_active_dims: 256
+  encode_block_size: 512
+  precision: fp16
   shard_size: 50000
   candidate_k: 300
   rrf_weight: 0.75
@@ -123,7 +125,7 @@ retrieval_cache:
   path: data/cache/retrieval_cache.sqlite
   ttl_seconds: 86400
   max_entries: 50000
-  version: 7
+  version: 1
 
 hyde:
   enabled: true

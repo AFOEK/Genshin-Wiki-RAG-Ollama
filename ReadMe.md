@@ -213,6 +213,9 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --TURBOVEC_MIGRATE=False
 --TURBOVEC_AUDIT=False
 --TURBOVEC_OVERWRITE=False
+--SPLADE_MIGRATE=False
+--SPLADE_OVERWRITE=False
+--SPLADE_LIMIT=False
 --FTS_SYNC=True
 --FTS_INIT=False
 --FTS_REBUILD=False
@@ -221,7 +224,7 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --PARENT_INIT=False
 --BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--TURBOVEC_MIGRATE` it takes sqlite3 embedding records to generate TurboVec embedding vectors, `--TURBOVEC_AUDIT` it will check if the embedding is properly processed into TurboVec embedding vectors, `--TURBOVEC_OVERWRITE` it will overwrite current TurboVec vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
 
 > [!WARNING]
 Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
