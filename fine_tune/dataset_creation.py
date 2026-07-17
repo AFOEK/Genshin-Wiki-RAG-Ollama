@@ -463,7 +463,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
             {
                 "temperature": 0.0,
                 "top_p": 0.9,
-                "top_k": 20,
+                "top_k": 35,
                 "min_p": 0.0,
                 "repeat_penalty": 1.0,
                 "num_predict": 512,
@@ -1619,6 +1619,7 @@ def main() -> None:
             "faiss",
             "hybrid",
             "turbovec",
+            "hybrid_hyde",
             "hybrid_turbovec",
             "hybrid_all",
             "hybrid_faiss_turbovec",

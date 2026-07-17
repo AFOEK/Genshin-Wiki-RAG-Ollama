@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import logging, re
+import logging
+import re
+import threading
 
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
 _RETRIEVAL_CACHE : RetrievalCache | None = None
+_RETRIEVAL_CACHE_INIT_LOCK = threading.Lock()
 
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     global _RETRIEVAL_CACHE
@@ -28,11 +31,13 @@ def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
         return None
     
     if _RETRIEVAL_CACHE is None:
-        root = resolve_storage_root(cfg)
-        rel = Path(str(cache_cfg.get("path", "data/cache/retrieval_cache.sqlite")))
-        path = rel if rel.is_absolute() else root / rel
-        _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
-    return _RETRIEVAL_CACHE
+        with _RETRIEVAL_CACHE_INIT_LOCK:
+            if _RETRIEVAL_CACHE is None:
+                root = resolve_storage_root(cfg)
+                rel = Path(str(cache_cfg.get("path", "data/cache/retrieval_cache.sqlite")))
+                path = rel if rel.is_absolute() else root / rel
+                _RETRIEVAL_CACHE = RetrievalCache(path, ttl_seconds=int(cache_cfg.get("ttl_seconds", 86400)), max_entries=int(cache_cfg.get("max_entries", 50000)))
+            return _RETRIEVAL_CACHE
 
 def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     strict_fts_query_used: str | None = None
@@ -980,28 +985,7 @@ def has_lookup_phrase(chunks: list[dict], entity: str) -> bool:
     return False
 
 def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
-    intent = detect_intent(question)
-    build_subtypes = detect_build_subtypes(question) if intent == "build" else set()
-    cache = get_retrieval_cache(cfg)
-    cache_key = None
-
-    if cache is not None:
-        db_path = resolve_db_path(cfg)
-        cache_cfg = cfg.get("retrieval_cache", {}) or {}
-        cache_version = int(cache_cfg.get("version", 1))
-        cache_key = make_retrieval_cache_key(question=question, retriever_name=retriever_name, backend=backend, direct_top_k=direct_top_k, intent=f"{intent}:v{cache_version}", subtypes=build_subtypes, db_path=db_path, index_meta={})
-        cached = cache.get(cache_key)
-        if cached is not None:
-            log.info("[RETRIEVAL_CACHE] hit key=%s question=%r", cache_key[:12], question)
-            result = retrieval_result_from_cache(cached)
-        else:
-            log.info("[RETRIEVAL_CACHE] miss key=%s question=%r", cache_key[:12], question)
-            result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
-            cache.set(cache_key, retrieval_result_to_cache(result))
-            log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
-    else:
-        result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
-
+    result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
     if not result.selected_chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."
 
