@@ -140,7 +140,7 @@ hyde:
   candidate_k: 300
   rrf_weight: 0.75
   mode: fallback    #fallback | always
-  cache_enable: false
+  cache_enable: true
   fallback_top_n: 12
   fallback_min_shared_docs: 1
   timeout: 300
@@ -240,7 +240,7 @@ dataset_creation:
   answer_think: true
   validator_think: false
 
-  retriever: hybrid
+  retriever: hybrid_hyde
   backend: ollama
   direct_top_k: 75
   require_positive_document: true
