@@ -389,10 +389,6 @@ def main():
             "[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
         
     log.info("[ALL] DONE!")
-    # source_meta = {s["name"]: (s.get("tier","primary"), float(s.get("weight", 1.0))) for s in cfg.get("sources", [])}
-    # for source, url, title, text in TEST_DOCS:
-    #     tier, weight = source_meta.get(source, ("primary", 1.0))
-    #     process_document(conn, embed_fn, cfg, source, url, title, text, tier=tier, weight=weight)
 
 if __name__ == "__main__":
     main()
