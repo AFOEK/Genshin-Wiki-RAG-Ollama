@@ -367,7 +367,7 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 - [ ] Multi-query retrieval.
 - [x] Adaptive HyDE fallback.
 - [ ] Adaptive retrieval routing.
-- [ ] SPLADE support.
+- [x] SPLADE support. [^5]
 - [ ] RAG-Fusion retrieval.
 - [ ] Query complexity classification.
 - [ ] LLM query expansion.
@@ -395,3 +395,4 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 [^2]: ARM architectures only
 [^3]: Partial need more testing
 [^4]: Beta version
+[^5]: Utilized Scipy CSC Matrix based on sqlite3 embeddings
