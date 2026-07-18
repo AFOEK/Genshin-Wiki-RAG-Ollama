@@ -199,6 +199,10 @@ log "Uploading to Kaggle"
 python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data" || log "Failed upload to Kaggle, try again"
 log "Done upload"
 
+log "Creating SPLADE records"
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --SPLADE_MIGRATE=True --SPLADE_OVERWRITE=False --BACKEND=ollama || log "[SPLADE] Error check run_pipeline.log for more info"
+log "SPLADE records finished"
+
 log "Test first local embedding"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever hybrid --direct_top_k 20 --backend ollama || log "Test failed — continuing"
 log "First testing done"
