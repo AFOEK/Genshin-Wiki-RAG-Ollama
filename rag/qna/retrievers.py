@@ -240,11 +240,7 @@ class SpladeRetriever:
             actual_value = self.manifest.get(key)
 
             if actual_value != expected_value:
-                raise RuntimeError(
-                    "SPLADE configuration mismatch: "
-                    f"{key}={actual_value!r}, "
-                    f"expected={expected_value!r}"
-                )
+                raise RuntimeError(f"[SPLADE] configuration mismatch: {key}={actual_value!r}, expected={expected_value!r}")
 
         model_key = (model_name, device, max_length, max_active_dims, cache_folder,)
         self.model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder,)
@@ -273,10 +269,7 @@ class SpladeRetriever:
             (query_indices, query_values, dimensions,) = encode_query_sparse(self.model, query, max_active_dims=self.max_active_dims,)
 
         if dimensions != self.vocabulary_size:
-            raise RuntimeError(
-                "SPLADE query dimension mismatch: "
-                f"query={dimensions} "
-                f"index={self.vocabulary_size}")
+            raise RuntimeError(f"[SPLADE] query dimension mismatch: query={dimensions} index={self.vocabulary_size}")
 
         candidates: list[tuple[int, float]] = []
         for matrix, chunk_ids, _ in self.shards:

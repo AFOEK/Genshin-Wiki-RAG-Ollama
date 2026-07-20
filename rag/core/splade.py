@@ -98,17 +98,10 @@ def save_csc_shard(shard_dir: Path, matrix: sparse.spmatrix, chunk_ids: np.ndarr
     chunk_ids = np.asarray(chunk_ids, dtype=np.int64)
 
     if matrix.shape[0] != chunk_ids.size:
-        raise ValueError(
-            "SPLADE shard row count does not match chunk ID count: "
-            f"rows={matrix.shape[0]} ids={chunk_ids.size}"
-        )
+        raise ValueError(f"SPLADE shard row count does not match chunk ID count: rows={matrix.shape[0]} ids={chunk_ids.size}")
 
     if matrix.indptr.size != matrix.shape[1] + 1:
-        raise RuntimeError(
-            "Invalid CSC indptr length: "
-            f"got={matrix.indptr.size} "
-            f"expected={matrix.shape[1] + 1}"
-        )
+        raise RuntimeError(f"Invalid CSC indptr length: got={matrix.indptr.size} expected={matrix.shape[1] + 1}")
 
     np.save(shard_dir / "data.npy", matrix.data.astype(np.float32, copy=False), allow_pickle=False,)
     np.save(shard_dir / "indices.npy", matrix.indices, allow_pickle=False,)
@@ -124,7 +117,7 @@ def save_csc_shard(shard_dir: Path, matrix: sparse.spmatrix, chunk_ids: np.ndarr
 
     (shard_dir / "meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8",)
 
-    log.info( "[SPLADE] saved CSC files path=%s rows=%d columns=%d nnz=%d",shard_dir, matrix.shape[0], matrix.shape[1], matrix.nnz,)
+    log.info("[SPLADE] saved CSC files path=%s rows=%d columns=%d nnz=%d",shard_dir, matrix.shape[0], matrix.shape[1], matrix.nnz,)
 
 def load_csc_shard(shard_dir: Path) -> tuple[sparse.csc_matrix, np.ndarray, dict]:
     metadata = json.loads((shard_dir / "meta.json").read_text(encoding="utf-8"))
@@ -209,18 +202,12 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     else:
         manifest = {
-            "format": (
-                "scipy_csc_memmap_v1"
-            ),
+            "format": "scipy_csc_memmap_v1",
             "model": model_name,
             "matrix_method": matrix_method,
-            "vocabulary_size": (
-                vocabulary_size
-            ),
+            "vocabulary_size": vocabulary_size,
             "max_length": max_length,
-            "max_active_dims": (
-                max_active_dims
-            ),
+            "max_active_dims": max_active_dims,
             "shard_size": shard_size,
             "last_chunk_id": 0,
             "chunk_count": 0,
@@ -240,7 +227,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     for key, expected_value in expected.items():
         actual_value = manifest.get(key)
         if actual_value != expected_value:
-            raise RuntimeError("SPLADE manifest mismatch: " f"{key}={actual_value!r}, " f"expected={expected_value!r}. " "Rebuild with overwrite=True.")
+            raise RuntimeError(f"SPLADE manifest mismatch: {key}={actual_value!r}, expected={expected_value!r}. Rebuild with overwrite=True.")
 
     conn = read_only_connect(str(db_path))
     built_this_run = 0
@@ -271,11 +258,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                     batch_matrix = encode_documents_to_csr(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
 
                 if batch_matrix.shape[1] != vocabulary_size:
-                    raise RuntimeError(
-                        "SPLADE vocabulary mismatch: "
-                        f"matrix={batch_matrix.shape[1]} "
-                        f"model={vocabulary_size}"
-                    )
+                    raise RuntimeError(f"SPLADE vocabulary mismatch: matrix={batch_matrix.shape[1]} model={vocabulary_size}")
 
                 batch_ids = [int(row["chunk_id"]) for row in rows]
                 shard_matrices.append(batch_matrix)
@@ -337,7 +320,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                 break
     finally:
         conn.close()
-        
+
     if exhausted and not manifest.get("completed", False):
         manifest["completed"] = True
         write_json_atomic(manifest_path, manifest)
