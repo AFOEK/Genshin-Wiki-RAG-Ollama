@@ -55,6 +55,20 @@ def encode_documents_to_csc(model: SparseEncoder, texts: list[str], *, batch_siz
     matrix.sort_indices()
     return matrix
 
+def encode_documents_to_csr(model: SparseEncoder, texts: list[str], *, batch_size: int, max_active_dims: int | None) -> sparse.csr_matrix:
+    embeddings = model.encode_document(texts, batch_size=batch_size, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims)
+
+    if embeddings.layout != torch.sparse_coo:
+        raise RuntimeError(f"Expected sparse COO embeddings, got layout={embeddings.layout}")
+
+    coordinates = embeddings._indices().cpu().numpy()
+    values = embeddings._values().float().cpu().numpy().astype(np.float32, copy=False)
+
+    matrix = sparse.coo_matrix((values, (coordinates[0], coordinates[1])), shape=tuple(embeddings.shape), dtype=np.float32).tocsr()
+    matrix.sum_duplicates()
+    matrix.sort_indices()
+    return matrix
+
 def encode_query_sparse(model: SparseEncoder, query: str, *, max_active_dims: int | None) -> tuple[np.ndarray, np.ndarray, int]:
     embedding = model.encode_query(query, show_progress_bar=False, convert_to_tensor=True, convert_to_sparse_tensor=True, save_to_cpu=True, max_active_dims=max_active_dims)
 
@@ -71,30 +85,51 @@ def encode_query_sparse(model: SparseEncoder, query: str, *, max_active_dims: in
     query_matrix.sum_duplicates()
     return query_matrix.indices.astype(np.int32, copy=False), query_matrix.data.astype(np.float32, copy=False), dimension
 
-def save_csc_shard(shard_dir: Path, matrix: sparse.csc_matrix, chunk_ids: np.ndarray) -> None:
+def save_csc_shard(shard_dir: Path, matrix: sparse.spmatrix, chunk_ids: np.ndarray) -> None:
     shard_dir.mkdir(parents=True, exist_ok=True)
+
+    if not sparse.isspmatrix_csc(matrix):
+        matrix = matrix.tocsc()
+
     matrix = matrix.astype(np.float32, copy=False)
+    matrix.sum_duplicates()
     matrix.sort_indices()
+
+    chunk_ids = np.asarray(chunk_ids, dtype=np.int64)
+
     if matrix.shape[0] != chunk_ids.size:
         raise ValueError(
             "SPLADE shard row count does not match chunk ID count: "
-            f"rows={matrix.shape[0]} ids={chunk_ids.size}")
+            f"rows={matrix.shape[0]} ids={chunk_ids.size}"
+        )
 
-    np.save(shard_dir / "data.npy", matrix.data)
-    np.save(shard_dir / "indices.npy", matrix.indices)
-    np.save(shard_dir / "indptr.npy", matrix.indptr)
-    np.save(shard_dir / "chunk_ids.npy", chunk_ids.astype(np.int64, copy=False))
+    if matrix.indptr.size != matrix.shape[1] + 1:
+        raise RuntimeError(
+            "Invalid CSC indptr length: "
+            f"got={matrix.indptr.size} "
+            f"expected={matrix.shape[1] + 1}"
+        )
+
+    np.save(shard_dir / "data.npy", matrix.data.astype(np.float32, copy=False), allow_pickle=False,)
+    np.save(shard_dir / "indices.npy", matrix.indices, allow_pickle=False,)
+    np.save(shard_dir / "indptr.npy", matrix.indptr, allow_pickle=False,)
+    np.save(shard_dir / "chunk_ids.npy", chunk_ids, allow_pickle=False,)
 
     metadata = {
+        "format": "csc",
         "rows": int(matrix.shape[0]),
         "columns": int(matrix.shape[1]),
         "nnz": int(matrix.nnz),
     }
-    (shard_dir / "meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    log.info("[SPLADE] CSC matrix saved successfully at: %s", str(shard_dir))
+
+    (shard_dir / "meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8",)
+
+    log.info( "[SPLADE] saved CSC files path=%s rows=%d columns=%d nnz=%d",shard_dir, matrix.shape[0], matrix.shape[1], matrix.nnz,)
 
 def load_csc_shard(shard_dir: Path) -> tuple[sparse.csc_matrix, np.ndarray, dict]:
     metadata = json.loads((shard_dir / "meta.json").read_text(encoding="utf-8"))
+    if metadata.get("format", "csc") != "csc":
+        raise RuntimeError(f"Unsupported SPLADE shard format: {metadata.get('format')!r}")
 
     data = np.load(shard_dir / "data.npy", mmap_mode="r", allow_pickle=False)
     indices = np.load(shard_dir / "indices.npy", mmap_mode="r", allow_pickle=False)
@@ -156,13 +191,17 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     shard_size = int(splade_cfg.get("shard_size", 50_000))
     max_length = int(splade_cfg.get("max_length", 256))
     raw_active_dims = splade_cfg.get("max_active_dims", 128)
+    matrix_method = str(splade_cfg.get("matrix_method", "csr")).strip().lower()
+
+    if matrix_method not in {"csr", "csc"}:
+        raise ValueError(f"Unsupported SPLADE matrix_method: {matrix_method!r}. Expected 'csr' or 'csc'.")
+    
     precision = str(splade_cfg.get("precision", "fp32")).strip().lower()
     max_active_dims = (int(raw_active_dims) if raw_active_dims is not None else None)
     encode_block_size = max(batch_size, int(splade_cfg.get("encode_block_size", 512)))
 
     model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=resolve_cache_folder(cfg), precision=precision)
     vocabulary_size = get_splade_output_dimension(model)
-    parameter = next(model.parameters())
     parameter = next(model.parameters())
     log.info("[SPLADE] vocabulary=%d hidden=%s device=%s dtype=%s batch=%d block=%d", vocabulary_size, getattr(model.transformers_model.config, "hidden_size", None), parameter.device, parameter.dtype, batch_size, encode_block_size)
     
@@ -174,6 +213,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                 "scipy_csc_memmap_v1"
             ),
             "model": model_name,
+            "matrix_method": matrix_method,
             "vocabulary_size": (
                 vocabulary_size
             ),
@@ -192,6 +232,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     
     expected = {
         "model": model_name,
+        "matrix_method": matrix_method,
         "vocabulary_size": (vocabulary_size),
         "max_length": max_length,
         "max_active_dims": (max_active_dims)}
@@ -224,7 +265,11 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                     break
 
                 texts = [(f"{row['title'] or ''}\n{row['text'] or ''}").strip() or "[empty chunk]" for row in rows]
-                batch_matrix = encode_documents_to_csc(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
+                if matrix_method == "csc":
+                    batch_matrix = encode_documents_to_csc(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
+                elif matrix_method == "csr":
+                    batch_matrix = encode_documents_to_csr(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
+
                 if batch_matrix.shape[1] != vocabulary_size:
                     raise RuntimeError(
                         "SPLADE vocabulary mismatch: "
@@ -241,7 +286,13 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
             if not shard_chunk_ids:
                 break
 
-            shard_matrix = sparse.vstack(shard_matrices, format="csc", dtype=np.float32,)
+            if matrix_method == "csc":
+                shard_matrix = sparse.vstack(shard_matrices, format="csc", dtype=np.float32)
+            elif matrix_method == "csr":
+                shard_matrix = sparse.vstack(shard_matrices, format="csr", dtype=np.float32).tocsc()
+            else:
+                raise ValueError(f"Unsupported SPLADE matrix_method: {matrix_method!r}. Expected 'csr' or 'csc'.")
+                
             chunk_ids = np.asarray(shard_chunk_ids, dtype=np.int64,)
             shard_number = int(manifest["shard_count"])
             shard_name = (f"shard_{shard_number:05d}")
@@ -255,6 +306,19 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                 shutil.rmtree(final_dir)
 
             save_csc_shard(temporary_dir, shard_matrix, chunk_ids,)
+            required_files = (
+                "data.npy",
+                "indices.npy",
+                "indptr.npy",
+                "chunk_ids.npy",
+                "meta.json",
+            )
+
+            missing_files = [name for name in required_files if not (temporary_dir / name).is_file()]
+
+            if missing_files:
+                raise RuntimeError(f"SPLADE shard save incomplete: missing={missing_files}")
+
             temporary_dir.replace(final_dir)
             manifest["last_chunk_id"] = (last_chunk_id)
             manifest["chunk_count"] = (int(manifest["chunk_count"]) + len(shard_chunk_ids))
@@ -273,7 +337,10 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
                 break
     finally:
         conn.close()
-
+        
+    if exhausted and not manifest.get("completed", False):
+        manifest["completed"] = True
+        write_json_atomic(manifest_path, manifest)
     log.info("[SPLADE] build finished built_this_run=%d total=%d shards=%d completed=%s", built_this_run, manifest["chunk_count"], manifest["shard_count"], manifest["completed"])
     return dict(manifest)
 
@@ -293,4 +360,3 @@ def _fetch_active_chunks(conn, *, after_chunk_id: int, limit: int):
         LIMIT ?
         """,
         (int(after_chunk_id), int(limit))).fetchall()
-

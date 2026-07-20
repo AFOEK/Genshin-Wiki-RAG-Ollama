@@ -66,6 +66,7 @@ splade:
   max_length: 256 # 512 | 256
   max_active_dims: 256
   encode_block_size: 512
+  matrix_method: csr #csr | csc
   precision: fp16
   shard_size: 50000
   candidate_k: 300

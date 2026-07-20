@@ -1220,15 +1220,12 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
             "retriever": retriever_name,
             "candidate_doc_rank": candidate_doc_rank,
             "selected_doc_rank": selected_doc_rank,
-            "retrieved_chunk_ids": (
-                retrieval.diagnostics.get(
-                    "selected_chunk_ids",
-                    [],
-                )
-            ),
-            "strict_fts_query": (
-                retrieval.strict_fts_query
-            ),
+            "retrieved_chunk_ids": (retrieval.diagnostics.get("selected_chunk_ids", [])),
+            "query_decomposition_used": bool(retrieval.diagnostics.get("query_decomposition_used", False)),
+            "decomposition_subqueries": list(retrieval.diagnostics.get("decomposition_subqueries", [])),
+            "multi_hop_used": bool(retrieval.diagnostics.get("multi_hop_used", False)),
+            "multi_hop_queries": list(retrieval.diagnostics.get("multi_hop_queries", [])),
+            "strict_fts_query": (retrieval.strict_fts_query),
             "retrieval_validated": selected_doc_rank is not None,
             "answer_support_validated": False,
             "human_verified": False,
@@ -1605,12 +1602,17 @@ def main() -> None:
 
         if retriever_name in {
             "faiss",
+            "splade",
             "hybrid",
             "turbovec",
             "hybrid_hyde",
+            "hybrid_splade",
             "hybrid_turbovec",
-            "hybrid_all",
             "hybrid_faiss_turbovec",
+            "hybrid_hyde_turbovec",
+            "hybrid_splade_turbovec",
+            "hybrid_hyde_splade_turbovec",
+            "hybrid_all",
         }:
             log.info("[DATASET] Warming retrieval index")
 
