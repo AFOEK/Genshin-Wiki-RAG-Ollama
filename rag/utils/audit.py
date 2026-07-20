@@ -308,8 +308,7 @@ def audit_integrity(conn: sqlite3.Connection, sample_docs: Optional[int] = 50, s
         orphan_chunks=orphan_chunks,
         orphan_embeddings=orphan_embeddings,
         missing_embeddings=missing_embeddings,
-        docs_missing_chunks=docs_missing_chunks,
-    )
+        docs_missing_chunks=docs_missing_chunks)
 
 def compression_stats(conn: sqlite3.Connection, active_chunks_only: bool = True) -> CompressionStats:
     cur = conn.cursor()
@@ -333,6 +332,7 @@ def compression_stats(conn: sqlite3.Connection, active_chunks_only: bool = True)
     FROM chunks
     WHERE {chunk_where}
     """)
+
     c_rows, c_avg_raw, c_avg_zst = cur.fetchone()
 
     c_ratio = None
@@ -532,11 +532,7 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
         failures.append("meta_count_invalid")
 
     tv_cfg = cfg.get("turbovec", {}) or {}
-    expected_model = expected_embedding_model_from_cfg(
-        cfg,
-        backend=backend,
-        source=str(tv_cfg.get("model_source", "runtime")),
-    )
+    expected_model = expected_embedding_model_from_cfg(cfg, backend=backend, source=str(tv_cfg.get("model_source", "runtime")))
 
     actual_model = str(meta.get("embedding_model", ""))
 
@@ -544,9 +540,7 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
     expected_n = normalize_model_name(expected_model)
 
     if actual_n and expected_n and actual_n != expected_n:
-        failures.append(
-            f"embedding_model_mismatch: meta={actual_model!r} expected={expected_model!r}"
-        )
+        failures.append(f"embedding_model_mismatch: meta={actual_model!r} expected={expected_model!r}")
 
     try:
         index = IdMapIndex.load(str(index_path))
@@ -666,5 +660,4 @@ def audit_turbovec_against_sqlite(cfg: dict, *, index_dir: str | None = None, sa
         index_total=meta_count,
         sqlite_active_embeds=sqlite_active_embeds,
         dims=int(d or sqlite_d or 0),
-        failures=failures,
-    )
+        failures=failures)

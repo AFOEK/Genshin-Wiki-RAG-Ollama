@@ -153,10 +153,7 @@ class TurboVecRetriever:
             expected = normalize_model_name(expected_model)
 
             if actual and expected and actual != expected:
-                msg = (
-                    "[TURBOVEC] embedding model mismatch: "
-                    f"meta.json={self.model!r} config_expected={expected_model!r}"
-                )
+                msg = (f"[TURBOVEC] embedding model mismatch: meta.json={self.model!r} config_expected={expected_model!r}")
 
                 policy = str(mismatch_policy or "error").strip().lower()
                 if policy == "error":
@@ -253,7 +250,7 @@ class SpladeRetriever:
         shard_directories = sorted(path for path in current.glob("shard_*") if path.is_dir())
 
         if not shard_directories:
-            raise RuntimeError(f"No SPLADE shards found under {current}")
+            raise RuntimeError(f"[SPLADE] No SPLADE shards found under {current}")
 
         self.shards = [load_csc_shard(path) for path in shard_directories]
 

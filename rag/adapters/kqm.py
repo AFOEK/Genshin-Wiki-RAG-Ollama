@@ -50,11 +50,7 @@ def ensure_repo(repo_path: str, repo_url: str) -> tuple[bool, str]:
     local_commit = repo.head.commit.hexsha
 
     if local_commit != remote_commit:
-        log.info(
-            "[KQM] Git repo outdated: local=%s remote=%s → updating",
-            local_commit[:7],
-            remote_commit[:7],
-        )
+        log.info("[KQM] Git repo outdated: local=%s remote=%s → updating", local_commit[:7], remote_commit[:7],)
         repo.git.reset("--hard", remote_commit)
         repo.git.clean("-fdx")
         return True, remote_commit

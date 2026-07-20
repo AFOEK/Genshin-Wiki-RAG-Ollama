@@ -125,11 +125,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         q_blob, q_dims = embed(cfg, effective_query, backend=backend, mode="query",)
 
         if q_dims != ret.dims:
-            raise RuntimeError(
-                "query embedding dims mismatch: "
-                f"query={q_dims} "
-                f"retriever={ret.dims}"
-            )
+            raise RuntimeError(f"query embedding dims mismatch: query={q_dims} retriever={ret.dims}")
 
         query_vector = normalize_query_vec(q_blob, q_dims,)
         q_vec_cache[cache_key] = query_vector

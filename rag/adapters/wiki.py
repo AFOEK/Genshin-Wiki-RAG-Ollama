@@ -50,19 +50,11 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
         if not cont:
             break
 
-def get_json_with_retry(
-        session: requests.Session,
-        url: str,
-        *,
-        params: dict[str, Any],
-        timeout: float = 60.0,
-        max_retries: int = 10
-) -> Optional[dict[str, Any]]:
+def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str, Any], timeout: float = 60.0, max_retries: int = 10) -> Optional[dict[str, Any]]:
     for attempt in range(max_retries):
         try:
             r = session.get(url, params=params, timeout=timeout)
             if r.status_code in _RETRY_STATUSES:
-                # honor Retry-After if present (common on 429)
                 ra = r.headers.get("Retry-After")
                 if ra and ra.isdigit():
                     time.sleep(min(int(ra), 120))
@@ -108,7 +100,7 @@ def list_allpages(api: str, limit: int = 100, namespace: int = 0):
 
         data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
         if not data:
-            log.warning("[WIKI] allpages failed; sleeping and retrying")
+            log.warning("[WIKI] allpages failed; sleeping and retrying !")
             time.sleep(10)
             continue
 

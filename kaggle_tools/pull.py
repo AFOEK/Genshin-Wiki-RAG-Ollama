@@ -86,18 +86,9 @@ def get_kernel_status(kernel_slug: str) -> str | None:
         log.warning("[PULL] Status check failed: %s", e)
         return None
 
-def wait_for_kernel(
-    kernel_slug: str,
-    poll_interval_s: int = 300,
-    timeout_s: int = 18000,
-) -> bool:
+def wait_for_kernel(kernel_slug: str, poll_interval_s: int = 300, timeout_s: int = 18000) -> bool:
     elapsed = 0
-    log.info(
-        "[PULL] Waiting for kernel %s (poll=%ds timeout=%ds)",
-        kernel_slug,
-        poll_interval_s,
-        timeout_s,
-    )
+    log.info("[PULL] Waiting for kernel %s (poll=%ds timeout=%ds)", kernel_slug, poll_interval_s, timeout_s)
 
     while elapsed < timeout_s:
         status = get_kernel_status(kernel_slug)
@@ -111,12 +102,7 @@ def wait_for_kernel(
             return False
 
         if status in ("running", "queued"):
-            log.info(
-                "[PULL] Still %s — next check in %ds (elapsed=%ds)",
-                status,
-                poll_interval_s,
-                elapsed,
-            )
+            log.info("[PULL] Still %s — next check in %ds (elapsed=%ds)", status, poll_interval_s, elapsed)
         else:
             log.warning("[PULL] Unknown status '%s' — will retry", status)
 
@@ -155,10 +141,7 @@ def find_artifact_dir(root: Path, required: tuple[str, ...]) -> Path:
 
     if not candidates:
         found = "\n".join(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
-        raise FileNotFoundError(
-            f"Could not find required files {required} under {root}.\n"
-            f"Files found:\n{found}"
-        )
+        raise FileNotFoundError(f"Could not find required files {required} under {root}.\nFiles found:\n{found}")
 
     candidates.sort(key=lambda p: len(p.relative_to(root).parts))
     return candidates[0]
@@ -195,12 +178,7 @@ def show_available_files(output_dir: Path) -> None:
             log.info("[PULL] %-24s %8.3f GB  %s", p.name, size_gb, role)
 
 
-def import_embeddings(
-    db_path: Path,
-    chunk_ids_path: Path,
-    vectors_path: Path,
-    batch_size: int = 2000,
-) -> int:
+def import_embeddings(db_path: Path, chunk_ids_path: Path, vectors_path: Path, batch_size: int = 2000) -> int:
     if not chunk_ids_path.exists():
         raise FileNotFoundError(chunk_ids_path)
     if not vectors_path.exists():
@@ -210,22 +188,15 @@ def import_embeddings(
     vectors = np.load(str(vectors_path), mmap_mode="r")
 
     if len(chunk_ids) != len(vectors):
-        raise RuntimeError(
-            f"chunk_ids/vectors length mismatch: {len(chunk_ids)} != {len(vectors)}"
-        )
+        raise RuntimeError(f"[PULL] chunk_ids/vectors length mismatch: {len(chunk_ids)} != {len(vectors)}")
 
     if vectors.ndim != 2:
-        raise RuntimeError(f"vectors.npy must be 2D, got shape={vectors.shape}")
+        raise RuntimeError(f"[PULL] vectors.npy must be 2D, got shape={vectors.shape}")
 
     dims = int(vectors.shape[1])
     total = int(vectors.shape[0])
 
-    log.info(
-        "[EMBED_IMPORT] Importing %d vectors, dims=%d, batch_size=%d",
-        total,
-        dims,
-        batch_size,
-    )
+    log.info("[EMBED_IMPORT] Importing %d vectors, dims=%d, batch_size=%d", total, dims, batch_size)
 
     conn = rw_connect(str(db_path))
     cur = conn.cursor()
@@ -260,12 +231,7 @@ def import_embeddings(
             if inserted_total % max(batch_size * 10, 1) == 0 or inserted_total == total:
                 elapsed = time.time() - t0
                 rate = inserted_total / max(elapsed, 1e-9)
-                log.info(
-                    "[EMBED_IMPORT] inserted=%d/%d rate=%.0f vec/s",
-                    inserted_total,
-                    total,
-                    rate,
-                )
+                log.info("[EMBED_IMPORT] inserted=%d/%d rate=%.0f vec/s", inserted_total, total, rate)
 
     except Exception:
         conn.rollback()

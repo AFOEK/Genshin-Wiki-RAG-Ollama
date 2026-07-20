@@ -85,10 +85,7 @@ def sync_dirty_chunks_fts(conn: sqlite3.Connection, batch_size: int=500) -> dict
             
             docs_ids = [int(r[0]) for r in dirty]
             cur.execute("DELETE FROM temp_fts_dirty_docs")
-            cur.executemany(
-                "INSERT INTO temp_fts_dirty_docs(doc_id) VALUES (?)",
-                [(doc_id,) for doc_id in docs_ids],
-            )
+            cur.executemany("INSERT INTO temp_fts_dirty_docs(doc_id) VALUES (?)", [(doc_id,) for doc_id in docs_ids])
             cur.execute("""
                 DELETE FROM chunks_fts
                 WHERE rowid IN (

@@ -28,9 +28,7 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
     try:
         batch_results = embed_fn(texts)
         if len(batch_results) != len(prepared_jobs):
-            raise RuntimeError(
-                f"batch result count mismatch: got={len(batch_results)} expected={len(prepared_jobs)}"
-            )
+            raise RuntimeError(f"Batch result count mismatch: got={len(batch_results)} expected={len(prepared_jobs)}")
 
         out = []
         for (job, _), (vec, dims) in zip(prepared_jobs, batch_results):
@@ -242,9 +240,7 @@ def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_
             try:
                 src, url, title, text, last_modified, etag = doc_q.get(timeout=15)
             except queue.Empty:
-                log.info("[INGEST] idle finished=%d/%d doc_q=%d pending=%d embed_q=%d res_q=%d",
-                         finished, num_producers, doc_q.qsize(), pending_embeds,
-                         embed_q.qsize(), embed_res_q.qsize())
+                log.info("[INGEST] idle finished=%d/%d doc_q=%d pending=%d embed_q=%d res_q=%d", finished, num_producers, doc_q.qsize(), pending_embeds, embed_q.qsize(), embed_res_q.qsize())
                 drain_results(600)
                 continue
             try:
@@ -261,16 +257,8 @@ def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_
 
                 tier = tier_map.get(src, "primary")
                 weight = weight_map.get(src, 1.0)
-                chunks_to_embed = process_document(
-                    conn, embed_fn, cfg,
-                    src, url, title, text,
-                    tier=tier, weight=weight,
-                    do_embed=False, last_modified=last_modified,
-                    etag=etag
-                ) or []
-
+                chunks_to_embed = process_document(conn, embed_fn, cfg, src, url, title, text, tier=tier, weight=weight, do_embed=False, last_modified=last_modified, etag=etag) or []
                 processed += 1
-
                 for chunk_id, chunk_text in chunks_to_embed:
                     if embed_q.full():
                         log.warning("[INGEST] embed queue FULL; waiting chunk_id=%s", chunk_id)
@@ -287,9 +275,7 @@ def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_
 
                 total = processed + skipped + failed
                 if total and total % embed_queue_size == 0:
-                    log.info("[INGEST] processed=%d skipped=%d failed=%d doc_q=%d pending=%d embed_q=%d res_q=%d",
-                             processed, skipped, failed, doc_q.qsize(), pending_embeds,
-                             embed_q.qsize(), embed_res_q.qsize())
+                    log.info("[INGEST] processed=%d skipped=%d failed=%d doc_q=%d pending=%d embed_q=%d res_q=%d", processed, skipped, failed, doc_q.qsize(), pending_embeds, embed_q.qsize(), embed_res_q.qsize())
 
                 if processed and processed % 650 == 0:
                     conn.commit()

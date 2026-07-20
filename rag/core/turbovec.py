@@ -203,11 +203,6 @@ def build_turbovec_from_sqlite(cfg: dict, *, overwrite: bool = False, backend: s
 
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    log.info(
-        "[TURBOVEC] build done added=%d path=%s model=%s",
-        added,
-        index_path,
-        embedding_model,
-    )
+    log.info("[TURBOVEC] build done added=%d path=%s model=%s", added, index_path, embedding_model)
 
     return meta    

@@ -225,7 +225,7 @@ def read_only_connect(path: str) -> sqlite3.Connection:
         raise FileNotFoundError(p)
     conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    log.info(f"[INFO] Read-only sqlite db connected at {p}")
+    log.info(f"[DB] Read-only sqlite db connected at {p}")
     return conn
 
 def init_db(path: str) -> None:
@@ -238,7 +238,7 @@ def init_db(path: str) -> None:
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(SCHEMA)
 
-        log.info(f"[INFO] Initialized sqlite db schema at {p}")
+        log.info(f"[DB] Initialized sqlite db schema at {p}")
     finally:
         conn.close()
 
@@ -253,5 +253,5 @@ def connect(path: str, init_schema: bool = False) -> sqlite3.Connection:
     if init_schema:
         conn.executescript(SCHEMA)
 
-    log.info(f"[INFO] Connected to sqlite db at {p}")
+    log.info(f"[DB] Connected to sqlite db at {p}")
     return conn

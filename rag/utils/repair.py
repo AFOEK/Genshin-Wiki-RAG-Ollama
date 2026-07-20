@@ -39,18 +39,7 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
 
     try:
         raw_txt = zstd_decompress_text(raw_zst)
-        process_document(
-            conn,
-            embed_fn,
-            cfg,
-            doc_row["source"],
-            doc_row["url"],
-            doc_row["title"],
-            raw_txt,
-            tier=doc_row.get("tier", "primary"),
-            weight=float(doc_row.get("weight", 1.0)),
-            do_embed=True,
-        )
+        process_document(conn, embed_fn, cfg, doc_row["source"], doc_row["url"], doc_row["title"], raw_txt, tier=doc_row.get("tier", "primary"), weight=float(doc_row.get("weight", 1.0)), do_embed=True)
 
         cur = conn.cursor()
         cur.execute("""
@@ -63,8 +52,7 @@ def repair_doc_from_archived_raw(conn: sqlite3.Connection, embed_fn: Callable, c
         if active_chunks == 0:
             cur.execute("UPDATE docs SET status=0 WHERE doc_id=?", (doc_row["doc_id"],))
             conn.commit()
-            log.warning("[REPAIR] doc_id=%s url=%s marked inactive; repair still produced no active chunks",
-                        doc_row["doc_id"], doc_row["url"])
+            log.warning("[REPAIR] doc_id=%s url=%s marked inactive; repair still produced no active chunks", doc_row["doc_id"], doc_row["url"])
             return False
 
         log.info("[REPAIR] repaired from archived raw doc_id=%s url=%s", doc_row["doc_id"], doc_row["url"])

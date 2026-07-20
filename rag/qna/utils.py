@@ -842,10 +842,7 @@ def marker_in_text(question_l: str, marker: str) -> bool:
 
 
 def contains_any_marker(question_l: str, markers) -> bool:
-    return any(
-        marker_in_text(question_l, marker)
-        for marker in markers
-    )
+    return any(marker_in_text(question_l, marker) for marker in markers)
 
 def is_build_recommendation_question(question: str) -> bool:
     q = question.lower().replace("’", "'")
@@ -1495,23 +1492,8 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
     lookup_entity = (extract_lookup_entity(question) if intent == "lookup" else None)
     lookup_key = (normalize_title_key(lookup_entity) if lookup_entity else "")
     question_l = question.lower()
-    asks_for_card = contains_any_marker(
-        question_l,
-        (
-            "card",
-            "equipment card",
-            "tcg",
-            "genius invokation",
-        ),
-    )
-    asks_for_skin = contains_any_marker(
-        question_l,
-        (
-            "skin",
-            "dynamic skin",
-            "lustrous skin",
-        ),
-    )
+    asks_for_card = contains_any_marker(question_l,("card", "equipment card", "tcg", "genius invokation"))
+    asks_for_skin = contains_any_marker(question_l,("skin", "dynamic skin", "lustrous skin"))
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
@@ -1546,22 +1528,12 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         combined_l = f"{title_l}\n{text.lower()}"
 
         weighted_base = base_score * weight
-
         lexical_bonus = (0.02 * text_overlap + 0.10 * title_overlap)
-
         tier_bonus = (0.05 if tier == "primary" else 0.02 if tier == "supplementary" else 0.0)
-
-        intent_source_bonus = float(
-            profile.get("source_bonus",   {}).get(source, 0.0)
-          - profile.get("source_penalty", {}).get(source, 0.0)
-        )
+        intent_source_bonus = float(profile.get("source_bonus", {}).get(source, 0.0) - profile.get("source_penalty", {}).get(source, 0.0))
 
         title_boost_v = float(profile.get("title_boost_v", 0.0))
-        intent_title_boost = (
-            title_boost_v
-            if any(m in title_l for m in profile.get("title_boost", []))
-            else 0.0
-        )
+        intent_title_boost = (title_boost_v if any(m in title_l for m in profile.get("title_boost", [])) else 0.0)
 
         title_penalties = list(profile.get("title_penalize", []))
         if intent == "build" and "talent" in build_subtypes:
@@ -1572,12 +1544,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
                 "elemental skill",
                 "elemental burst",
             }
-
-            title_penalties = [
-                marker
-                for marker in title_penalties
-                if marker not in talent_related
-            ]
+            title_penalties = [marker for marker in title_penalties if marker not in talent_related]
 
         for subtype in build_subtypes:
             subtype_cfg = BUILD_SUBTYPE_PROFILES.get(subtype, {})
@@ -1637,8 +1604,6 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         source = row.get("source") or ""
         if source in excluded:
             penalty += 0.95
-        # elif source not in required and source not in priority.get("preferred", []):
-        #     penalty += 0.25
 
         recency_bonus = 0.0
         recency_penalty = 0.0
@@ -1686,24 +1651,12 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             if not asks_for_card and "equipment card" in title_l:
                 penalty += 0.80
 
-            if not asks_for_skin and any(
-                marker in title_l
-                for marker in (
-                    "dynamic skin",
-                    "lustrous skin",
-                )
-            ):
+            if not asks_for_skin and any(marker in title_l for marker in ("dynamic skin", "lustrous skin")):
                 penalty += 0.55
 
-            if any(
-                marker in title_l
-                for marker in (
-                    "/change history",
-                    "/gallery",
-                    "change history",
-                )
-            ):
+            if any(marker in title_l for marker in ("/change history", "/gallery", "change history")):
                 penalty += 0.45
+        
         elif entity_terms:
             main_entity = entity_terms[0]
             title_norm = normalize_title_key(title)

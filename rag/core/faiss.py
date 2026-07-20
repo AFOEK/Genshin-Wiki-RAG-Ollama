@@ -20,11 +20,7 @@ def atomic_promote(build_dir: Path, current_dir: Path):
         current_dir.rename(old)
     build_dir.rename(current_dir)
 
-def build_faiss_from_sqlite(
-        cfg: dict, *, batch: int = 5000,
-        add_batch: int = 2000, log_every: int = 20000,
-        threads: int | None = None, overwrite: bool = False
-) -> Path:
+def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 2000, log_every: int = 20000, threads: int | None = None, overwrite: bool = False) -> Path:
     db_path = resolve_db_path(cfg)
     faiss_root = resolve_faiss_dir(cfg)
     current_dir = faiss_root / "current"

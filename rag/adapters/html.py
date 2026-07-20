@@ -15,8 +15,7 @@ _RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 GAME8_NOISE_SELECTORS = (
     ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", ".comments", ".comment-list", ".comment-thread", ".reply", ".replies", ".discussion", ".message-board",
-    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside",
-)
+    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside")
 
 def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
     qs = parse_qs(urlsplit(url).query)
@@ -55,28 +54,13 @@ def find_game8_article_root(soup: BeautifulSoup):
     for selector in selectors:
         candidates = soup.select(selector)
         for candidate in candidates:
-            text = candidate.get_text(
-                " ",
-                strip=True,
-            )
-
-            headings = candidate.find_all(
-                ["h1", "h2", "h3"]
-            )
-
-            if (
-                len(text) >= 1_000
-                and candidate.find("h1") is not None
-                and len(headings) >= 3
-            ):
+            text = candidate.get_text(" ", strip=True,)
+            headings = candidate.find_all(["h1", "h2", "h3"])
+            if (len(text) >= 1_000 and candidate.find("h1") is not None and len(headings) >= 3):
                 return candidate
 
     for heading in soup.find_all("h1"):
-        heading_text = heading.get_text(
-            " ",
-            strip=True,
-        )
-
+        heading_text = heading.get_text(" ", strip=True)
         if not heading_text:
             continue
 
@@ -84,13 +68,9 @@ def find_game8_article_root(soup: BeautifulSoup):
             if parent.name not in {"article", "main", "section", "div"}:
                 continue
             text = parent.get_text(" ", strip=True)
-
             subheadings = parent.find_all(["h2", "h3"])
 
-            if (
-                len(text) >= 1_000
-                and len(subheadings) >= 2
-            ):
+            if (len(text) >= 1_000 and len(subheadings) >= 2):
                 return parent
 
     return None
@@ -189,20 +169,13 @@ def html_to_text(html: str, url: str | None = None) -> str:
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    host = (
-        urlparse(url).netloc.lower()
-        if url
-        else ""
-    )
+    host = (urlparse(url).netloc.lower() if url else "")
 
     if "game8.co" in host:
         main = find_game8_article_root(soup)
 
         if main is None:
-            log.warning(
-                "[GAME8] article root not found url=%s",
-                url,
-            )
+            log.warning("[GAME8] article root not found url=%s", url)
             return ""
 
         drop_game8_noise(main)
@@ -212,8 +185,7 @@ def html_to_text(html: str, url: str | None = None) -> str:
             return ""
 
     else:
-        for tag in soup(
-            ["header", "footer", "nav", "aside"]):
+        for tag in soup(["header", "footer", "nav", "aside"]):
             tag.decompose()
 
         if "honeyhunterworld.com" in host:
@@ -232,18 +204,11 @@ def html_to_text(html: str, url: str | None = None) -> str:
         text = md(str(main))
 
     except RecursionError:
-        log.warning(
-            "[HTML] markdownify recursion error; "
-            "using text fallback"
-        )
+        log.warning("[HTML] markdownify recursion error; using text fallback")
         text = soup_text_fallback(main)
 
     except Exception as exc:
-        log.warning(
-            "[HTML] markdownify failed type=%s; "
-            "using text fallback",
-            type(exc).__name__,
-        )
+        log.warning("[HTML] markdownify failed type=%s; using text fallback", type(exc).__name__)
         text = soup_text_fallback(main)
 
     text = text.strip()
@@ -316,10 +281,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         attempt = retries.get(url, 0)
 
         try:
-            r = session.get(
-                url,
-                timeout=60,
-            )
+            r = session.get(url, timeout=60)
             last_modified = r.headers.get("Last-Modified")
             etag = r.headers.get("ETag")
 
@@ -334,7 +296,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                     q.append(url)
                     continue
                 else:
-                    log.warning("Giving up url=%s after %d retries status=%d", url, retries[url], r.status_code)
+                    log.warning("[HTML] Giving up url=%s after %d retries status=%d", url, retries[url], r.status_code)
                     seen.add(url)
                     time.sleep(rate_limit_s)
                     continue
@@ -346,7 +308,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 continue
             ct = (r.headers.get("Content-Type") or "").lower()
             if ("text/html" not in ct) and ("application/xhtml+xml" not in ct):
-                log.info("Skip non-HTML content-type=%s url=%s", ct, url)
+                log.info("[HTML] Skip non-HTML content-type=%s url=%s", ct, url)
                 seen.add(url)
                 time.sleep(rate_limit_s)
                 continue
@@ -355,11 +317,11 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         except (Timeout, ConnectionError) as e:
             retries[url] = attempt + 1
             if retries[url] <= 10:
-                log.warning("Network error (%s) url=%s retry=%d/10", type(e).__name__, url, retries[url])
+                log.warning("[HTML] Network error (%s) url=%s retry=%d/10", type(e).__name__, url, retries[url])
                 sleep_backoff(attempt)
                 q.append(url)
                 continue
-            log.warning("Giving up url=%s after %d retries (%s)", url, retries[url], type(e).__name__)
+            log.warning("[HTML] Giving up url=%s after %d retries (%s)", url, retries[url], type(e).__name__)
             seen.add(url)
             time.sleep(rate_limit_s)
             continue
@@ -367,11 +329,11 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         except RequestException as e:
             retries[url] = attempt + 1
             if retries[url] <= 10:
-                log.warning("RequestException url=%s retry=%d/10 err=%s", url, retries[url], e)
+                log.warning("[HTML] RequestException url=%s retry=%d/10 err=%s", url, retries[url], e)
                 sleep_backoff(attempt)
                 q.append(url)
                 continue
-            log.warning("Giving up url=%s after %d retries (RequestException)", url, retries[url])
+            log.warning("[HTML] Giving up url=%s after %d retries (RequestException)", url, retries[url])
             seen.add(url)
             time.sleep(rate_limit_s)
             continue
@@ -390,7 +352,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
 
         text = html_to_text(html, url)
         if not text or not text.strip():
-            log.warning("[CRAWL] Skipping empty extraction url=%s", url)
+            log.warning("[HTML] Skipping empty extraction url=%s", url)
             time.sleep(rate_limit_s)
             continue
 
@@ -400,7 +362,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             if soup.title and soup.title.string:
                 title = soup.title.string.strip()
         except Exception:
-            log.exception("Failed to extract title url=%s", url)
+            log.exception("[HTML] Failed to extract title url=%s", url)
 
         yield url, title, text, last_modified, etag
         time.sleep(rate_limit_s)

@@ -5,11 +5,7 @@ import sqlite3
 
 log = logging.getLogger(__name__)
 
-def mark_parent_dirty_doc(
-    conn: sqlite3.Connection,
-    doc_id: int,
-    reason: str = "chunks_changed",
-) -> None:
+def mark_parent_dirty_doc(conn: sqlite3.Connection, doc_id: int, reason: str = "chunks_changed") -> None:
     log.info("[PARENT] Marking dirty parent docs")
     conn.execute(
         """
@@ -23,10 +19,7 @@ def mark_parent_dirty_doc(
     )
 
 
-def mark_all_active_docs_parent_dirty(
-    conn: sqlite3.Connection,
-    reason: str = "initial_parent_build",
-) -> int:
+def mark_all_active_docs_parent_dirty(conn: sqlite3.Connection, reason: str = "initial_parent_build") -> int:
     cur = conn.cursor()
     cur.execute("""
         INSERT OR IGNORE INTO parent_dirty_docs(doc_id, reason, marked_at)
@@ -41,12 +34,7 @@ def mark_all_active_docs_parent_dirty(
     log.info("[PARENT] Dirty docs counts %d", n)
     return n
 
-def rebuild_parent_for_doc(
-    cur: sqlite3.Cursor,
-    doc_id: int,
-    *,
-    children_per_parent: int,
-) -> tuple[int, int]:
+def rebuild_parent_for_doc(cur: sqlite3.Cursor, doc_id: int, *, children_per_parent: int) -> tuple[int, int]:
     cur.execute(
         """
         DELETE FROM chunk_parent_map
@@ -58,10 +46,7 @@ def rebuild_parent_for_doc(
         """,
         (doc_id,),
     )
-    cur.execute(
-        "DELETE FROM chunk_parents WHERE doc_id = ?",
-        (doc_id,),
-    )
+    cur.execute("DELETE FROM chunk_parents WHERE doc_id = ?", (doc_id,))
 
     cur.execute(
         """
@@ -72,8 +57,7 @@ def rebuild_parent_for_doc(
           AND c.is_active = 1
           AND COALESCE(d.status, 1) = 1
         """,
-        (doc_id,),
-    )
+        (doc_id,))
     active_count = int(cur.fetchone()[0] or 0)
     if active_count == 0:
         return 0, 0
@@ -93,8 +77,7 @@ def rebuild_parent_for_doc(
           AND c.is_active = 1
           AND COALESCE(d.status, 1) = 1
         """,
-        (children_per_parent, doc_id),
-    )
+        (children_per_parent, doc_id))
 
     cur.execute(
         """
@@ -136,12 +119,7 @@ def rebuild_parent_for_doc(
 
     return parents_inserted, maps_inserted
 
-def sync_dirty_parent_docs(
-    conn: sqlite3.Connection,
-    *,
-    children_per_parent: int = 4,
-    batch_size: int = 500,
-) -> dict:
+def sync_dirty_parent_docs(conn: sqlite3.Connection, *, children_per_parent: int = 4, batch_size: int = 500) -> dict:
     children_per_parent = max(1, int(children_per_parent))
     batch_size = max(1, int(batch_size))
 
@@ -159,8 +137,7 @@ def sync_dirty_parent_docs(
             ORDER BY marked_at
             LIMIT ?
             """,
-            (batch_size,),
-        ).fetchall()
+            (batch_size,)).fetchall()
 
         if not rows:
             break
@@ -170,30 +147,17 @@ def sync_dirty_parent_docs(
         cur.execute("BEGIN IMMEDIATE")
         try:
             for doc_id in doc_ids:
-                p_count, m_count = rebuild_parent_for_doc(
-                    cur,
-                    doc_id,
-                    children_per_parent=children_per_parent,
-                )
+                p_count, m_count = rebuild_parent_for_doc(cur, doc_id, children_per_parent=children_per_parent)
 
                 total_parents += p_count
                 total_maps += m_count
 
-                cur.execute(
-                    "DELETE FROM parent_dirty_docs WHERE doc_id = ?",
-                    (doc_id,),
-                )
+                cur.execute("DELETE FROM parent_dirty_docs WHERE doc_id = ?", (doc_id,))
 
             conn.commit()
             total_docs += len(doc_ids)
 
-            log.info(
-                "[PARENT] synced dirty docs batch=%d total_docs=%d parents=%d mapped_chunks=%d",
-                len(doc_ids),
-                total_docs,
-                total_parents,
-                total_maps,
-            )
+            log.info("[PARENT] synced dirty docs batch=%d total_docs=%d parents=%d mapped_chunks=%d", len(doc_ids), total_docs, total_parents, total_maps)
 
         except Exception:
             conn.rollback()

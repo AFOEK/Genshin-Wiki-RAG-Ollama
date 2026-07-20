@@ -91,21 +91,10 @@ def main():
         return embed(cfg, text_or_texts, backend=args.BACKEND, mode=mode)
     
     def make_source_filters(s: dict) -> Filters:
-        merged_deny_url = merge_regex(
-            cfg.get("filters", {}).get("deny_url_regex"),
-            s.get("deny_url_regex"),
-        )
-        merged_deny_text = merge_regex(
-            cfg.get("filters", {}).get("deny_text_regex"),
-            s.get("deny_text_regex"),
-        )
+        merged_deny_url = merge_regex(cfg.get("filters", {}).get("deny_url_regex"), s.get("deny_url_regex"))
+        merged_deny_text = merge_regex(cfg.get("filters", {}).get("deny_text_regex"), s.get("deny_text_regex"))
         allow_url = s.get("allow_url_regex")
-
-        return Filters(
-            deny_url_regex=merged_deny_url,
-            deny_text_regex=merged_deny_text,
-            allow_url_regex=allow_url,
-        )
+        return Filters(deny_url_regex=merged_deny_url, deny_text_regex=merged_deny_text, allow_url_regex=allow_url)
     
     filters = Filters(cfg.get("filters", {}).get("deny_url_regex"), cfg.get("filters", {}).get("deny_text_regex"))
     threading_cfg = cfg.get("threading", {})
@@ -116,13 +105,7 @@ def main():
     fts_batch_size = int(fts_cfg.get("batch_size", 1500))
 
     log.info("[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d", embed_queue_size, document_queue_size, embed_workers)
-
-    log.info(
-        "runtime embedding_provider=%s qa_provider=%s accelerator=%s",
-        cfg.get("runtime", {}).get("embedding_provider", "ollama"),
-        cfg.get("runtime", {}).get("qa_provider", "ollama"),
-        cfg.get("runtime", {}).get("accelerator", "auto"),
-    )
+    log.info("[INFO] runtime embedding_provider=%s qa_provider=%s accelerator=%s", cfg.get("runtime", {}).get("embedding_provider", "ollama"), cfg.get("runtime", {}).get("qa_provider", "ollama"), cfg.get("runtime", {}).get("accelerator", "auto"))
     
     if do_crawl:
         q = queue.Queue(maxsize=document_queue_size)
@@ -188,11 +171,7 @@ def main():
         log.info("[INFO] DB repair starting")
         try:
             rep = repair_database(conn, embed_fn, cfg)
-            log.info("[REPAIR] docs_no_active_chunks: found=%d repaired=%d | missing_embeddings: found=%d repaired=%d",
-            rep["docs_no_active_chunks_found"],
-            rep["docs_no_active_chunks_repaired"],
-            rep["chunks_missing_embeddings_found"],
-            rep["chunks_missing_embeddings_repaired"])
+            log.info("[REPAIR] docs_no_active_chunks: found=%d repaired=%d | missing_embeddings: found=%d repaired=%d", rep["docs_no_active_chunks_found"], rep["docs_no_active_chunks_repaired"], rep["chunks_missing_embeddings_found"], rep["chunks_missing_embeddings_repaired"])
         except Exception:
             log.exception("[REPAIR] Database repair failed")
         finally:
@@ -214,19 +193,11 @@ def main():
         conn = connect(str(db_path))
         try:
             cur = conn.cursor()
-
             cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
             dirty_before = int(cur.fetchone()[0] or 0)
-
             cur.execute("SELECT COUNT(*) FROM chunks_fts")
             fts_before = int(cur.fetchone()[0] or 0)
-
-            log.info(
-                "[FTS5] before sync dirty_docs=%d fts_rows=%d batch_size=%d",
-                dirty_before,
-                fts_before,
-                fts_batch_size,
-            )
+            log.info("[FTS5] before sync dirty_docs=%d fts_rows=%d batch_size=%d", dirty_before, fts_before, fts_batch_size)
 
             if do_fts_init:
                 n = mark_all_active_docs_dirty(conn, reason="initial")
@@ -241,13 +212,7 @@ def main():
             cur.execute("SELECT COUNT(*) FROM chunks_fts")
             fts_after = int(cur.fetchone()[0] or 0)
 
-            log.info(
-                "[FTS5] sync done dirty_docs_synced=%d inserted_rows=%d dirty_after=%d fts_rows_after=%d",
-                rep["dirty_docs_synced"],
-                rep["fts_rows_inserted"],
-                dirty_after,
-                fts_after,
-            )
+            log.info("[FTS5] sync done dirty_docs_synced=%d inserted_rows=%d dirty_after=%d fts_rows_after=%d", rep["dirty_docs_synced"], rep["fts_rows_inserted"], dirty_after, fts_after)
         finally:
             conn.close()
 
@@ -256,13 +221,7 @@ def main():
         log.info("[INFO] Audit starting")
 
         try:
-            report = audit_integrity(
-                conn,
-                sample_chunks=1000,
-                sample_docs=1500,
-                max_orphan_failures=2500,
-                max_missing_embedding_failures=2500,
-            )
+            report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures=2500, max_missing_embedding_failures=2500)
 
             if report.failures:
                 log.error("[AUDIT] Audit failed with %d problems", len(report.failures))
@@ -278,8 +237,7 @@ def main():
                     log.error("[AUDIT] Example failure: %s", f)
 
                 raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
-            log.info("[AUDIT] SQLite integrity OK")
-            log.info("[AUDIT] All requested stages completed successfully")
+            log.info("[AUDIT] SQLite integrity OK, all requested stages completed successfully")
         except Exception:
             log.exception("[AUDIT] terminated due to audit/migrate failures")
             raise
@@ -295,13 +253,7 @@ def main():
             parent_cfg = cfg.get("parent_child", {}) or {}
             children_per_parent = int(parent_cfg.get("children_per_parent", 4))
             rep = rebuild_parent_map(conn, children_per_parent=children_per_parent)
-
-            log.info(
-                "[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d",
-                rep["parents"],
-                rep["mapped_chunks"],
-                rep["children_per_parent"],
-            )
+            log.info("[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d", rep["parents"], rep["mapped_chunks"], rep["children_per_parent"])
         finally:
             conn.close()
     elif do_parent_init or do_parent_sync or do_crawl or do_db_repair:
@@ -309,21 +261,10 @@ def main():
         try:
             parent_cfg = cfg.get("parent_child", {}) or {}
             if do_parent_init:
-                n = mark_all_active_docs_parent_dirty(
-                    conn,
-                    reason="initial_parent_build",
-                )
+                n = mark_all_active_docs_parent_dirty(conn, reason="initial_parent_build")
 
-            rep = sync_dirty_parent_docs(
-                conn,
-                children_per_parent=int(parent_cfg.get("children_per_parent", 4)),
-                batch_size=int(parent_cfg.get("batch_size", 500)),
-            )
-            log.info("[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",
-                rep["dirty_docs_synced"],
-                rep["parents_inserted"],
-                rep["mapped_chunks"],
-            )
+            rep = sync_dirty_parent_docs(conn, children_per_parent=int(parent_cfg.get("children_per_parent", 4)), batch_size=int(parent_cfg.get("batch_size", 500)))
+            log.info("[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",rep["dirty_docs_synced"], rep["parents_inserted"], rep["mapped_chunks"])
         finally:
             conn.close()
     
@@ -346,7 +287,6 @@ def main():
         frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
         if frep.failures:
             log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
-
             by_reason = {}
             for msg in frep.failures:
                 reason = msg.split(":", 1)[0].strip()
@@ -359,16 +299,11 @@ def main():
                 log.error("[FAISS_AUDIT] Example failure: %s", msg)
 
             raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
-        log.info(
-            "[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d",
-            frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims
-        )
+        log.info("[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d", frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims)
 
     if do_turbovec_audit:
         log.info("[TURBOVEC_AUDIT] TurboVec audit starting")
-
         trep = audit_turbovec_against_sqlite(cfg, sample_self_test=200, backend=args.BACKEND)
-
         if trep.failures:
             log.error("[TURBOVEC_AUDIT] failed with %d problems", len(trep.failures))
 
@@ -384,9 +319,7 @@ def main():
                 log.error("[TURBOVEC_AUDIT] Example failure: %s", msg)
 
             raise RuntimeError(f"[TURBOVEC_AUDIT] failed: {len(trep.failures)} problems")
-
-        log.info(
-            "[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
+        log.info("[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
         
     log.info("[ALL] DONE!")
 

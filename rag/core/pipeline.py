@@ -51,8 +51,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
         if row is None and source in MOVED_URL_SOURCE:
             cur.execute(
                 "SELECT doc_id, url, raw_hash FROM docs WHERE source=? AND raw_hash=? ORDER BY doc_id DESC LIMIT 1",
-                (source, raw_hash),
-            )
+                (source, raw_hash))
             moved = cur.fetchone()
             if moved:
                 doc_id_existing, old_url, old_hash_raw = moved
@@ -178,15 +177,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             {},
         )
         source_deny_pattern = (source_cfg.get("chunk_deny_text_regex") or source_cfg.get("deny_text_regex"))
-
-        deny_patterns = [
-            pattern
-            for pattern in (
-                global_deny_pattern,
-                source_deny_pattern,
-            )
-            if pattern
-        ]
+        deny_patterns = [pattern for pattern in (global_deny_pattern, source_deny_pattern) if pattern]
 
         deny_text_re = (
             re.compile(
@@ -209,34 +200,15 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             if not chunk_value:
                 continue
 
-            if (
-                deny_text_re is not None
-                and deny_text_re.search(chunk_value)
-            ):
-                log.debug(
-                    "[CHUNK_FILTER] rejected source=%s "
-                    "url=%s chunk_index=%d preview=%r",
-                    source,
-                    url,
-                    original_index,
-                    chunk_value[:160],
-                )
+            if (deny_text_re is not None and deny_text_re.search(chunk_value)):
+                log.debug("[CHUNK_FILTER] rejected source=%s url=%s chunk_index=%d preview=%r", source, url, original_index, chunk_value[:160],)
                 continue
 
-            filtered_chunks.append(
-                (original_index, chunk_value)
-            )
+            filtered_chunks.append((original_index, chunk_value))
 
         chunks = filtered_chunks
 
-        log.info(
-            "[CHUNK_FILTER] source=%s total=%d "
-            "accepted=%d rejected=%d",
-            source,
-            original_chunk_count,
-            len(chunks),
-            original_chunk_count - len(chunks),
-        )
+        log.info("[CHUNK_FILTER] source=%s total=%d accepted=%d rejected=%d", source, original_chunk_count, len(chunks), original_chunk_count - len(chunks),)
 
         archive_raw = bool(config.get("pipeline", {}).get("archive_raw", False))
         raw_zst = raw_len = raw_zst_len = None
@@ -247,9 +219,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
 
         if not chunks:
             log.warning("[SKIP] No chunks produced source=%s title=%s url=%s", source, title, url)
-
             existing_doc_id = row[0] if row else None
-
             if existing_doc_id is not None:
                 cur.execute(
                     """
@@ -421,13 +391,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
                     safe_txt = safe_txt[: max(MIN_EMBED_CHARS, len(safe_txt) // 4)]
 
             if vec is None or dims is None:
-                log.warning(
-                    "embed failed chunk_id=%s orig_len=%d final_len=%d err=%s",
-                    cid,
-                    len(txt),
-                    len(safe_txt),
-                    last_err,
-                )
+                log.warning("[INFO] embed failed chunk_id=%s orig_len=%d final_len=%d err=%s", cid, len(txt), len(safe_txt), last_err)
                 continue
 
             cur.execute(
