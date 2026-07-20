@@ -9,7 +9,7 @@ from pathlib import Path
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, build_three_way_signal, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, has_lookup_phrase
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, build_three_way_signal, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, has_lookup_phrase, normalize_model_name
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -17,6 +17,7 @@ from .prompts import build_context, summarize_chunk_group, synthesize_final_answ
 from .generators import generate
 from .cross_encoder import cross_encoder_rerank
 from .context_expand import expand_context_windows
+from .multi_hop import generate_bridge_queries, merge_multi_hop_results
 from .parent_child import fetch_parent_context_chunks
 from .query_decomposition import decompose_query, merge_decomposition_runs
 from .types import RetrievalResult
@@ -24,6 +25,18 @@ from .types import RetrievalResult
 log = logging.getLogger(__name__)
 _RETRIEVAL_CACHE : RetrievalCache | None = None
 _RETRIEVAL_CACHE_INIT_LOCK = threading.Lock()
+
+HYBRID_FUSION_SPECS = {
+    "hybrid": {"faiss", "bm25"},
+    "hybrid_hyde": {"faiss", "bm25", "hyde"},
+    "hybrid_turbovec": {"turbovec", "bm25"},
+    "hybrid_faiss_turbovec": {"faiss", "turbovec", "bm25"},
+    "hybrid_splade": {"faiss", "bm25", "splade"},
+    "hybrid_hyde_turbovec": {"faiss", "turbovec", "bm25", "hyde"},
+    "hybrid_splade_turbovec": {"faiss", "turbovec", "bm25", "splade"},
+    "hybrid_hyde_splade_turbovec": {"faiss", "turbovec", "bm25", "splade", "hyde"},
+    "hybrid_all": {"faiss", "turbovec", "bm25", "splade", "hyde"}
+}
 
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
     global _RETRIEVAL_CACHE
@@ -86,13 +99,14 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     turbovec_ret_cache = None
     splade_ret_cache = None
     hyde_document_cache: str | None = None
-    q_vec_cache: dict[tuple[str, int], object] = {}
+    q_vec_cache: dict[tuple[str, str, int], object] = {}
     log.info("[CACHE] Initialize cache FAISS cache: %s, BM25 cache: %s, TurboVec cache: %s, HyDE cache: %s, SPLADE cache: %s", str(faiss_ret_cache), str(bm25_ret_cache), str(turbovec_ret_cache), str(hyde_document_cache), "unimplemented")
 
     hyde_used_for_request = False
     hyde_fallback_reason: str | None = None
     hyde_error: str | None = None
     decomposition_subqueries: list[str] = []
+    multi_hop_queries: list[str] = []
     
     hyde_cfg = cfg.get("hyde", {}) or {}
     hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
@@ -102,7 +116,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
     def get_q_vec(ret, query_text: str | None = None):
         effective_query = (query_text if query_text is not None else question).strip()
-        cache_key = (effective_query, int(ret.dims))
+        model_key = normalize_model_name(getattr(ret, "model", "")) or "runtime"
+        cache_key = (effective_query, model_key, int(ret.dims))
 
         if cache_key in q_vec_cache:
             return q_vec_cache[cache_key]
@@ -158,15 +173,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
             signals[cid] = signal
 
-        ranked = sorted(
-            (
-                (cid, signal["rrf_score"])
-                for cid, signal in signals.items()
-            ),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-
+        ranked = sorted(((cid, signal["rrf_score"]) for cid, signal in signals.items()), key=lambda item: item[1], reverse=True)
         return ranked, signals
 
     def get_faiss_ret():
@@ -328,18 +335,19 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         results = sorted(((cid, sig["rrf_score"]) for cid, sig in signals.items()), key=lambda x: x[1], reverse=True)
         return results, signals
     
-    def search_splade(k: int) -> list[tuple[int, float]]:
-        return get_splade_ret().search(question, k)
+    def search_splade(k: int, query_text: str | None = None) -> list[tuple[int, float]]:
+        return get_splade_ret().search((query_text or question).strip(), k)
     
-    def search_hybrid_splade(k: int, *, splade_k: int | None = None) -> tuple[list[tuple[int, float]], dict[int, dict]]:
-        splade_cfg = (cfg.get("splade", {}) or {})
+    def search_hybrid_splade(k: int, query_text: str | None = None, *, splade_k: int | None = None) -> tuple[list[tuple[int, float]], dict[int, dict]]:
+        splade_cfg = cfg.get("splade", {}) or {}
+        effective_query = (query_text or question).strip()
         faiss_ret = get_faiss_ret()
-        query_vector = get_q_vec(faiss_ret)
+        query_vector = get_q_vec(faiss_ret, effective_query)
         faiss_results = faiss_ret.search(query_vector, k)
-        bm25_results = search_bm25(k)
+        bm25_results = search_bm25(k, effective_query)
         configured_splade_k = int(splade_cfg.get("candidate_k", 300))
-        effective_splade_k = (splade_k if splade_k is not None else min(k, configured_splade_k))
-        splade_results = search_splade(effective_splade_k)
+        effective_splade_k = splade_k if splade_k is not None else min(k, configured_splade_k)
+        splade_results = search_splade(effective_splade_k, effective_query)
         signals = build_weighted_rrf_signal(
             {
                 "faiss": faiss_results,
@@ -363,28 +371,22 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         log.info("[SPLADE] fusion faiss=%d bm25=%d splade=%d fused=%d", len(faiss_results), len(bm25_results), len(splade_results), len(results),)
         return results, signals
     
-    def search_hybrid_decomposed(k: int, *, original_uses_hyde: bool, force_hyde: bool = False, force_reason: str | None = None):
-        decomp_cfg = (cfg.get("query_decomposition", {}) or {})
-
-        if original_uses_hyde:
-            original_results, original_signals = (search_hybrid_hyde(k, force_hyde=force_hyde, force_reason=force_reason))
-        else:
-            original_results, original_signals = (search_hybrid(k, question))
+    def search_hybrid_fusion_decomposed(name: str, k: int, *, force_hyde: bool = False, force_reason: str | None = None):
+        decomp_cfg = cfg.get("query_decomposition", {}) or {}
+        original_results, original_signals = search_hybrid_fusion(name, k, question, force_hyde=force_hyde, force_reason=force_reason)
 
         if not decomposition_subqueries:
-            return (original_results, original_signals)
+            return original_results, original_signals
 
-        runs = [(question, original_results, original_signals, float(decomp_cfg.get("original_weight", 1.0,)))]
-        configured_subquery_k = int(decomp_cfg.get("candidate_k_per_subquery", 300))
-        subquery_k = min(k, configured_subquery_k)
+        runs = [(question, original_results, original_signals, float(decomp_cfg.get("original_weight", 1.0)))]
+        subquery_k = min(k, int(decomp_cfg.get("candidate_k_per_subquery", 300)))
 
         for subquery in decomposition_subqueries:
-            sub_results, sub_signals = (search_hybrid(subquery_k, subquery))
+            sub_results, sub_signals = search_hybrid_fusion(name, subquery_k, subquery)
             runs.append((subquery, sub_results, sub_signals, float(decomp_cfg.get("subquery_weight", 0.8))))
 
-        merged_results, merged_signals = (merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0,)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800))))
-        log.info("[DECOMP] merged original=%d subqueries=%d candidates=%d", len(original_results), len(decomposition_subqueries), len(merged_results))
-
+        merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800)))
+        log.info("[DECOMP] retriever=%s original=%d subqueries=%d candidates=%d", name, len(original_results), len(decomposition_subqueries), len(merged_results))
         return merged_results, merged_signals
 
     def should_trigger_hyde(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]]) -> tuple[bool, str]:
@@ -418,20 +420,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         minimum_shared_docs = max(0, int(hyde_cfg.get("fallback_min_shared_docs",1)))
 
         if len(shared_doc_ids) < minimum_shared_docs:
-            return (
-                True,
-                "low_channel_agreement:"
-                f"shared_docs={len(shared_doc_ids)}"
-                f"<{minimum_shared_docs}",
-            )
+            return (True, f"low_channel_agreement: shared_docs={len(shared_doc_ids)} <{minimum_shared_docs}")
 
-        return (
-            False,
-            "normal_retrieval_sufficient:"
-            f"shared_docs={len(shared_doc_ids)}",
-        )
+        return (False, f"normal_retrieval_sufficient: shared_docs={len(shared_doc_ids)}")
 
-    
     def search_hybrid_hyde(k: int, *, force_hyde: bool = False, force_reason: str | None = None,) -> tuple[list[tuple[int, float]], dict[int, dict]]:
         nonlocal hyde_used_for_request
         nonlocal hyde_fallback_reason
@@ -460,22 +452,94 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             except Exception as exc:
                 hyde_error = (f"{type(exc).__name__}: {exc}")
                 hyde_fallback_reason = (f"{reason};hyde_failed")
-                log.warning(
-                    "[HYDE] fallback generation/search failed continuing with normal hybrid retrieval: %s", hyde_error)
+                log.warning("[HYDE] fallback generation/search failed continuing with normal hybrid retrieval: %s", hyde_error)
         else:
             if hyde_fallback_reason is None:
                 hyde_fallback_reason = reason
 
-        signals = build_hybrid_hyde_signal(
-            faiss_results,
-            bm25_results,
-            hyde_results,
-            rrf_k=rrf_k,
-            rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), 
-            hyde_weight=float(hyde_cfg.get("rrf_weight", 0.75)))
-
+        signals = build_hybrid_hyde_signal(faiss_results, bm25_results, hyde_results, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), hyde_weight=float(hyde_cfg.get("rrf_weight", 0.75)))
         results = sorted(((chunk_id, signal["rrf_score"]) for chunk_id, signal in signals.items()), key=lambda item: item[1], reverse=True)
         log.info("[HYDE] mode=%s used=%s reason=%s normal_faiss=%d bm25=%d hyde=%d fused=%d", hyde_mode, bool(hyde_results), reason, len(faiss_results), len(bm25_results), len(hyde_results), len(results))
+        return results, signals
+    
+    def search_hybrid_fusion(name: str, k: int, query_text: str | None = None, *, force_hyde: bool = False, force_reason: str | None = None):
+        nonlocal hyde_used_for_request, hyde_fallback_reason, hyde_error
+
+        spec = HYBRID_FUSION_SPECS[name]
+        effective_query = (query_text or question).strip()
+        channels: dict[str, list[tuple[int, float]]] = {}
+        weights: dict[str, float] = {}
+
+        faiss_ret = None
+        faiss_results: list[tuple[int, float]] = []
+        bm25_results = search_bm25(k, effective_query)
+
+        channels["bm25"] = bm25_results
+        weights["bm25"] = float(retrieval_cfg.get("bm25_rrf_weight", 1.0))
+
+        if "faiss" in spec:
+            faiss_ret = get_faiss_ret()
+            faiss_results = faiss_ret.search(get_q_vec(faiss_ret, effective_query), k)
+            channels["faiss"] = faiss_results
+            weights["faiss"] = float(retrieval_cfg.get("faiss_rrf_weight", 1.0))
+
+        if "turbovec" in spec:
+            tv_ret = get_turbovec_ret()
+
+            if faiss_ret is not None:
+                faiss_model = normalize_model_name(faiss_ret.model)
+                tv_model = normalize_model_name(tv_ret.model)
+
+                if faiss_ret.dims != tv_ret.dims:
+                    raise RuntimeError(f"FAISS/TurboVec dimension mismatch: faiss={faiss_ret.dims} turbovec={tv_ret.dims}")
+
+                if faiss_model and tv_model and faiss_model != tv_model:
+                    raise RuntimeError(f"FAISS/TurboVec model mismatch: faiss={faiss_ret.model!r} turbovec={tv_ret.model!r}")
+
+            tv_k = min(k, int(tv_cfg.get("candidate_k", k)))
+            tv_results = tv_ret.search(get_q_vec(tv_ret, effective_query), tv_k)
+            channels["turbovec"] = tv_results
+            default_tv_weight = 0.5 if "faiss" in spec else 1.0
+            weights["turbovec"] = float(tv_cfg.get("rrf_weight", default_tv_weight))
+
+        if "splade" in spec:
+            splade_cfg = cfg.get("splade", {}) or {}
+            splade_k = min(k, int(splade_cfg.get("candidate_k", 300)))
+            channels["splade"] = search_splade(splade_k, effective_query)
+            weights["splade"] = float(splade_cfg.get("rrf_weight", 0.75))
+
+        if "hyde" in spec and effective_query == question:
+            if faiss_ret is None:
+                raise RuntimeError("HyDE fusion requires FAISS")
+
+            if force_hyde and hyde_enabled:
+                use_hyde = True
+                reason = force_reason or "forced_fallback"
+            else:
+                use_hyde, reason = should_trigger_hyde(faiss_results, bm25_results)
+
+            hyde_results: list[tuple[int, float]] = []
+
+            if use_hyde:
+                try:
+                    hyde_results = search_hyde(k)
+                    hyde_used_for_request = bool(hyde_results)
+                    hyde_fallback_reason = reason
+                except Exception as exc:
+                    hyde_error = f"{type(exc).__name__}: {exc}"
+                    hyde_fallback_reason = f"{reason};hyde_failed"
+                    log.warning("[HYDE] generation/search failed; continuing without HyDE: %s", hyde_error)
+            elif hyde_fallback_reason is None:
+                hyde_fallback_reason = reason
+
+            channels["hyde"] = hyde_results
+            weights["hyde"] = float(hyde_cfg.get("rrf_weight", 0.75))
+            log.info("[HYDE] mode=%s used=%s reason=%s candidates=%d", hyde_mode, bool(hyde_results), reason, len(hyde_results))
+
+        signals = build_weighted_rrf_signal(channels, weights=weights, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)))
+        results = sorted(((cid, signal["rrf_score"]) for cid, signal in signals.items()), key=lambda item: item[1], reverse=True)
+        counts = " ".join(f"{channel}={len(values)}" for channel, values in channels.items())
+        log.info("[FUSION] retriever=%s query=%r %s fused=%d", name, effective_query, counts, len(results))
         return results, signals
 
     try:
@@ -484,8 +548,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         if retriever_name == "sql":
             retriever_name = "sqlite"
 
-        if retriever_name in {"hybrid", "hybrid_hyde"}:
-            decomposition_subqueries = (decompose_query(cfg, question, backend=backend))
+        if retriever_name in HYBRID_FUSION_SPECS:
+            decomposition_subqueries = decompose_query(cfg, question, backend=backend)
 
         if retriever_name == "faiss":
             log.info("[QNA] using FAISS retriever")
@@ -507,31 +571,16 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             retriever = get_splade_ret()
             raw_results = search_splade(candidate_k)
             results, retrieval_signals = (build_single_channel_results(raw_results, "splade"))
-        elif retriever_name == "hybrid":
-            log.info("[QNA] using HYBRID retriever (FAISS + BM25)")
-            retriever = None
-            results, retrieval_signals = search_hybrid_decomposed(candidate_k, original_uses_hyde=False)
         elif retriever_name == "turbovec":
             log.info("[QNA] using TurboVec retriever")
             retriever = get_turbovec_ret()
             raw_results = search_embedding_retriever(retriever, candidate_k)
             results, retrieval_signals = build_single_channel_results(raw_results, "semantic")
-        elif retriever_name == "hybrid_turbovec":
-            log.info("[QNA] using HYBRID retriever (TurboVec + BM25)")
+        elif retriever_name in HYBRID_FUSION_SPECS:
+            channels = "+".join(sorted(HYBRID_FUSION_SPECS[retriever_name]))
+            log.info("[QNA] using %s channels=%s", retriever_name, channels)
             retriever = None
-            results, retrieval_signals = search_hybrid_turbovec(candidate_k)
-        elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
-            log.info("[QNA] using HYBRID retriever (FAISS + TurboVec + BM25)")
-            retriever = None
-            results, retrieval_signals = search_hybrid_all(candidate_k)
-        elif retriever_name == "hybrid_hyde":
-            log.info("[QNA] using HYBRID HYDE retriever (FAISS + BM25 + HyDE FAISS)")
-            retriever = None
-            results, retrieval_signals = (search_hybrid_decomposed(candidate_k, original_uses_hyde=True))
-        elif retriever_name == "hybrid_splade":
-            log.info("[QNA] using HYBRID SPLADE (FAISS + BM25 + SPLADE)")
-            retriever = None
-            results, retrieval_signals = (search_hybrid_splade(candidate_k))
+            results, retrieval_signals = search_hybrid_fusion_decomposed(retriever_name, candidate_k)
         else:
             raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -556,19 +605,12 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             elif retriever_name == "splade":
                 raw_deep_results = search_splade(deep_k)
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "splade",)
-            elif retriever_name == "hybrid":
-                deep_results, retrieval_signals = search_hybrid_decomposed(deep_k, original_uses_hyde=False)
             elif retriever_name == "turbovec":
                 raw_deep_results = search_embedding_retriever(retriever, deep_k)
                 deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "semantic")
-            elif retriever_name == "hybrid_turbovec":
-                deep_results, retrieval_signals = search_hybrid_turbovec(deep_k)
-            elif retriever_name in {"hybrid_all", "hybrid_faiss_turbovec"}:
-                deep_results, retrieval_signals = search_hybrid_all(deep_k)
-            elif retriever_name == "hybrid_hyde":
-                deep_results, retrieval_signals = (search_hybrid_decomposed(deep_k, original_uses_hyde=True, force_hyde=True, force_reason=(f"intent_filter_too_few: count={len(filtered_ids)}")))
-            elif retriever_name == "hybrid_splade":
-                deep_results, retrieval_signals = search_hybrid_splade(deep_k)
+            elif retriever_name in HYBRID_FUSION_SPECS:
+                force_hyde = "hyde" in HYBRID_FUSION_SPECS[retriever_name]
+                deep_results, retrieval_signals = search_hybrid_fusion_decomposed(retriever_name, deep_k, force_hyde=force_hyde, force_reason=f"intent_filter_too_few: count={len(filtered_ids)}")
             else:
                 raise RuntimeError(f"Unknown retriever: {retriever_name}")
 
@@ -585,6 +627,34 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             chunk_ids = [cid for cid, _ in results]
             initial_scores = {cid: score for cid, score in results}
 
+        multi_hop_cfg = cfg.get("multi_hop", {}) or {}
+        multi_hop_supported = retriever_name in HYBRID_FUSION_SPECS
+
+        if multi_hop_supported and as_bool(multi_hop_cfg.get("enabled", False)) and results:
+            evidence_k = max(1, int(multi_hop_cfg.get("evidence_k", 6)))
+            evidence_ids = [int(cid) for cid, _ in results[:evidence_k]]
+            evidence_rows = fetch_chunks(conn, evidence_ids)
+            evidence_by_id = {int(row["chunk_id"]): row for row in evidence_rows}
+            evidence_chunks = [evidence_by_id[cid] for cid in evidence_ids if cid in evidence_by_id]
+            multi_hop_queries = generate_bridge_queries(cfg, question, evidence_chunks, prior_queries=[question, *decomposition_subqueries], backend=backend)
+
+            if multi_hop_queries:
+                hop_k = min(candidate_k, int(multi_hop_cfg.get("candidate_k_per_query", 300)))
+                hop_runs = []
+
+                for bridge_query in multi_hop_queries:
+                    hop_results, hop_signals = search_hybrid_fusion(retriever_name, hop_k, bridge_query)
+                    hop_runs.append((bridge_query, hop_results, hop_signals))
+
+                results, retrieval_signals = merge_multi_hop_results(results, retrieval_signals, hop_runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), hop_weight=float(multi_hop_cfg.get("hop_weight", 0.65)), max_total_candidates=int(multi_hop_cfg.get("max_total_candidates", 1800)))
+                merged_ids = [int(cid) for cid, _ in results]
+                filtered_ids = filter_by_intent_source(conn, merged_ids, intent, min_required=5, max_fallback=40)
+                filtered_set = set(filtered_ids)
+                results = [(cid, score) for cid, score in results if cid in filtered_set]
+                chunk_ids = [cid for cid, _ in results]
+                initial_scores = {cid: score for cid, score in results}
+                log.info("[MULTIHOP] merged bridge_queries=%d candidates=%d", len(multi_hop_queries), len(results))
+        
         chunks = fetch_chunks(conn, chunk_ids)
         max_per_doc = dedup_max_per_doc
 
@@ -652,25 +722,19 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     "hyde_candidate_count": hyde_signal_count,
                     "query_decomposition_enabled": as_bool((cfg.get( "query_decomposition",{}) or {}).get("enabled", False,)),
                     "query_decomposition_used": bool(decomposition_subqueries), "decomposition_subqueries": list(decomposition_subqueries),
+                    "multi_hop_enabled": as_bool((cfg.get("multi_hop", {}) or {}).get("enabled", False)),
+                    "multi_hop_used": bool(multi_hop_queries),
+                    "multi_hop_queries": list(multi_hop_queries),
                 },
             )
 
         for row in chunks[:top_k]:
-            log.info(
-                "[QNA] chunk_id=%s title=%s source=%s preview=%s",
-                row["chunk_id"],
-                row["title"],
-                row["source"],
-                (row["text"][:200] if row["text"] else "").replace("\n", " "),
-            )
+            log.info("[QNA] chunk_id=%s title=%s source=%s preview=%s", row["chunk_id"], row["title"], row["source"], (row["text"][:200] if row["text"] else "").replace("\n", " "))
 
         if intent == "lookup":
             lookup_entity = extract_lookup_entity(question)
             if (lookup_entity and not has_lookup_phrase(chunks, lookup_entity)):
-                log.info(
-                    "[LOOKUP] No reliable phrase match entity=%r",
-                    lookup_entity,
-                )
+                log.info("[LOOKUP] No reliable phrase match entity=%r", lookup_entity)
                 chunks = []
 
         context_max_per_doc = (8 if intent == "lookup" else 4)
@@ -690,23 +754,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
             if parent_enabled:
                 seed_chunks = list(selected_chunks)
-                parent_max_total = max(
-                    int(parent_cfg.get("max_total_chunks", 16)),
-                    len(seed_chunks),
-                )
-                parent_chunks = fetch_parent_context_chunks(
-                    conn,
-                    seed_chunks,
-                    max_parents=int(parent_cfg.get("max_parents", 8)),
-                    max_total_chunks=parent_max_total,
-                )
-                selected_chunks = merge_context_preserving_seeds(
-                    seed_chunks,
-                    parent_chunks,
-                    max_total=parent_max_total,
-                    max_per_doc=context_max_per_doc,
-                )
-
+                parent_max_total = max(int(parent_cfg.get("max_total_chunks", 16)), len(seed_chunks),)
+                parent_chunks = fetch_parent_context_chunks(conn, seed_chunks, max_parents=int(parent_cfg.get("max_parents", 8)), max_total_chunks=parent_max_total,)
+                selected_chunks = merge_context_preserving_seeds(seed_chunks, parent_chunks, max_total=parent_max_total, max_per_doc=context_max_per_doc,)
                 log.info("[PARENT] expanded selected chunks to parent context chunks=%d", len(selected_chunks))
 
             if ctx_enabled:
@@ -720,20 +770,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     ),
                     len(seed_chunks),
                 )
-                expanded_chunks = expand_context_windows(
-                    conn,
-                    seed_chunks,
-                    before=int(context_cfg.get("before", 1)),
-                    after=int(context_cfg.get("after", 1)),
-                    max_total_chunks=ctx_max_total,
-                )
-                selected_chunks = merge_context_preserving_seeds(
-                    seed_chunks,
-                    expanded_chunks,
-                    max_total=ctx_max_total,
-                    max_per_doc=context_max_per_doc,
-                )
-
+                expanded_chunks = expand_context_windows(conn, seed_chunks, before=int(context_cfg.get("before", 1)), after=int(context_cfg.get("after", 1)), max_total_chunks=ctx_max_total,)
+                selected_chunks = merge_context_preserving_seeds(seed_chunks, expanded_chunks, max_total=ctx_max_total, max_per_doc=context_max_per_doc,)
                 log.info("[CTX_EXPAND] expanded context chunks=%d before=%s after=%s", len(selected_chunks), context_cfg.get("before", 1), context_cfg.get("after", 1))
 
         selected_chunks = [dict(row) for row in selected_chunks]
@@ -777,7 +815,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "hyde_selected_count": hyde_selected_count,
                 "query_decomposition_enabled": as_bool((cfg.get("query_decomposition", {}) or {}).get("enabled", False)),
                 "query_decomposition_used": bool(decomposition_subqueries),
-                "decomposition_subqueries": list(decomposition_subqueries)
+                "decomposition_subqueries": list(decomposition_subqueries),
+                "multi_hop_enabled": as_bool((cfg.get("multi_hop", {}) or {}).get("enabled", False)),
+                "multi_hop_used": bool(multi_hop_queries),
+                "multi_hop_queries": list(multi_hop_queries),
             })
     finally:
         conn.close()

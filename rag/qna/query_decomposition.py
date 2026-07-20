@@ -16,6 +16,7 @@ COMPLEX_PATTERN = re.compile(
     r"pros and cons|relationship|as well as"
     r")\b", re.IGNORECASE
 )
+
 CHANNELS = ("faiss", "bm25", "splade",  "hyde", "turbovec")
 
 def should_decompose(question: str, *, mode: str, min_words: int) -> bool:

@@ -377,7 +377,9 @@ In order the dataset creation runs perfectly, it required 2 additional models su
 - [ ] Retrieval confidence scoring.
 - [ ] Corrective RAG support.
 - [ ] Automatic retrieval retry/fallback.
-- [ ] Multi-hop query detection.
+- [x] Multi-hop query detection.
+- [ ] Multi-hop retrieval benchmark
+- [ ] Three-hop stopping policy
 - [ ] ColBERT late-interaction retriever.
 - [ ] ColBERT hybrid retrieval.
 - [ ] Learned sparse retrieval.

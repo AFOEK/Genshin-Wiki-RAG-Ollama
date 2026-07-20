@@ -51,6 +51,7 @@ turbovec:
   bit_width: 4  #2 | 4
   batch_size: 4096
   calibration_size: 50000
+  rrf_weight: 0.5
   normalize: true
   model_source: runtime   # runtime | kaggle | ollama | llamacpp
   model_mismatch: warn   # error | warn | ignore
@@ -91,6 +92,25 @@ query_decomposition:
   min_p: 0.05
   repeat_penalty: 1.0
   num_predict: 256  # 512 | 256
+
+multi_hop:
+  enabled: true
+  mode: auto
+  model: qwen3.5:9b
+  think: false
+  timeout: 120
+  min_words: 7
+  evidence_k: 10
+  evidence_chars_per_chunk: 900
+  max_bridge_queries: 2
+  candidate_k_per_query: 300
+  hop_weight: 0.65
+  max_total_candidates: 1800
+  temperature: 0.0
+  top_p: 0.9
+  top_k: 30
+  min_p: 0.05
+  num_predict: 256
 
 retrieval:
   candidate_k: 950
@@ -138,7 +158,7 @@ hyde:
   repeat_penalty: 1.05
   num_predict: 256   # 512 | 256
   candidate_k: 300
-  rrf_weight: 0.75
+  rrf_weight: 0.60
   mode: fallback    #fallback | always
   cache_enable: true
   fallback_top_n: 12
