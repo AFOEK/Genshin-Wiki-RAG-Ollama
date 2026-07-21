@@ -115,7 +115,7 @@ INTENT_PROFILES = {
             "great red sand", "girdle of the sands", "sea of bygone eras sea of bygone eras", "ancient sacred mountain",
             "temple of space", "golden apple archipelago", "three realms gateway offering", "veluriyam mirage",
             "simulanka", "dragonspine", "windrest peak", "celestia", "abyss", "hyperborea", "sea of stars",
-            "the sea of flowers at the end"
+            "the sea of flowers at the end", "frost moon"
         ],
         "title_boost_v": 0.15,
         "text_require_any": [
@@ -235,6 +235,52 @@ INTENT_PROFILES = {
             "text": 1.0,
         },
     },
+    "version": {
+        "source_bonus": {
+            "kqm_news": 0.25,
+            "game8": 0.18,
+            "genshin_wiki": 0.12,
+            "genshin_gg": 0.05,
+        },
+        "source_penalty": {},
+        "title_penalize": [
+            "change history",
+            "gallery",
+            "comments",
+        ],
+        "title_boost": [
+            "version",
+            "livestream",
+            "release date",
+            "latest news",
+            "game info",
+            "update",
+        ],
+        "title_boost_v": 0.30,
+        "text_require_any": [
+            "version",
+            "luna",
+            "patch",
+            "update",
+        ],
+        "text_require_penalty": 0.08,
+        "source_priority": {
+            "required": [],
+            "preferred": [
+                "kqm_news",
+                "game8",
+                "genshin_wiki",
+            ],
+            "excluded": [],
+        },
+        "bm25_weights": {
+            "chunk_id": 0.0,
+            "doc_id": 0.0,
+            "source": 0.0,
+            "title": 6.0,
+            "text": 2.0,
+        },
+    },
 }
 
 BUILD_RECOMMENDATION_MARKERS = (
@@ -253,6 +299,34 @@ BUILD_RECOMMENDATION_MARKERS = (
     "rotation",
     "build for",
 )
+
+CURRENT_VERSION_PATTERN = re.compile(
+    r"(?:"
+    r"\b(?:latest|current(?:ly)?|newest|most\s+recent)\b"
+    r".{0,60}"
+    r"\b(?:version|patch|update)\b"
+    r"|"
+    r"\b(?:version|patch|update)\b"
+    r".{0,60}"
+    r"\b(?:latest|current(?:ly)?|newest|most\s+recent)\b"
+    r"|"
+    r"\b(?:what|which)\s+(?:game\s+)?version\s+(?:is|are)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+LOOKUP_FACET_ALIASES = {
+    "skin": {
+        "skin",
+        "skins",
+        "outfit",
+        "outfits",
+        "costume",
+        "costumes",
+        "appearance",
+        "attire",
+    },
+}
 
 BUILD_SUBTYPE_PROFILES = {
     "weapon": {
@@ -281,7 +355,6 @@ BUILD_SUBTYPE_PROFILES = {
         "bonus": 0.40,
         "missing_penalty": 0.35,
     },
-
     "artifact": {
         "query_markers": (
             "artifact",
@@ -349,7 +422,6 @@ BUILD_SUBTYPE_PROFILES = {
         "bonus": 0.40,
         "missing_penalty": 0.35,
     },
-
     "team": {
         "query_markers": (
             "team",
@@ -376,7 +448,6 @@ BUILD_SUBTYPE_PROFILES = {
         "bonus": 0.40,
         "missing_penalty": 0.35,
     },
-
     "stats": {
         "query_markers": (
             "stats",
@@ -403,7 +474,6 @@ BUILD_SUBTYPE_PROFILES = {
         "bonus": 0.35,
         "missing_penalty": 0.30,
     },
-
     "rotation": {
         "query_markers": (
             "rotation",
@@ -435,6 +505,131 @@ BM25_STOPWORDS = {
     "does", "do", "did", "can", "could", "would", "should",
     "come", "comes",
 }
+
+def is_current_version_question(question: str) -> bool:
+    return bool(CURRENT_VERSION_PATTERN.search(str(question or "").strip()))
+
+def detect_lookup_facets(question: str) -> set[str]:
+    normalized = normalize_title_key(question)
+    tokens = set(normalized.split())
+    detected: set[str] = set()
+
+    for facet, aliases in LOOKUP_FACET_ALIASES.items():
+        if any(alias in tokens for alias in aliases):
+            detected.add(facet)
+
+    return detected
+
+
+def extract_lookup_target(question: str,) -> tuple[str | None, set[str]]:
+    q = str(question or "").strip().replace("’", "'")
+    facets = detect_lookup_facets(q)
+
+    if is_current_version_question(q):
+        return None, facets
+
+    # "What is Citlali's new skin?"
+    # "What is Citlali new skin?"
+    character_facet_patterns = (
+        r"^\s*(?:what|which)\s+(?:is|are)\s+"
+        r"(?:the\s+)?"
+        r"(?P<entity>.+?)(?:'s)?\s+"
+        r"(?:(?:new|latest|current|upcoming)\s+)?"
+        r"(?:skin|outfit|costume|appearance|attire)"
+        r"(?:\s+called)?\s*[?!.]*$",
+
+        # "What is the new skin for Citlali?"
+        r"^\s*(?:what|which)\s+(?:is|are)\s+"
+        r"(?:the\s+)?"
+        r"(?:(?:new|latest|current|upcoming)\s+)?"
+        r"(?:skin|outfit|costume|appearance|attire)\s+"
+        r"(?:for|of)\s+"
+        r"(?P<entity>.+?)"
+        r"(?:\s+called)?\s*[?!.]*$",
+    )
+
+    for pattern in character_facet_patterns:
+        match = re.match(
+            pattern,
+            q,
+            re.IGNORECASE,
+        )
+
+        if not match:
+            continue
+
+        entity = re.sub(
+            r"\s+",
+            " ",
+            match.group("entity"),
+        ).strip(" '")
+
+        entity = re.sub(
+            r"^the\s+",
+            "",
+            entity,
+            flags=re.IGNORECASE,
+        )
+
+        return entity or None, facets
+
+    generic_patterns = (
+        r"^\s*what\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
+        r"^\s*where\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
+    )
+
+    entity: str | None = None
+
+    for pattern in generic_patterns:
+        match = re.match(
+            pattern,
+            q,
+            re.IGNORECASE,
+        )
+
+        if match:
+            entity = match.group(1)
+            break
+
+    if not entity:
+        return None, facets
+
+    entity = re.sub(
+        r"\s+",
+        " ",
+        entity,
+    ).strip(" '")
+
+    entity = re.sub(
+        r"^the\s+",
+        "",
+        entity,
+        flags=re.IGNORECASE,
+    )
+
+    if "skin" in facets:
+        entity = re.sub(
+            r"\b(?:new|latest|current|upcoming)\b",
+            " ",
+            entity,
+            flags=re.IGNORECASE,
+        )
+
+        entity = re.sub(
+            r"\b(?:skin|skins|outfit|outfits|costume|costumes|"
+            r"appearance|attire)\b",
+            " ",
+            entity,
+            flags=re.IGNORECASE,
+        )
+
+        entity = re.sub(
+            r"\s+",
+            " ",
+            entity,
+        ).strip(" '")
+
+    return entity or None, facets
 
 def normalize_model_name(x) -> str:
     if x is None:
@@ -479,7 +674,6 @@ def expected_model_from_cfg(cfg: dict, backend: str | None = None, source: str =
         return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
 
     return str(cfg.get("ollama", {}).get("embedding_model", ""))
-
 
 def check_faiss_model_match(*, actual_model, expected_model, policy: str = "error") -> None:
     actual_n = normalize_model_name(actual_model)
@@ -874,38 +1068,8 @@ def is_build_recommendation_question(question: str) -> bool:
     return False
 
 def extract_lookup_entity(question: str) -> str | None:
-    q = question.strip().replace("’", "'")
-
-    patterns = (
-        r"^\s*what\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
-        r"^\s*where\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
-    )
-
-    entity: str | None = None
-
-    for pattern in patterns:
-        match = re.match(pattern, q, re.IGNORECASE)
-        if match:
-            entity = match.group(1)
-            break
-
-    if not entity:
-        return None
-
-    entity = re.sub(r"\s+", " ", entity).strip(" '")
-    entity = re.sub(r"^the\s+", "", entity, flags=re.IGNORECASE)
-
-    entity = re.sub(
-        r"\s+(?:"
-        r"artifact set|artifact|weapon|item|material|"
-        r"consumable|location|region"
-        r")$",
-        "",
-        entity,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    return entity or None
+    entity, _facets = extract_lookup_target(question)
+    return entity
 
 def normalize_title_key(value: str) -> str:
     value = value.lower().replace("’", "'")
@@ -993,7 +1157,8 @@ def detect_intent(question: str) -> str:
         "profile", "voiceline", "voiced by", "height", "who are", "comes from",
         "come from", "who was", "where is she from", "where is he from", "where are they from"
     ]
-
+    if is_current_version_question(question):
+        return "version"
     if contains_any_marker(q, BIOGRAPHY_MARKERS):
         return "biography"
     if contains_any_marker(q, LOCATION_MARKERS):
@@ -1447,36 +1612,33 @@ def extract_entity_terms(question: str) -> list[str]:
     return []
 
 def prefer_entity_seed_chunks(question: str, chunks: list[dict], min_keep: int = 3) -> list[dict]:
-    terms = extract_entity_terms(question)
-    if not terms:
-        return chunks
-    
-    main_entity = terms[0]
-    sub_terms = terms[1:]
+    lookup_entity = extract_lookup_entity(question)
 
-    strong = []
-    weak = []
-    rest = []
+    if not lookup_entity:
+        return chunks
+
+    entity_key = normalize_title_key(lookup_entity)
+
+    exact_title: list[dict] = []
+    text_matches: list[dict] = []
+    related_titles: list[dict] = []
+    rest: list[dict] = []
 
     for row in chunks:
-        title = (row.get("title") or "").lower()
-        text = (row.get("text") or "").lower()
-        hay = f"{title}\n{text[:2500]}"
+        title = str(row.get("title") or "")
+        text = str(row.get("text") or "")
+        primary_key = normalize_title_key(primary_page_title(title))
+        text_key = normalize_title_key(text[:3000])
 
-        if main_entity in hay:
-            strong.append(row)
-        elif sub_terms and any(t in hay for t in sub_terms):
-            weak.append(row)
+        if primary_key == entity_key:
+            exact_title.append(row)
+        elif (primary_key.startswith(entity_key + " ") or entity_key in primary_key):
+            related_titles.append(row)
+        elif entity_key in text_key:
+            text_matches.append(row)
         else:
             rest.append(row)
-
-    if len(strong) >= min_keep:
-        return strong + weak + rest
-
-    if strong:
-        return strong + weak + rest
-
-    return chunks
+    return (exact_title + text_matches + related_titles + rest)
 
 def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int, float | dict], current_version_ord: int | None = None) -> list[dict]:
     q_terms = tokenize(question)
@@ -1556,7 +1718,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         if in_faiss and in_bm25:
             retrieval_bonus += 0.08
 
-        if intent in {"mechanic", "build", "lore", "biography", "location", "lookup", "general"}:
+        if intent in {"mechanic", "build", "lore", "biography", "location", "lookup", "version", "general"}:
             if in_bm25:
                 retrieval_bonus += 0.05
             if bm25_rank is not None and bm25_rank <= 5:
@@ -1609,7 +1771,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         recency_penalty = 0.0
 
         recency_explicit = is_recency_sensitive_question(question)
-        recency_active = recency_explicit or intent in {"build", "mechanic"}
+        recency_active = recency_explicit or intent in {"build", "mechanic", "version"}
 
         if recency_active and current_version_ord is not None:
             row_version_ord = row.get("version_ord")

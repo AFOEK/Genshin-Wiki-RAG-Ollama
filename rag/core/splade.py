@@ -29,6 +29,23 @@ def load_splade_model(model_name: str, *, device: str, max_length: int, max_acti
     model.eval()
     return model
 
+def resolve_splade_device(requested_device: str | None) -> str:
+    device = str(requested_device or "auto").strip().lower()
+    if device == "auto":
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    if device == "cuda":
+        device = "cuda:0"
+
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(f"SPLADE requested device={device!r}, but CUDA is unavailable in the current PyTorch environment. torch={torch.__version__} cuda_build={torch.version.cuda!r}")
+    try:
+        torch.device(device)
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError(f"Invalid SPLADE device: {requested_device!r}") from exc
+
+    return device
+
 def get_splade_output_dimension(model: SparseEncoder) -> int:
     tokenizer = getattr(model, "tokenizer", None)
     if tokenizer is not None:
@@ -175,11 +192,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
 
     current_dir.mkdir(parents=True, exist_ok=True)
     model_name = str(splade_cfg["model"])
-    requested_device = str(splade_cfg.get("device", "auto")).strip().lower()
-    if requested_device == "auto":
-        device = ("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = requested_device
+    device = resolve_splade_device(splade_cfg.get("device", "auto"))
     batch_size = int(splade_cfg.get("batch_size", 4))
     shard_size = int(splade_cfg.get("shard_size", 50_000))
     max_length = int(splade_cfg.get("max_length", 256))

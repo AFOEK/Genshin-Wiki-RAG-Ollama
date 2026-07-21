@@ -9,7 +9,7 @@ import threading
 import numpy as np
 
 from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match
-from core.splade import encode_query_sparse, load_csc_shard, load_splade_model, search_csc_shard
+from core.splade import encode_query_sparse, load_csc_shard, load_splade_model, search_csc_shard, resolve_splade_device
 
 log = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ class TurboVecRetriever:
         return [(int(cid), float(score)) for cid, score in zip(ids, scores) if int(cid) >= 0]
     
 class SpladeRetriever:
-    def __new__(cls, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None,):
+    def __new__(cls, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None, precision: str = "fp32"):
         key = (str(index_dir.resolve()), model_name, device, max_length, max_active_dims, cache_folder)
 
         if key not in splade_retriever_cache:
@@ -215,7 +215,7 @@ class SpladeRetriever:
 
         return splade_retriever_cache[key]
 
-    def __init__(self, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None,):
+    def __init__(self, index_dir: Path, *, model_name: str, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None, precision: str = "fp32"):
         if self._initialized:
             return
 
@@ -240,7 +240,8 @@ class SpladeRetriever:
                 raise RuntimeError(f"[SPLADE] configuration mismatch: {key}={actual_value!r}, expected={expected_value!r}")
 
         model_key = (model_name, device, max_length, max_active_dims, cache_folder,)
-        self.model = load_splade_model(model_name, device=device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder,)
+        resolved_device = resolve_splade_device(device)
+        self.model = load_splade_model(model_name, device=resolved_device, max_length=max_length, max_active_dims=max_active_dims, cache_folder=cache_folder,)
         with splade_model_locks_guard:
             self.query_lock = splade_model_locks.setdefault(model_key, threading.Lock())
 

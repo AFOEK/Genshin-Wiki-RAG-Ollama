@@ -9,7 +9,7 @@ from pathlib import Path
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, build_hybrid_signal, build_hybrid_hyde_signal, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, build_three_way_signal, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, has_lookup_phrase, normalize_model_name
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -227,7 +227,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
             active_dims_value = (splade_cfg.get("max_active_dims", 128))
             max_active_dims = (int(active_dims_value) if active_dims_value is not None else None)
-            splade_ret_cache = SpladeRetriever(splade_dir, model_name=str(splade_cfg["model"]), device=str(splade_cfg.get("device", "cpu")), max_length=int(splade_cfg.get("max_length", 256)), max_active_dims=max_active_dims, cache_folder=cache_folder)
+            splade_ret_cache = SpladeRetriever(splade_dir, model_name=str(splade_cfg["model"]), device=str(splade_cfg.get("device", "cpu")), max_length=int(splade_cfg.get("max_length", 256)), max_active_dims=max_active_dims, cache_folder=cache_folder, precision=str(splade_cfg.get("precision", "fp32".strip().lower())))
         return splade_ret_cache
 
     def merge_ranked_results(primary: list[tuple[int, float]], fallback: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
@@ -575,6 +575,30 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         for row in chunks:
             row.pop("_rerank_score", None)
 
+        lookup_entity: str | None = None
+        lookup_facets: set[str] = set()
+
+        if intent == "lookup":
+            lookup_entity, lookup_facets = (extract_lookup_target(question))
+
+        if lookup_entity and not lookup_facets:
+            exact_seed_chunks = fetch_exact_lookup_seed_chunks(
+                conn,
+                lookup_entity,
+                max_docs=int(
+                    lookup_cfg.get(
+                        "exact_title_max_docs",
+                        2,
+                    )
+                ),
+                chunks_per_doc=int(
+                    lookup_cfg.get(
+                        "exact_title_chunks_per_doc",
+                        4,
+                    )
+                ),
+            )
+
         hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
         hyde_signal_count = sum(1 for signal in (retrieval_signals or {}).values() if isinstance(signal, dict) and signal.get("in_hyde"))
         hyde_used = hyde_signal_count > 0
@@ -614,12 +638,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         for row in chunks[:top_k]:
             log.info("[QNA] chunk_id=%s title=%s source=%s preview=%s", row["chunk_id"], row["title"], row["source"], (row["text"][:200] if row["text"] else "").replace("\n", " "))
 
-        if intent == "lookup":
-            lookup_entity = extract_lookup_entity(question)
-            if (lookup_entity and not has_lookup_phrase(chunks, lookup_entity)):
-                log.info("[LOOKUP] No reliable phrase match entity=%r", lookup_entity)
-                chunks = []
-
         context_max_per_doc = (8 if intent == "lookup" else 4)
         candidate_chunks = [dict(row) for row in chunks]
         if broad:
@@ -627,10 +645,14 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         else:
             context_cfg = cfg.get("context_expansion", {}) or {}
             ctx_enabled = as_bool(context_cfg.get("enabled", False))
-            selected_chunks = chunks[:direct_top_k]
-            if intent in ("biography", "location", "lookup"):
-                selected_chunks = prefer_entity_seed_chunks(question, selected_chunks, min_keep=3)
-                selected_chunks = selected_chunks[:direct_top_k]
+            if intent == "lookup":
+                lookup_cfg = cfg.get("lookup", {}) or {}
+                lookup_seed_k = max(1, min(direct_top_k,int(lookup_cfg.get("seed_k", 4,)),))
+                selected_chunks = prefer_entity_seed_chunks(question, chunks, min_keep=1,)[:lookup_seed_k]
+            elif intent in {"biography", "location"}:
+                selected_chunks = prefer_entity_seed_chunks(question, chunks[:direct_top_k], min_keep=3,)[:direct_top_k]
+            else:
+                selected_chunks = chunks[:direct_top_k]
 
             parent_cfg = cfg.get("parent_child", {}) or {}
             parent_enabled = as_bool(parent_cfg.get("enabled", False))
@@ -697,6 +719,91 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             })
     finally:
         conn.close()
+
+def fetch_exact_lookup_seed_chunks(conn, entity: str, *, max_docs: int = 2, chunks_per_doc: int = 4) -> list[dict]:
+    entity = re.sub(r"\s+", " ", entity).strip()
+
+    if not entity:
+        return []
+
+    document_rows = conn.execute(
+        """
+        SELECT
+            d.doc_id,
+            d.source,
+            d.title
+        FROM docs d
+        WHERE COALESCE(d.status, 1) = 1
+          AND (
+                LOWER(TRIM(d.title)) = LOWER(?)
+             OR LOWER(d.title) LIKE LOWER(?)
+             OR LOWER(d.title) LIKE LOWER(?)
+          )
+        ORDER BY
+            CASE d.source
+                WHEN 'genshin_wiki' THEN 0
+                WHEN 'game8' THEN 1
+                WHEN 'honey' THEN 2
+                WHEN 'genshin_gg' THEN 3
+                ELSE 4
+            END,
+            d.doc_id
+        LIMIT ?
+        """,
+        (
+            entity,
+            f"{entity} |%",
+            f"{entity}｜%",
+            max(1, int(max_docs)),
+        ),
+    ).fetchall()
+
+    if not document_rows:
+        return []
+
+    ordered_chunk_ids: list[int] = []
+
+    for document in document_rows:
+        chunk_rows = conn.execute(
+            """
+            SELECT c.chunk_id
+            FROM chunks c
+            WHERE c.doc_id = ?
+              AND c.is_active = 1
+            ORDER BY
+                c.chunk_index,
+                c.chunk_id
+            LIMIT ?
+            """,
+            (
+                int(document["doc_id"]),
+                max(1, int(chunks_per_doc)),
+            ),
+        ).fetchall()
+
+        ordered_chunk_ids.extend(
+            int(row["chunk_id"])
+            for row in chunk_rows
+        )
+
+    if not ordered_chunk_ids:
+        return []
+
+    fetched = fetch_chunks(
+        conn,
+        ordered_chunk_ids,
+    )
+
+    fetched_by_id = {
+        int(row["chunk_id"]): dict(row)
+        for row in fetched
+    }
+
+    return [
+        fetched_by_id[chunk_id]
+        for chunk_id in ordered_chunk_ids
+        if chunk_id in fetched_by_id
+    ]
 
 def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     intent = detect_intent(question)
