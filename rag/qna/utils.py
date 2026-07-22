@@ -606,6 +606,32 @@ def extract_lookup_target(question: str,) -> tuple[str | None, set[str]]:
 
     return entity or None, facets
 
+def extract_build_entity(question: str) -> str | None:
+    q = re.sub(r"\s+", " ", str(question or "").strip())
+    patterns = (
+        r"^\s*what\s+(?:is|are)\s+"
+        r"(?P<entity>.+?)"
+        r"(?:'s)?\s+best\s+build"
+        r"(?:s)?\s*[?!.]*$",
+
+        r"^\s*(?:what|which)\s+"
+        r"(?:is|are)\s+the\s+best\s+build"
+        r"(?:s)?\s+(?:for|of)\s+"
+        r"(?P<entity>.+?)\s*[?!.]*$",
+
+        r"^\s*best\s+build"
+        r"(?:s)?\s+(?:for|of)\s+"
+        r"(?P<entity>.+?)\s*[?!.]*$",
+    )
+
+    for pattern in patterns:
+        match = re.match(pattern, q, re.IGNORECASE,)
+
+        if match:
+            return re.sub(r"\s+", " ", match.group("entity")).strip(" '")
+
+    return None
+
 def normalize_model_name(x) -> str:
     if x is None:
         return ""
@@ -1197,20 +1223,26 @@ def detect_intent(question: str) -> str:
     ]
     if is_current_version_question(question):
         return "version"
+
     if contains_any_marker(q, BIOGRAPHY_MARKERS):
         return "biography"
+
     if contains_any_marker(q, LOCATION_MARKERS):
         return "location"
-    if (build_subtypes and is_build_recommendation_question(question)):
+
+    # Must occur before extract_lookup_entity().
+    if (build_subtypes or is_build_recommendation_question(question) or contains_any_marker(q, BUILD_MARKERS)):
         return "build"
+
     if contains_any_marker(q, MECHANICS_MARKERS):
         return "mechanic"
+
     if extract_lookup_entity(question):
         return "lookup"
-    if contains_any_marker(q, BUILD_MARKERS):
-        return "build"
+
     if contains_any_marker(q, LORE_MARKERS):
         return "lore"
+
     return "general"
 
 def detect_build_subtypes(question: str) -> set[str]:
@@ -1900,7 +1932,7 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
 
             if any(marker in title_l for marker in noisy_identity_subpages):
                 penalty += 0.25
-                
+
         if lookup_entity:
             similarity = entity_title_similarity(lookup_entity, title_primary)
             if similarity >= 0.98:

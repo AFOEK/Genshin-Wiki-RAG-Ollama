@@ -9,7 +9,7 @@ from pathlib import Path
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key, extract_build_entity
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -657,7 +657,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         max_per_doc = dedup_max_per_doc
 
         if intent == "build":
-            entity = extract_lookup_entity(question)
+            entity = (extract_build_entity(question) or extract_lookup_entity(question))
             if entity:
                 entity_key = normalized_phrase(entity)
                 matching = [row for row in chunks if entity_key in normalized_phrase(str(row.get("title") or ""))]
@@ -849,6 +849,17 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
         hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
         hyde_used = hyde_selected_count > 0
+        if intent == "build":
+            build_entity = (extract_build_entity(question) or extract_lookup_entity(question))
+            if build_entity:
+                entity_key = normalize_title_key(build_entity)
+                entity_chunks = [row for row in selected_chunks if entity_key in normalize_title_key(str(row.get("title") or ""))]
+
+                if entity_chunks:
+                    selected_chunks = entity_chunks
+                else:
+                    log.warning("[BUILD] final context lost target entity=%r selected_titles=%s", build_entity, [row.get("title") for row in selected_chunks])
+
         context = build_context(selected_chunks)
         if (intent == "version" and baseline_ord is not None):
             major_version = int(baseline_ord) // 100
