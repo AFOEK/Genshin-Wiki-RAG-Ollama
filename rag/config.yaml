@@ -142,7 +142,7 @@ parent_child:
   max_total_chunks: 85
 
 retrieval_cache:
-  enabled: false
+  enabled: true
   path: data/cache/retrieval_cache.sqlite
   ttl_seconds: 86400
   max_entries: 50000

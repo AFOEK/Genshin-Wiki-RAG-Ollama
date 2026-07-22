@@ -100,7 +100,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     splade_ret_cache = None
     hyde_document_cache: str | None = None
     q_vec_cache: dict[tuple[str, str, int], object] = {}
-    log.info("[CACHE] Initialize cache FAISS cache: %s, BM25 cache: %s, TurboVec cache: %s, HyDE cache: %s, SPLADE cache: %s", str(faiss_ret_cache), str(bm25_ret_cache), str(turbovec_ret_cache), str(hyde_document_cache), "unimplemented")
+    log.info("[CACHE] Initialize cache FAISS cache: %s, BM25 cache: %s, TurboVec cache: %s, HyDE cache: %s, SPLADE cache: %s", str(faiss_ret_cache), str(bm25_ret_cache), str(turbovec_ret_cache), str(hyde_document_cache), str(splade_ret_cache))
 
     hyde_used_for_request = False
     hyde_fallback_reason: str | None = None
@@ -798,7 +798,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         for row in chunks[:top_k]:
             log.info("[QNA] chunk_id=%s title=%s source=%s preview=%s", row["chunk_id"], row["title"], row["source"], (row["text"][:200] if row["text"] else "").replace("\n", " "))
 
-        context_max_per_doc = (8 if intent == "lookup" else 4)
+        context_max_per_doc = (8 if intent in {"lookup", "build"} else 4)
         candidate_chunks = [dict(row) for row in chunks]
         if broad:
             selected_chunks = candidate_chunks
@@ -846,7 +846,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             default_max_chunks = 8
             default_max_chars = 12000
 
-        selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
         hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
         hyde_used = hyde_selected_count > 0
         if intent == "build":
@@ -860,6 +859,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 else:
                     log.warning("[BUILD] final context lost target entity=%r selected_titles=%s", build_entity, [row.get("title") for row in selected_chunks])
 
+        selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
         context = build_context(selected_chunks)
         if (intent == "version" and baseline_ord is not None):
             major_version = int(baseline_ord) // 100

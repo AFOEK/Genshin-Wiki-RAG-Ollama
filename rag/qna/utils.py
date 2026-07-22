@@ -284,7 +284,6 @@ INTENT_PROFILES = {
 }
 
 BUILD_RECOMMENDATION_MARKERS = (
-    "best",
     "recommended",
     "recommend",
     "bis",
@@ -964,6 +963,34 @@ def make_intent_fts5_query(question: str, intent: str) -> str | None:
                 f"AND ({skin_clause})")
 
         return f"title:{entity}"
+    
+    if intent == "build":
+        build_entity = (
+            extract_build_entity(question)
+            or (
+                extract_entity_terms(question)[0]
+                if extract_entity_terms(question)
+                else None
+            )
+        )
+
+        if not build_entity:
+            return None
+
+        entity = quote_fts5_phrase(build_entity)
+
+        build_terms = (
+            '"build" OR '
+            '"weapon" OR '
+            '"artifact" OR '
+            '"main stats" OR '
+            '"substats" OR '
+            '"team"'
+        )
+
+        return (
+            f"(title:{entity} OR text:{entity}) "
+            f"AND ({build_terms})")
 
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     if not chunk_ids:
@@ -1186,12 +1213,10 @@ def detect_intent(question: str) -> str:
     q = question.lower()
     build_subtypes = detect_build_subtypes(question)
     BUILD_MARKERS = [
-        "weapon", "artifact", "build", "damage", "dps", "support",
-        "team", "comp", "rotation", "stats", "crit", "er", "em",
-        "signature", "best", "recommended", "bis", "bis weapon",
-        "talent priority", "ascension", "investment", "crit%", "atk", "atk%",
-        "def", "def%", "elemental mastery", "dmg", "energy recharge", "sub-dps",
-        "normal attack", "attack", "defense", "level"
+        "weapon", "artifact", "build", "damage", "dps", "team", "team comp", "rotation", 
+        "stats", "crit", "signature weapon",
+        "recommended weapon", "bis weapon", "talent priority", "stat priority", "main stats",
+        "substats", "elemental mastery", "energy recharge", "sub-dps",
     ]
     LORE_MARKERS = [
         "lore", "story", "history", "background", "past",
@@ -1230,8 +1255,8 @@ def detect_intent(question: str) -> str:
     if contains_any_marker(q, LOCATION_MARKERS):
         return "location"
 
-    # Must occur before extract_lookup_entity().
-    if (build_subtypes or is_build_recommendation_question(question) or contains_any_marker(q, BUILD_MARKERS)):
+    build_entity = extract_build_entity(question)
+    if (build_entity or build_subtypes or is_build_recommendation_question(question) or contains_any_marker(q, BUILD_MARKERS)):
         return "build"
 
     if contains_any_marker(q, MECHANICS_MARKERS):
