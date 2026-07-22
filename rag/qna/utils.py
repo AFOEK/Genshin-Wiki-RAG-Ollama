@@ -1219,6 +1219,22 @@ Answer format:
 8. Every explanation must be explicitly supported by the supplied context.
 9. If the context contains only a ranked list, say: "Ranked #N by the source; the retrieved context does not provide a reason."
 """
+    elif intent == "biography":
+        format_rules = """
+This is an identity or biography question.
+
+Answer rules:
+1. Begin with a direct 2–4 sentence identification of the person or character.
+2. Prefer explicit identity, affiliation, role, title, origin, and status statements.
+3. Every factual claim must be directly stated in at least one supplied chunk.
+4. Do not create a relationship between two entities merely because they occur in the same chunk or discuss similar themes.
+5. Do not claim that two entities share a title, identity, role, affiliation, origin, or relationship unless the context explicitly says that they do.
+6. Do not convert "introduced in Version X" into "released as playable in Version X."
+7. Do not combine separate facts into a stronger claim. For example, evidence that a character is playable plus separate evidence that they were introduced in Version X does not prove that they became playable in Version X.
+8. Treat trivia, etymology, notes, and inferred thematic similarities as secondary information.
+9. Omit uncertain facts rather than qualifying or guessing them.
+10. Do not produce a numbered list unless the question requests one.
+"""
 
     elif intent == "build" and "artifact" in subtypes:
         format_rules = f"""
@@ -1275,6 +1291,10 @@ General rules:
 - Cite supporting chunk IDs where practical.
 - If the context supports fewer than {max_recommendations} recommendations, list only those supported.
 - If the context contains no answer, say that there is not enough evidence.
+- Each factual sentence must be supported by explicit wording in the context.
+- Do not infer relationships, equivalence, causation, chronology, or shared titles from co-occurrence.
+- Do not merge statements from separate chunks into a new claim unless one chunk explicitly states the resulting relationship.
+- Preserve distinctions such as "introduced," "announced," "released," and "became playable."
 
 {format_rules}
 
