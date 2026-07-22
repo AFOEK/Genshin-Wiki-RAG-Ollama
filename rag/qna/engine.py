@@ -544,6 +544,37 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         resolved_lookup_entity: str | None = None
         lookup_resolution_score = 0.0
         ranking_question = question
+        biography_entity: str | None = None
+
+        if intent == "lookup":
+            lookup_entity, lookup_facets = extract_lookup_target(question)
+
+            if lookup_entity:
+                (resolved_lookup_entity, lookup_resolution_score,) = resolve_lookup_entity_from_chunks(
+                    lookup_entity,
+                    chunks[:500],
+                    minimum_similarity=float(
+                        (cfg.get("lookup", {}) or {}).get(
+                            "fuzzy_min_similarity",
+                            0.84,
+                        )
+                    ),
+                )
+
+                if (resolved_lookup_entity and normalize_title_key(resolved_lookup_entity) != normalize_title_key(lookup_entity)):
+                    ranking_question = re.sub(
+                        re.escape(lookup_entity),
+                        resolved_lookup_entity,
+                        question,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+
+                    log.info("[LOOKUP] fuzzy entity resolution raw=%r resolved=%r score=%.3f corrected_question=%r", lookup_entity, resolved_lookup_entity, lookup_resolution_score, ranking_question,)
+
+        elif intent == "biography":
+            biography_entity = extract_lookup_entity(question)
+
         if (ranking_question != question and retriever_name in HYBRID_FUSION_SPECS):
             lookup_cfg = cfg.get("lookup", {}) or {}
             correction_k = min(candidate_k, int(lookup_cfg.get("correction_candidate_k", 300,)))
@@ -623,25 +654,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 len(results),
             )
 
-        if intent == "lookup":
-            lookup_entity, lookup_facets = extract_lookup_target(question)
-
-            if lookup_entity:
-                (resolved_lookup_entity, lookup_resolution_score,) = resolve_lookup_entity_from_chunks(
-                    lookup_entity,
-                    chunks[:500],
-                    minimum_similarity=float(
-                        (cfg.get("lookup", {}) or {}).get(
-                            "fuzzy_min_similarity",
-                            0.84,
-                        )
-                    ),
-                )
-
-                if (resolved_lookup_entity and normalize_title_key(resolved_lookup_entity) != normalize_title_key(lookup_entity)):
-                    ranking_question = re.sub(re.escape(lookup_entity), resolved_lookup_entity, question, count=1, flags=re.IGNORECASE)
-                    log.info("[LOOKUP] fuzzy entity resolution raw=%r resolved=%r score=%.3f corrected_question=%r", lookup_entity, resolved_lookup_entity, lookup_resolution_score, ranking_question,)
-
         max_per_doc = dedup_max_per_doc
 
         if intent == "build":
@@ -675,12 +687,36 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         elif reranker_mode not in ("none", "feature", "cross_encoder"):
             raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
-        effective_lookup_entity = (resolved_lookup_entity or lookup_entity)
-        if (intent == "lookup" and effective_lookup_entity and not lookup_facets):
+        effective_lookup_entity = (
+            resolved_lookup_entity
+            or lookup_entity
+        )
+
+        exact_page_entity: str | None = None
+
+        if (
+            intent == "lookup"
+            and effective_lookup_entity
+            and not lookup_facets
+        ):
+            # Direct entity definition, such as:
+            # "What is Frost Moon?"
+            exact_page_entity = effective_lookup_entity
+
+        elif (
+            intent == "biography"
+            and biography_entity
+        ):
+            # Identity question, such as:
+            # "Who is Columbina?"
+            exact_page_entity = biography_entity
+
+        if exact_page_entity:
             lookup_cfg = cfg.get("lookup", {}) or {}
+
             exact_seed_chunks = fetch_exact_lookup_seed_chunks(
                 conn,
-                effective_lookup_entity,
+                exact_page_entity,
                 max_docs=int(
                     lookup_cfg.get(
                         "exact_title_max_docs",
@@ -696,9 +732,29 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             )
 
             if exact_seed_chunks:
-                exact_ids = {int(row["chunk_id"]) for row in exact_seed_chunks}
-                chunks = (exact_seed_chunks + [row for row in chunks if int(row["chunk_id"]) not in exact_ids])
-                log.info("[LOOKUP] exact-title seeds entity=%r chunks=%d", effective_lookup_entity, len(exact_seed_chunks),)
+                exact_ids = {
+                    int(row["chunk_id"])
+                    for row in exact_seed_chunks
+                }
+
+                chunks = (
+                    exact_seed_chunks
+                    + [
+                        row
+                        for row in chunks
+                        if int(row["chunk_id"])
+                        not in exact_ids
+                    ]
+                )
+
+                log.info(
+                    "[ENTITY] exact-title seeds "
+                    "intent=%s entity=%r chunks=%d",
+                    intent,
+                    exact_page_entity,
+                    len(exact_seed_chunks),
+                )
+
 
         for row in chunks:
             row.pop("_rerank_score", None)

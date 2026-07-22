@@ -261,7 +261,7 @@ dataset_creation:
   answer_think: true
   validator_think: false
 
-  retriever: hybrid_hyde
+  retriever: hybrid_all
   backend: ollama
   direct_top_k: 75
   require_positive_document: true

@@ -576,16 +576,15 @@ def extract_lookup_target(question: str,) -> tuple[str | None, set[str]]:
     generic_patterns = (
         r"^\s*what\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
         r"^\s*where\s+(?:is|are)\s+(.+?)\s*[?!.]*$",
+        r"^\s*who\s+(?:is|are|was|were)\s+(.+?)\s*[?!.]*$",
+        r"^\s*what\s+(?:is|are|was|were)\s+(.+?)\s*[?!.]*$",
+        r"^\s*where\s+(?:is|are|was|were)\s+(.+?)\s*[?!.]*$",
     )
 
     entity: str | None = None
 
     for pattern in generic_patterns:
-        match = re.match(
-            pattern,
-            q,
-            re.IGNORECASE,
-        )
+        match = re.match(pattern, q, re.IGNORECASE)
 
         if match:
             entity = match.group(1)
@@ -594,40 +593,16 @@ def extract_lookup_target(question: str,) -> tuple[str | None, set[str]]:
     if not entity:
         return None, facets
 
-    entity = re.sub(
-        r"\s+",
-        " ",
-        entity,
-    ).strip(" '")
-
-    entity = re.sub(
-        r"^the\s+",
-        "",
-        entity,
-        flags=re.IGNORECASE,
-    )
+    entity = re.sub(r"\s+", " ", entity,).strip(" '")
+    entity = re.sub( r"^the\s+", "", entity, flags=re.IGNORECASE)
 
     if "skin" in facets:
-        entity = re.sub(
-            r"\b(?:new|latest|current|upcoming)\b",
-            " ",
-            entity,
-            flags=re.IGNORECASE,
-        )
-
+        entity = re.sub(r"\b(?:new|latest|current|upcoming)\b", " ", entity, flags=re.IGNORECASE)
         entity = re.sub(
             r"\b(?:skin|skins|outfit|outfits|costume|costumes|"
-            r"appearance|attire)\b",
-            " ",
-            entity,
-            flags=re.IGNORECASE,
-        )
+            r"appearance|attire)\b", " ", entity, flags=re.IGNORECASE)
 
-        entity = re.sub(
-            r"\s+",
-            " ",
-            entity,
-        ).strip(" '")
+        entity = re.sub(r"\s+", " ", entity,).strip(" '")
 
     return entity or None, facets
 
@@ -1744,6 +1719,10 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
     asks_for_card = contains_any_marker(question_l,("card", "equipment card", "tcg", "genius invokation"))
     asks_for_skin = "skin" in lookup_facets
 
+    is_identity_question = bool(intent == "biography" and re.match(r"^\s*who\s+(?:is|are|was|were)\b", question, re.IGNORECASE))
+    identity_entity = (extract_lookup_entity(question) if is_identity_question else None)
+    identity_key = (normalize_title_key(identity_entity) if identity_entity else "")
+
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
         signal = retrieval_signals.get(chunk_id, 0.0)
@@ -1891,7 +1870,37 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         entity_bonus = 0.0
         title_primary = primary_page_title(title)
         title_primary_key = normalize_title_key(title_primary)
+        if identity_key:
+            if title_primary_key == identity_key:
+                # Main page: "Columbina"
+                entity_bonus += 1.25
 
+            elif title_primary_key == (identity_key + " profile"):
+                # Useful biography subpage.
+                entity_bonus += 0.35
+
+            elif title_primary_key.startswith(identity_key + " "):
+                entity_bonus += 0.08
+
+            noisy_identity_subpages = (
+                "storyline",
+                "companion",
+                "dressing room",
+                "elemental skill",
+                "elemental burst",
+                "normal attack",
+                "constellation",
+                " c1",
+                " c2",
+                " c3",
+                " c4",
+                " c5",
+                " c6",
+            )
+
+            if any(marker in title_l for marker in noisy_identity_subpages):
+                penalty += 0.25
+                
         if lookup_entity:
             similarity = entity_title_similarity(lookup_entity, title_primary)
             if similarity >= 0.98:
