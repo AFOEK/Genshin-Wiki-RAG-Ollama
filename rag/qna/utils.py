@@ -6,12 +6,12 @@ import re
 import json
 import hashlib
 import yaml
-import threading
 
 import numpy as np
 
 from typing import Iterable, Any
 from pathlib import Path
+from difflib import SequenceMatcher
 
 from .types import RetrievalResult
 
@@ -653,6 +653,73 @@ def normalize_model_name(x) -> str:
 
     return s
 
+def entity_title_similarity(entity: str, title: str) -> float:
+    entity_tokens = normalize_title_key(entity).split()
+    title_tokens = normalize_title_key(primary_page_title(title)).split()
+
+    if not entity_tokens or not title_tokens:
+        return 0.0
+
+    window_size = len(entity_tokens)
+
+    if len(title_tokens) < window_size:
+        candidate_windows = [title_tokens]
+    else:
+        candidate_windows = [
+            title_tokens[index:index + window_size]
+            for index in range(len(title_tokens) - window_size + 1)]
+
+    entity_key = " ".join(entity_tokens)
+    best = 0.0
+
+    for window in candidate_windows:
+        window_key = " ".join(window)
+        similarity = SequenceMatcher(None, entity_key, window_key,).ratio()
+        best = max(best, similarity,)
+
+    return best
+
+def resolve_lookup_entity_from_chunks(entity: str, chunks: list[dict], *, minimum_similarity: float = 0.84) -> tuple[str, float]:
+    entity = re.sub(r"\s+", " ", entity).strip()
+
+    if not entity:
+        return entity, 0.0
+
+    entity_token_count = len(normalize_title_key(entity).split())
+
+    best_entity = entity
+    best_similarity = 0.0
+
+    for row in chunks:
+        title = primary_page_title(str(row.get("title") or ""))
+        original_tokens = re.findall(r"[A-Za-z0-9'-]+", title,)
+        normalized_tokens = [normalize_title_key(token) for token in original_tokens]
+        normalized_tokens = [token for token in normalized_tokens if token]
+
+        if not normalized_tokens:
+            continue
+
+        if len(normalized_tokens) < entity_token_count:
+            windows = [(original_tokens, normalized_tokens,)]
+        else:
+            windows = []
+            for index in range(len(normalized_tokens) - entity_token_count + 1):
+                windows.append((original_tokens[index:index + entity_token_count], normalized_tokens[index:index + entity_token_count]))
+
+        entity_key = normalize_title_key(entity)
+
+        for original_window, normalized_window in windows:
+            candidate_key = " ".join(normalized_window)
+            similarity = SequenceMatcher(None, entity_key, candidate_key,).ratio()
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_entity = " ".join(original_window)
+
+    if best_similarity < minimum_similarity:
+        return entity, best_similarity
+
+    return best_entity, best_similarity
+
 def expected_model_from_cfg(cfg: dict, backend: str | None = None, source: str = "runtime") -> str:
     source = str(source or "runtime").strip().lower()
 
@@ -873,33 +940,29 @@ def make_fts5_query(user_query: str) -> str:
     return " OR ".join(uniq)
 
 def make_intent_fts5_query(question: str, intent: str) -> str | None:
-    entity_terms = extract_entity_terms(question)
-    if not entity_terms:
-        return None
+    lookup_entity, lookup_facets = (extract_lookup_target(question))
+    if intent == "lookup":
+        if not lookup_entity:
+            return None
 
-    entity = quote_fts5_phrase(entity_terms[0])
-    if intent in {"lookup", "biography", "location"}:
+        entity = quote_fts5_phrase(lookup_entity)
+
+        if "skin" in lookup_facets:
+            skin_clause = " OR ".join(
+                quote_fts5_phrase(term)
+                for term in (
+                    "skin",
+                    "outfit",
+                    "costume",
+                    "character outfit",
+                )
+            )
+
+            return (
+                f"(title:{entity} OR text:{entity}) "
+                f"AND ({skin_clause})")
+
         return f"title:{entity}"
-    if intent != "build":
-        return None
-
-    subtypes = detect_build_subtypes(question)
-    if not subtypes:
-        return None
-
-    clauses: list[str] = []
-    for subtype in sorted(subtypes):
-        subtype_cfg = BUILD_SUBTYPE_PROFILES.get(subtype, {})
-        fts_terms = subtype_cfg.get("fts_terms", ())
-        quoted_terms = [quote_fts5_phrase(term) for term in fts_terms]
-        if quoted_terms:
-            clauses.append("(" + " OR ".join(quoted_terms) + ")")
-
-    if not clauses:
-        return None
-
-    subtype_query = " OR ".join(clauses)
-    return f"title:{entity} AND ({subtype_query})"
 
 def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], intent: str, min_required: int=5, max_fallback: int=30) -> list[int]:
     if not chunk_ids:
@@ -1671,11 +1734,15 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
     required = set(priority.get("required", []))
     excluded = set(priority.get("excluded", []))
     entity_terms = extract_entity_terms(question)
-    lookup_entity = (extract_lookup_entity(question) if intent == "lookup" else None)
+    if intent == "lookup":
+        lookup_entity, lookup_facets = (extract_lookup_target(question))
+    else:
+        lookup_entity = None
+        lookup_facets = set()
     lookup_key = (normalize_title_key(lookup_entity) if lookup_entity else "")
     question_l = question.lower()
     asks_for_card = contains_any_marker(question_l,("card", "equipment card", "tcg", "genius invokation"))
-    asks_for_skin = contains_any_marker(question_l,("skin", "dynamic skin", "lustrous skin"))
+    asks_for_skin = "skin" in lookup_facets
 
     for row in chunks:
         chunk_id   = int(row["chunk_id"])
@@ -1793,34 +1860,46 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
         recency_explicit = is_recency_sensitive_question(question)
         recency_active = recency_explicit or intent in {"build", "mechanic", "version"}
 
+        asks_for_future_version = contains_any_marker(question_l, ("next version", "upcoming version", "future version", "next patch", "upcoming patch", "expected release", "when will",),)
         if recency_active and current_version_ord is not None:
             row_version_ord = row.get("version_ord")
             if row_version_ord is not None:
                 try:
                     row_version_ord = int(row_version_ord)
-                    distance = current_version_ord - row_version_ord
-
-                    if distance <= 0:
-                        recency_bonus += 0.15 if recency_explicit else 0.08
-
-                    elif distance <= 1:
-                        recency_bonus += 0.08 if recency_explicit else 0.04
-
-                    elif distance <= 3:
-                        recency_bonus += 0.03 if recency_explicit else 0.01
+                    if row_version_ord == current_version_ord:
+                        recency_bonus += (0.35 if recency_explicit else 0.12)
+                    elif row_version_ord > current_version_ord:
+                        if asks_for_future_version:
+                            recency_bonus += 0.20
+                        else:
+                            recency_penalty += 0.45
                     else:
-                        recency_penalty += min(0.25, 0.04 * distance) if recency_explicit else min(0.12, 0.02 * distance)
+                        distance = (current_version_ord - row_version_ord)
+                        if distance == 1:
+                            recency_bonus += (0.08 if recency_explicit else 0.04)
+                        elif distance <= 3:
+                            recency_bonus += (0.03 if recency_explicit else 0.01)
+                        else:
+                            recency_penalty += (min(0.30, 0.04 * distance) if recency_explicit else min(0.12, 0.02 * distance))
 
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
-            else:
-                if recency_explicit:
-                    recency_penalty += 0.04
+            elif recency_explicit:
+                recency_penalty += 0.04
         
         entity_bonus = 0.0
         title_primary = primary_page_title(title)
         title_primary_key = normalize_title_key(title_primary)
+
+        if lookup_entity:
+            similarity = entity_title_similarity(lookup_entity, title_primary)
+            if similarity >= 0.98:
+                entity_bonus += 1.00
+            elif similarity >= 0.90:
+                entity_bonus += 0.65
+            elif similarity >= 0.84:
+                entity_bonus += 0.35
 
         if lookup_key:
             if title_primary_key == lookup_key:
@@ -1899,6 +1978,34 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             else:
                 missing_penalty = min(float(BUILD_SUBTYPE_PROFILES[subtype].get("missing_penalty", 0.35))for subtype in build_subtypes)
                 penalty += missing_penalty
+
+        if "skin" in lookup_facets:
+            skin_markers = (
+                "skin",
+                "outfit",
+                "costume",
+                "character outfit",
+                "attire",
+                "appearance",
+                "dynamic skin",
+                "lustrous skin",
+            )
+
+            has_skin_evidence = any(marker in combined_l for marker in skin_markers)
+
+            if has_skin_evidence:
+                retrieval_bonus += 0.45
+            else:
+                penalty += 0.20
+
+            if lookup_entity:
+                entity_key = normalize_title_key(lookup_entity)
+                title_key = normalize_title_key(title)
+                text_key = normalize_title_key(text[:3000])
+                if (entity_key in title_key or entity_key in text_key):
+                    retrieval_bonus += 0.30
+                else:
+                    penalty += 0.25
 
         final_score = (
             weighted_base

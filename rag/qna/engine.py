@@ -9,7 +9,7 @@ from pathlib import Path
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name
+from .utils import read_only_connect, normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .db_fetch import fetch_chunks
@@ -227,7 +227,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
             active_dims_value = (splade_cfg.get("max_active_dims", 128))
             max_active_dims = (int(active_dims_value) if active_dims_value is not None else None)
-            splade_ret_cache = SpladeRetriever(splade_dir, model_name=str(splade_cfg["model"]), device=str(splade_cfg.get("device", "cpu")), max_length=int(splade_cfg.get("max_length", 256)), max_active_dims=max_active_dims, cache_folder=cache_folder, precision=str(splade_cfg.get("precision", "fp32".strip().lower())))
+            splade_ret_cache = SpladeRetriever(splade_dir, model_name=str(splade_cfg["model"]), device=str(splade_cfg.get("device", "auto")), max_length=int(splade_cfg.get("max_length", 256)), max_active_dims=max_active_dims, cache_folder=cache_folder, precision=str(splade_cfg.get("precision", "fp32").strip().lower()))
         return splade_ret_cache
 
     def merge_ranked_results(primary: list[tuple[int, float]], fallback: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
@@ -539,6 +539,109 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 log.info("[MULTIHOP] merged bridge_queries=%d candidates=%d", len(multi_hop_queries), len(results))
         
         chunks = fetch_chunks(conn, chunk_ids)
+        lookup_entity: str | None = None
+        lookup_facets: set[str] = set()
+        resolved_lookup_entity: str | None = None
+        lookup_resolution_score = 0.0
+        ranking_question = question
+        if (ranking_question != question and retriever_name in HYBRID_FUSION_SPECS):
+            lookup_cfg = cfg.get("lookup", {}) or {}
+            correction_k = min(candidate_k, int(lookup_cfg.get("correction_candidate_k", 300,)))
+            correction_results, correction_signals = (search_hybrid_fusion(retriever_name, correction_k, ranking_question))
+            results, retrieval_signals = merge_decomposition_runs(
+                [
+                    (
+                        question,
+                        results,
+                        retrieval_signals,
+                        1.0,
+                    ),
+                    (
+                        ranking_question,
+                        correction_results,
+                        correction_signals,
+                        float(
+                            lookup_cfg.get(
+                                "correction_weight",
+                                0.80,
+                            )
+                        ),
+                    ),
+                ],
+                rrf_k=rrf_k,
+                rrf_scale=float(
+                    retrieval_cfg.get(
+                        "rrf_scale",
+                        10.0,
+                    )
+                ),
+                max_total_candidates=int(
+                    lookup_cfg.get(
+                        "max_total_candidates",
+                        1800,
+                    )
+                ),
+            )
+
+            merged_ids = [int(chunk_id) for chunk_id, _score in results]
+
+            filtered_ids = filter_by_intent_source(
+                conn,
+                merged_ids,
+                intent,
+                min_required=5,
+                max_fallback=40,
+            )
+
+            filtered_set = set(filtered_ids)
+
+            results = [
+                (chunk_id, score)
+                for chunk_id, score in results
+                if chunk_id in filtered_set
+            ]
+
+            chunk_ids = [
+                int(chunk_id)
+                for chunk_id, _score in results
+            ]
+
+            initial_scores = {
+                int(chunk_id): float(score)
+                for chunk_id, score in results
+            }
+
+            chunks = fetch_chunks(
+                conn,
+                chunk_ids,
+            )
+
+            log.info(
+                "[LOOKUP] corrected retrieval "
+                "query=%r candidates=%d",
+                ranking_question,
+                len(results),
+            )
+
+        if intent == "lookup":
+            lookup_entity, lookup_facets = extract_lookup_target(question)
+
+            if lookup_entity:
+                (resolved_lookup_entity, lookup_resolution_score,) = resolve_lookup_entity_from_chunks(
+                    lookup_entity,
+                    chunks[:500],
+                    minimum_similarity=float(
+                        (cfg.get("lookup", {}) or {}).get(
+                            "fuzzy_min_similarity",
+                            0.84,
+                        )
+                    ),
+                )
+
+                if (resolved_lookup_entity and normalize_title_key(resolved_lookup_entity) != normalize_title_key(lookup_entity)):
+                    ranking_question = re.sub(re.escape(lookup_entity), resolved_lookup_entity, question, count=1, flags=re.IGNORECASE)
+                    log.info("[LOOKUP] fuzzy entity resolution raw=%r resolved=%r score=%.3f corrected_question=%r", lookup_entity, resolved_lookup_entity, lookup_resolution_score, ranking_question,)
+
         max_per_doc = dedup_max_per_doc
 
         if intent == "build":
@@ -560,7 +663,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         log.info("[QNA] current version baseline from kqm_news: label=%s ord=%s", baseline_label, baseline_ord,)
 
         if reranker_mode in ("feature", "cross_encoder"):
-            chunks = rerank_chunks(question, chunks, retrieval_signals, baseline_ord,)
+            chunks = rerank_chunks(ranking_question, chunks, retrieval_signals, baseline_ord,)
             dedupe_scores = {int(row["chunk_id"]): float(row["_rerank_score"]) for row in chunks}
         else:
             dedupe_scores = initial_scores
@@ -568,23 +671,16 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         chunks = dedupe_chunks(chunks, dedupe_scores, max_per_doc=max_per_doc)
         
         if reranker_mode == "cross_encoder":
-            chunks = cross_encoder_rerank(question, chunks, model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)), batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)), max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
+            chunks = cross_encoder_rerank(ranking_question, chunks, model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)), batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)), max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
         elif reranker_mode not in ("none", "feature", "cross_encoder"):
             raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
-        for row in chunks:
-            row.pop("_rerank_score", None)
-
-        lookup_entity: str | None = None
-        lookup_facets: set[str] = set()
-
-        if intent == "lookup":
-            lookup_entity, lookup_facets = (extract_lookup_target(question))
-
-        if lookup_entity and not lookup_facets:
+        effective_lookup_entity = (resolved_lookup_entity or lookup_entity)
+        if (intent == "lookup" and effective_lookup_entity and not lookup_facets):
+            lookup_cfg = cfg.get("lookup", {}) or {}
             exact_seed_chunks = fetch_exact_lookup_seed_chunks(
                 conn,
-                lookup_entity,
+                effective_lookup_entity,
                 max_docs=int(
                     lookup_cfg.get(
                         "exact_title_max_docs",
@@ -598,6 +694,14 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                     )
                 ),
             )
+
+            if exact_seed_chunks:
+                exact_ids = {int(row["chunk_id"]) for row in exact_seed_chunks}
+                chunks = (exact_seed_chunks + [row for row in chunks if int(row["chunk_id"]) not in exact_ids])
+                log.info("[LOOKUP] exact-title seeds entity=%r chunks=%d", effective_lookup_entity, len(exact_seed_chunks),)
+
+        for row in chunks:
+            row.pop("_rerank_score", None)
 
         hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
         hyde_signal_count = sum(1 for signal in (retrieval_signals or {}).values() if isinstance(signal, dict) and signal.get("in_hyde"))
@@ -647,8 +751,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             ctx_enabled = as_bool(context_cfg.get("enabled", False))
             if intent == "lookup":
                 lookup_cfg = cfg.get("lookup", {}) or {}
-                lookup_seed_k = max(1, min(direct_top_k,int(lookup_cfg.get("seed_k", 4,)),))
-                selected_chunks = prefer_entity_seed_chunks(question, chunks, min_keep=1,)[:lookup_seed_k]
+                lookup_seed_k = max(1, min(direct_top_k, int(lookup_cfg.get("seed_k", 4,)),),)
+                if lookup_facets:
+                    selected_chunks = chunks[:lookup_seed_k]
+                else:
+                    selected_chunks = prefer_entity_seed_chunks(ranking_question, chunks, min_keep=1,)[:lookup_seed_k]
             elif intent in {"biography", "location"}:
                 selected_chunks = prefer_entity_seed_chunks(question, chunks[:direct_top_k], min_keep=3,)[:direct_top_k]
             else:
@@ -687,6 +794,20 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
         hyde_used = hyde_selected_count > 0
         context = build_context(selected_chunks)
+        if (intent == "version" and baseline_ord is not None):
+            major_version = int(baseline_ord) // 100
+            minor_version = int(baseline_ord) % 100
+            numeric_version = (f"{major_version}.{minor_version}")
+            baseline_header = (f"[Current version metadata]\nThe current indexed Genshin Impact version is Version {numeric_version}")
+
+            if baseline_label:
+                baseline_header += (f" ({baseline_label}).")
+            else:
+                baseline_header += "."
+
+            baseline_header += ("\nVersions with expected future release dates are not the current version.")
+            context = (baseline_header + "\n\n" + context)
+
         log.info("[CONTEXT] final chunk IDs=%s", [int(row["chunk_id"]) for row in selected_chunks])
         return RetrievalResult(
             question=question,
