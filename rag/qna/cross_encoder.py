@@ -6,10 +6,17 @@ from functools import lru_cache
 log = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2)
-def get_cross_encoder(model_name:str):
+def get_cross_encoder(model_name: str):
     from sentence_transformers import CrossEncoder
-    log.info("[CROSS_ENCODER] Loading cross-encoder model=%s", model_name)
-    return CrossEncoder(model_name)
+
+    try:
+        model = CrossEncoder(model_name, local_files_only=True)
+        log.info("[CROSS_ENCODER] Loaded model from local cache: %s", model_name)
+    except OSError:
+        log.warning("[CROSS_ENCODER] Model not cached; downloading once: %s", model_name)
+        model = CrossEncoder(model_name, local_files_only=False)
+
+    return model
 
 def cross_encoder_rerank(question: str, chunks: list[dict], *, model_name: str, top_n: int = 32, batch_size: int = 8, max_pair_text_chars: int = 1200) -> list[dict]:
     if not chunks:

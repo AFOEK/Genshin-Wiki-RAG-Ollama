@@ -19,13 +19,21 @@ log = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2)
 def load_splade_model(model_name: str, *, device: str, max_length: int, max_active_dims: int | None, cache_folder: str | None = None, precision: str = "fp32") -> SparseEncoder:
-    model = SparseEncoder(model_name, device=device, cache_folder=cache_folder, max_active_dims=max_active_dims)
+    try:
+        model = SparseEncoder(model_name, device=device, cache_folder=cache_folder, max_active_dims=max_active_dims, local_files_only=True,)
+        log.info("[SPLADE] Loaded model from local cache: %s", model_name)
+    except OSError:
+        log.warning("[SPLADE] Model not cached; downloading once: %s", model_name)
+        model = SparseEncoder(model_name, device=device, cache_folder=cache_folder, max_active_dims=max_active_dims, local_files_only=False,)
+
     model.max_seq_length = max_length
+
     if device.startswith("cuda"):
         if precision == "fp16":
             model.half()
         elif precision == "bf16":
             model.bfloat16()
+
     model.eval()
     return model
 

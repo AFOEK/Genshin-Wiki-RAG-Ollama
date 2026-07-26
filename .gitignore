@@ -11,3 +11,4 @@ rag/data/*
 *.jsonl
 *.zip
 kaggle_results/
+$HOME/*

@@ -33,20 +33,28 @@ class RetrievalCache:
         self.max_entries = int(max_entries)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(str(self.path), timeout=60.0, check_same_thread=False)
+        self.conn: sqlite3.Connection | None = sqlite3.connect(str(self.path), timeout=60.0, check_same_thread=False)
         with self._lock:
             self.conn.executescript(QUERY)
             self.conn.commit()
 
+    def _require_connection(self) -> sqlite3.Connection:
+        if self.conn is None:
+            raise RuntimeError("RetrievalCache is already closed")
+        return self.conn
+
     def get(self, cache_key: str) -> dict[str, Any] | None:
         now = time.time()
+
         with self._lock:
-            row = self.conn.execute(
+            conn = self._require_connection()
+            row = conn.execute(
                 """
                 SELECT payload, expires_at
                 FROM retrieval_cache
                 WHERE cache_key = ?
-                """, (cache_key,)).fetchone()
+                """,
+                (cache_key,)).fetchone()
 
             if row is None:
                 return None
@@ -127,4 +135,6 @@ class RetrievalCache:
 
     def close(self) -> None:
         with self._lock:
-            self.conn.close()
+            if self.conn is not None:
+                self.conn.close()
+                self.conn = None
