@@ -336,6 +336,12 @@ dataset_creation:
     - genshin_gg
     - game8
 
+interne_validation:
+  enabled: True
+  searxng_url: "http://localhost:8080"
+  ollama_url: "http://localhost:11434"
+  ollama_model: "qwen3.5:9b"
+
 peft:
   mode: lora    #lora | loraplus | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft | xlora
   base_model: meta-llama/Llama-3.2-3B-Instruct
