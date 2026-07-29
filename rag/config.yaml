@@ -342,6 +342,34 @@ interne_validation:
   ollama_url: "http://localhost:11434"
   ollama_model: "qwen3.5:9b"
 
+  source_workers: 6
+  results_per_source: 3
+  fetch_pages_per_source: 2
+
+  searxng_timeout: 30
+  fetch_timeout: 25
+
+  max_chars_per_page: 3000
+  max_total_evidence_chars: 24000
+  max_negative_chars: 1500
+
+  min_oracle_confident: 0.90 #0.85 >= x <= 0.95
+
+  cache_path: "fine_tune/internet_validation/cache.jsonl"
+  output_dir: "fine_tune/internet_validation/output"
+
+  sft_dataset_path: >-
+    fine_tune/data/genshin_rag_sft_candidates.jsonl
+
+  retrieval_dataset_path: >-
+    fine_tune/data/genshin_retrieval_pairs.jsonl
+
+  validation_output_path: >-
+    fine_tune/internet_validation/output/validation_results.jsonl
+
+  source_policy_version: 1
+  validator_version: 1
+
 peft:
   mode: lora    #lora | loraplus | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft | xlora
   base_model: meta-llama/Llama-3.2-3B-Instruct
@@ -601,6 +629,17 @@ sources:
     path: rag/data/repos/kqm_tcl
     skip_if_unchanged: true
     force_rescan: false
+    validation:
+      search_domains:
+        - library.keqingmains.com
+      allowed_hosts:
+        - library.keqingmains.com
+        - github.com
+        - raw.githubusercontent.com
+      allowed_url_prefixes:
+        - "https://library.keqingmains.com/"
+        - "https://github.com/KQM-git/TCL/"
+        - "https://raw.githubusercontent.com/KQM-git/TCL/"
 
   - name: kqm_news
     kind: github
@@ -608,6 +647,15 @@ sources:
     enabled: true
     weight: 0.75
     path: rag/data/repos/kqm_news
+    validation:
+      search_domains:
+        - ""
+      allowed_hosts:
+        - github.com
+        - raw.githubusercontent.com
+      allowed_url_prefixes:
+        - "https://github.com/KQM-git/GINews"
+        - "https://raw.githubusercontent.com/KQM-git/GINews"
 
   - name: genshin_wiki
     kind: fandom_api
@@ -617,6 +665,11 @@ sources:
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
     rate_limit_s: 2.0
+    validation:
+      search_domains:
+        - genshin-impact.fandom.com
+      allowed_hosts:
+        - genshin-impact.fandom.com
 
   - name: honey
     kind: honey_html
@@ -628,6 +681,11 @@ sources:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
     rate_limit_s: 2.0
+    validation:
+      search_domains:
+        - gensh.honeyhunterworld.com
+      allowed_hosts:
+        - gensh.honeyhunterworld.com
 
   - name: game8
     kind: game8_html
@@ -641,6 +699,13 @@ sources:
     deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
     chunk_deny_text_regex: '(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)'
     rate_limit_s: 2.0
+    validation:
+      search_domains:
+        - game8.co
+      allowed_hosts:
+        - game8.co
+      allowed_path_prefixes:
+        - /games/Genshin-Impact
 
   - name: genshin_gg
     kind: genshingg_html
@@ -660,6 +725,11 @@ sources:
     allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$"
     max_pages: null
     rate_limit_s: 2.0
+    validation:
+      search_domains:
+        - genshin.gg
+      allowed_hosts:
+        - genshin.gg
 
   - name: lunaris
     kind: lunaris_html
