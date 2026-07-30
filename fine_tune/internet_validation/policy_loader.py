@@ -37,7 +37,7 @@ def load_source_policies(cfg: dict) -> list[SourcePolicy]:
 
         validation = (source.get("validation", {}) or {})
         search_domains = tuple(str(value).strip().lower() for value in validation.get("search_domains", []) if str(value).strip())
-        allowed_hosts = tuple(str(value).strip().lower() for value in validation.get("allowed_hots", []) if str(value).strip())
+        allowed_hosts = tuple(str(value).strip().lower() for value in validation.get("allowed_hosts", []) if str(value).strip())
 
         if not search_domains:
             raise ValueError(f"[POLICY] Enabled source {name!r} has no search_domains")
@@ -45,6 +45,9 @@ def load_source_policies(cfg: dict) -> list[SourcePolicy]:
         if not allowed_hosts:
             raise ValueError(f"[POLICY] Enabled source {name!r} has no allowed_hosts")
 
-        policies.append(SourcePolicy(name=name, tier=str(source.get("tier", "supplementary")).strip().lower(), weight=float(source.get("weight", 0.5)), rate_limit_s=float(source.get("rate_limit_s", 2.0)), search_domains=search_domains, allowed_hots=allowed_hots, allowed_url_prefixes=tuple(validation.get("allowed_url_prefixes", [])), allowd_path_prefixes=tuple(validation.get("allowed_path_prefixes", []))))
+        policies.append(SourcePolicy(name=name, tier=str(source.get("tier", "supplementary")).strip().lower(), weight=float(source.get("weight", 0.5)), rate_limit_s=float(source.get("rate_limit_s", 2.0)), search_domains=search_domains, allowed_hots=allowed_hosts, allowed_url_prefixes=tuple(validation.get("allowed_url_prefixes", [])), allowed_path_prefixes=tuple(validation.get("allowed_path_prefixes", []))))
 
+    if not policies:
+        raise RuntimeError("[POLICY] Approved enabled internet sources were configured")
+    
     return policies

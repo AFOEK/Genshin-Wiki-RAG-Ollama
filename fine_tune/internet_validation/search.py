@@ -5,7 +5,6 @@ import time
 import requests
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
 from typing import Any
 from bs4 import BeautifulSoup
 
@@ -56,7 +55,7 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
         response.raise_for_status()
         payload = response.json()
 
-        for result in payload.get("results", []):
+        for search_rank, result in enumerate(payload.get("results", []), start=1):
             url = str(result.get("url", "")).strip()
 
             if not url or url in seen_urls or not is_allowed_url(url, policy):
@@ -70,6 +69,7 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
                     "source_weight": policy.weight,
                     "title": str(result.get("title", "")),
                     "url": url,
+                    "search_rank": search_rank,
                     "snippet": str(result.get("content", "")),
                 }
             )
@@ -157,6 +157,14 @@ def collect_parallel_evidence(*, executor: ThreadPoolExecutor, question: str, po
             continue
 
         collected.extend(rows)
+        collected.sort(
+            key=lambda row: (
+                int(row.get("search_rank", 999)),
+                0 if row.get("tier") == "primary" else 1,
+                -float(row.get("source_weight", 0.0)),
+                str(row.get("source", "")),
+            )
+        )
         log.info("[INTERNET_VALIDATION] source=%s finished evidence=%d", policy.name, len(rows),)
 
     return deduplicate_and_trim_evidence(collected, max_total_chars=int(validation_cfg.get("max_total_evidence_chars", 24000)))

@@ -336,7 +336,7 @@ dataset_creation:
     - genshin_gg
     - game8
 
-interne_validation:
+internet_validation:
   enabled: True
   searxng_url: "http://localhost:8080"
   ollama_url: "http://localhost:11434"
@@ -354,6 +354,8 @@ interne_validation:
   max_negative_chars: 1500
 
   min_oracle_confident: 0.90 #0.85 >= x <= 0.95
+
+  limit: 10
 
   cache_path: "fine_tune/internet_validation/cache.jsonl"
   output_dir: "fine_tune/internet_validation/output"
@@ -649,7 +651,7 @@ sources:
     path: rag/data/repos/kqm_news
     validation:
       search_domains:
-        - ""
+        - github.com
       allowed_hosts:
         - github.com
         - raw.githubusercontent.com
