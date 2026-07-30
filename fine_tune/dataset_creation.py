@@ -13,7 +13,6 @@ import sys
 import time
 import yaml
 import threading
-import uuid
 
 from pathlib import Path
 from contextlib import ExitStack

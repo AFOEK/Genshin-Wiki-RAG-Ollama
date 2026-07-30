@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -12,6 +13,10 @@ from dataset_loader import iter_dataset_bundles
 from oracle import run_blind_oracle
 from policy_loader import load_source_policies
 from search import collect_parallel_evidence
+
+from utils.logging_setup import setup_logging
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rag"))
 
 log = logging.getLogger(__name__)
 
@@ -129,11 +134,6 @@ def load_completed_ids(path: Path) -> set[str]:
     return completed
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-
     config_path = Path("rag/config.yaml")
     with config_path.open("r", encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle)
