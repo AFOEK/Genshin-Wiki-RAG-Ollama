@@ -42,8 +42,12 @@ def format_template_path(value: str | Path, *, mode: str) -> str:
 def resolve_template_path(value: str | Path, cfg: dict, *, method: str) -> Path:
     return resolve_path(format_template_path(value, method=method), cfg)
 
-def expand_path(x) -> Path:
-    return Path(os.path.expandvars(str(x))).expanduser()
+def expand_path(value: str | Path) -> Path:
+    raw = str(value).strip()
+    home = str(Path.home())
+    raw = raw.replace("${HOME}", home).replace("$HOME", home)
+    raw = os.path.expandvars(raw)
+    return Path(raw).expanduser()
 
 def get_target_modules(train_cfg: dict, method_cfg: dict) -> list[str]:
     profile = method_cfg.get("target_profile", "llama_mlp_attention")

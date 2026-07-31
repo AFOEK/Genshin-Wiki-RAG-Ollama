@@ -34,8 +34,12 @@ def load_cfg(path: str | None) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def expand_path(x) -> Path:
-    return Path(os.path.expandvars(str(x))).expanduser()
+def expand_path(value: str | Path) -> Path:
+    raw = str(value).strip()
+    home = str(Path.home())
+    raw = raw.replace("${HOME}", home).replace("$HOME", home)
+    raw = os.path.expandvars(raw)
+    return Path(raw).expanduser()
 
 
 def resolve_output_path(path_value: str | Path, cfg: dict) -> Path:

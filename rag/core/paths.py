@@ -5,8 +5,12 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def expand_path(p: Path) -> Path:
-    return Path(os.path.expandvars(str(p))).expanduser()
+def expand_path(value: str | Path) -> Path:
+    raw = str(value).strip()
+    home = str(Path.home())
+    raw = raw.replace("${HOME}", home).replace("$HOME", home)
+    raw = os.path.expandvars(raw)
+    return Path(raw).expanduser()
 
 def is_usable_dir(p: Path) -> bool:
     try:

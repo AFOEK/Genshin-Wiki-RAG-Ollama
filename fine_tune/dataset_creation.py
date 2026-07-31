@@ -48,7 +48,29 @@ REFUSAL_MARKERS = (
     "couldn't retrieve any relevant chunks",
 )
 
-NEGATIVE_VALIDATION_SCHEMA = {"type": "object", "properties": {"question_answerable": {"type": "boolean"}, "supports_reference_answer": {"type": "boolean"}, "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0}, "reason": {"type": "string"}}, "required": ["question_answerable", "supports_reference_answer", "confidence", "reason"], "additionalProperties": False}
+NEGATIVE_VALIDATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answerable_from_candidate": {
+            "type": "boolean",
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+        },
+        "reason": {
+            "type": "string",
+            "maxLength": 300,
+        },
+    },
+    "required": [
+        "answerable_from_candidate",
+        "confidence",
+        "reason",
+    ],
+    "additionalProperties": False,
+}
 
 _worker_local = threading.local()
 _ollama_semaphore = threading.BoundedSemaphore(2)
@@ -168,8 +190,12 @@ def load_cfg(path: str | None) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def expand_path(x) -> Path:
-    return Path(os.path.expandvars(str(x))).expanduser()
+def expand_path(value: str | Path) -> Path:
+    raw = str(value).strip()
+    home = str(Path.home())
+    raw = raw.replace("${HOME}", home).replace("$HOME", home)
+    raw = os.path.expandvars(raw)
+    return Path(raw).expanduser()
 
 
 def resolve_db_path_from_cfg(cfg: dict) -> Path:
@@ -359,6 +385,13 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     thinking_trace = str(data.get("thinking") or "").strip()
     raw_answer = str(data.get("response") or "").strip()
     done_reason = str(data.get("done_reason") or "").strip()
+    if done_reason == "length":
+        raise ValueError(
+            "Ollama output was truncated because "
+            f"num_predict was exhausted: model={model!r}, "
+            f"response_chars={len(raw_answer)}, "
+            f"output_tokens={data.get('eval_count')}"
+        )
     answer = re.sub(r"<think>.*?</think>", "", raw_answer, flags=re.DOTALL | re.IGNORECASE,).strip()
     log.info(
     "[DATASET_OLLAMA] model=%s think=%r thinking_chars=%d "
@@ -831,7 +864,28 @@ def extract_json_object(text: str) -> dict:
 
 def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None, options: dict[str, Any] | None = None) -> tuple[bool, dict]:
     candidate_context = f"Title: {candidate.get('title')}\nSource: {candidate.get('source')}\nURL: {candidate.get('url')}\n\nText:\n{clean_text(candidate.get('text') or '')[:1800]}"
-    prompt = f"Determine whether the candidate passage answers the question or supports the reference answer. Return only the required JSON object.\n\nQuestion:\n{question}\n\nReference answer:\n{reference_answer}\n\nCandidate passage:\n{candidate_context}"
+    prompt = f"""
+    Determine whether the candidate passage alone contains enough
+    information to answer the question.
+
+    Question:
+    {question}
+
+    Known factual answer:
+    {reference_answer}
+
+    Candidate passage:
+    {candidate_context}
+
+    Rules:
+    - Judge only the candidate passage.
+    - Do not treat an abstention such as "not enough information" as
+    supporting the factual answer.
+    - answerable_from_candidate must be true only when the passage
+    contains the requested factual information.
+    - Keep reason below 40 words.
+    - Return only the required JSON object.
+    """.strip()
     last_error: Exception | None = None
     for attempt in range(5):
         raw = ollama_generate(ollama_url, validator_model, prompt, timeout=timeout, response_format=NEGATIVE_VALIDATION_SCHEMA, temperature=0.0, thinking=think, options=options)
@@ -842,11 +896,11 @@ def validate_negative_candidate(*, question: str, reference_answer: str, candida
             last_error = exc
             log.warning("[NEGATIVE] malformed validator JSON attempt=%d/5 chunk_id=%s raw=%r", attempt + 1, candidate.get("chunk_id"), raw[:500])
     else:
-        raise ValueError(f"Validator returned invalid JSON after 2 attempts: {last_error}")
+        raise ValueError(f"Validator returned invalid JSON after 5 attempts: {last_error}")
     confidence = float(result["confidence"])
-    question_answerable = bool(result["question_answerable"])
-    supports_reference = bool(result["supports_reference_answer"])
-    return not question_answerable and not supports_reference and confidence >= min_confidence, result
+    answerable_from_candidate = bool(result["answerable_from_candidate"])
+    valid_negative = (not answerable_from_candidate and confidence >= min_confidence)
+    return valid_negative, result
 
 def get_hard_negative_candidates(retrieval: RetrievalResult, positive: dict, *, pool_size: int) -> list[dict]:
     positive_doc_id = int(positive["doc_id"])
@@ -1452,7 +1506,7 @@ def main() -> None:
             "top_k": 20,
             "min_p": 0.05,
             "repeat_penalty": 1.0,
-            "num_predict": 1024,
+            "num_predict": 256,
             "num_ctx": (ollama_cfg.get("qa_num_ctx", 16384))
         },
     )

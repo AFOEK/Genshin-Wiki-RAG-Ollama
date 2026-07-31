@@ -60,7 +60,7 @@ splade:
   enabled: true
   path: data/splade
   cache_folder: data/models
-  model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledisti
+  model: naver/splade-v3 #naver/splade-v3 | naver/splade-cocondenser-ensembledisti
   device: auto    # auto | cpu | cuda
   batch_size: 32  # 32-64, 64 for GPU
   max_length: 256 # 512 | 256
