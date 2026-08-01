@@ -12,3 +12,16 @@ rag/data/*
 *.zip
 kaggle_results/
 $HOME/*
+# SearXNG local installation
+external/searxng/runtime/
+external/searxng/src/
+external/searxng/*.zip
+external/searxng/settings.yml
+external/searxng/limiter.toml
+external/searxng/.venv/
+external/searxng/__pycache__/
+
+# SearXNG runtime/cache files
+external/searxng/**/*.log
+external/searxng/**/__pycache__/
+external/searxng/**/*.pyc

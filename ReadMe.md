@@ -1,10 +1,12 @@
 # Genshin Impact Wiki Ollama RAG (Retrieval-Augmented Generation)
 
 ## Introduction
-With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 3 main stacks:
+With the growing records [Genshin Impact](https://genshin.hoyoverse.com/en/home?utm_source=fab&utm_medium=home) charaters, weapons, artifacts, books, environments, and items. Therefore with advancing of LLM (Large Language Model), this project utilized Llama3.2:3b (Llama 3.2 with 3 billions parameters) and MiniLM Embedding (all-minilm). This pipeline run using 4 main stacks:
 - Python 3.13.13
 - Sqlite3 3.46.1
 - FAISS (Facebook AI Similarity Search) 1.13.2
+- Ollama 0.32.5
+- SearXNG
 
 This project data sources are pulled from [Genshin Impact Fandom Wiki](https://genshin-impact.fandom.com/wiki/Genshin_Impact_Wiki), [Keqing Main Theory Crafting](https://keqingmains.com/), [Game8](https://game8.co/games/Genshin-Impact), [Genshin GG](https://genshin.gg/) and [HoneyHunter](https://gensh.honeyhunterworld.com/?lang=EN), by using either API, Github repository and web scraping.
 
@@ -224,7 +226,7 @@ The main entry of the script is `main.py`, in the script it has options can be u
 --PARENT_INIT=False
 --BACKENDS=ollama   #options: ollama, llamacpp, llamma.cpp
 ```
-Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--TURBOVEC_MIGRATE` it takes sqlite3 embedding records to generate TurboVec embedding vectors, `--TURBOVEC_AUDIT` it will check if the embedding is properly processed into TurboVec embedding vectors, `--TURBOVEC_OVERWRITE` it will overwrite current TurboVec vector database records, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
+Where `--DB_CRAWL` it will pull all the data from all datasource and store the embeddings inside Sqlite3, `--DB_AUDIT` it will check if the datasource is properly processed, `--DB_REPAIR` it repair missing embedding chunks or missing active chunks, `--FAISS_MIGRATE` it migrate the embedding vectors from Sqlite3 to FAISS, `--FAISS_AUDIT` it will check if the embedding is properly processed, `--FAISS_OVERWRITE` it will overwrite current FAISS vector database records, `--TURBOVEC_MIGRATE` it takes sqlite3 embedding records to generate TurboVec embedding vectors, `--TURBOVEC_AUDIT` it will check if the embedding is properly processed into TurboVec embedding vectors, `--TURBOVEC_OVERWRITE` it will overwrite current TurboVec vector database records, `--SPLADE_MIGRATE` it migrate sqlite3 embeddings to SPLADE, `--SPLADE_OVERWRITE` overwrite current or existing SPLADE records, `--SPLADE_LIMIT` set SPLADE limit, `--FTS_SYNC` it sync newly added or changed lexical source to `FST5/BM25` records, `--FTS_INIT` it uses for first time clean run assume that previous run don't have `FTS5`, `--FTS_REBUILD` it force rebuild `FTS5` records, `--PARENT_REBUILD` it force rebuild all parents-children pair Sqlite3, `--PARENT_INIT` it uses for first time clean run assume that first time run doesn't have parent-children pairs, `--PARENT_SYNC` it's sync to newly added or changed lexical source to parents-children pair and `--BACKENDS` it will pick backend type according user input.
 
 > [!WARNING]
 Running `--FTS_REBUILD` will take along time, it may or may not require 2-3 days to build it. Depends with hardware I/O and CPU clocks.
@@ -240,6 +242,10 @@ python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --FAISS_MIGRATE=True --FAI
 ```shell
 # Migrate + Audit TurboVec
 python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True
+```
+```shell
+# Migrate + SPLADE
+python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --SPLADE_MIGRATE=True --SPLADE_OVERWRITE=True --SPLADE_LIMIT=True
 ```
 ```shell
 # DB Repair + DB Audit
@@ -258,7 +264,7 @@ python3 rag/test.py --question "<YOUR_TEST_QUESTIONS>"
 It can recieve query and generate output depends what user ask. In the `test.py` script has multiple flags such as:
 ```shell
 --config rag/config.yaml                        #default value: rag/config.yaml
---retriever {sqlite, faiss, bm25, hybrid, turbovec, hybrid_turbovec}   #default value: hybrid
+--retriever {"faiss", "sqlite", "bm25", "hyde", "splade", "turbovec", "hyde", "hybrid_splade", "hybrid_turbovec", "hybrid_hyde", "hybrid_hyde_turbovec", "hybrid_splade_turbovec", "hybrid_hyde_splade_turbovec", "hybrid_all", "hybrid_faiss_turbovec"}   #default value: hybrid
 --direct_top_k 8-32                             #default value: 12
 --board_top_k 50-80                             #default value: 60
 --summarize_batch_size 4-16                     #default value: 8
@@ -275,10 +281,15 @@ Aside of CLI flags some settings are controlled by [config.yaml](rag/config.yaml
 - `context_expansion`
 - `retrieval`
 - `parent_child`
+- `hyde`
+- `splade`
+- `query_decomposition`
+- `multi_hop`
+- `retrieval_cache`
 The values can be changed, it will control the behavior of the retrievers.
 
 > [!NOTE]
-In reranker `cross_encoder_model` value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model.
+In reranker `cross_encoder_model` and `splade` model value, it must be string and it's not a generic ollama model or llama.cpp `.gguf` model. It require `sentence_transformers` model, in order to run.
 
 ## Kaggle Embedding Support
 Since local device may have limited computing power, free up that computing power for other task, or just try embedding to bigger or better embedding models with Kaggle T4 Nvidia GPU. With that this project utilized `Kaggle API` to send chunks to Kaggle, where it will be embeded to bigger model, by using [upload.py](kaggle_tools/upload.py) script.
@@ -305,10 +316,10 @@ This project provide a script to run as cron job or general usages, the script i
 crontab -e #choose your favorite text editor (use nano)
 
 ##Add to a new line assume that the repos is on Documents
-0 3 1,15 * * CRON_MODE=1 /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/run_pipeline.sh >> /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/rag/logs/pipeline_run.log 2>&1
+0 3 5,20 * * CRON_MODE=1 /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/run_pipeline.sh >> /home/<YOUR_USERNAME>/Documents/Genshin-Wiki-RAG-Ollama/rag/logs/pipeline_run.log 2>&1
 ```
 
-The script will run at 1st and 15th day every month at 3am.
+The script will run at 5th and 20th day every month at 3am.
 
 > [!TIP]
 The crontab entry can be change `0 3 1,15 * *` from the left to right order it detonates `minute hour day_of_month month day_of_week`. `CRON_MODE=1` is a lock so if 2 instance of same script running it will block.
@@ -341,7 +352,39 @@ python3 fine_tune/dataset_creation.py --model ollama --limit 10 --qa-per-chunk 5
 
 > [!NOTE]
 In order the dataset creation runs perfectly, it required 2 additional models such as qwen3:8b, and gemma3:12b. This combination can be controlled in [rag/config.yaml](rag/config.yaml). To pull the additional model:
-`ollama pull qwen3:8b` and `ollama pull gemma3:12b`. The model is flexible, it can accept other bigger and better model according with devices computational powers
+`ollama pull qwen3:8b` and `ollama pull gemma3:12b`. The model is flexible, it can accept other bigger and better model according with devices computational powers.
+
+### Blind Validations
+To validate dataset created from [`fine_tune/dataset_creation.py`](fine_tune/dataset_creation.py), it has to get validated by blind meta search using [SearXNG](https://github.com/searxng/searxng). Installation depends with underlying operating system, and administrator access.
+
+#### Windows Installation
+Download `.zip` file from [SearXNG](https://github.com/searxng/searxng) github repository, open powershell without administrator escalation. Run command below:
+```PowerShell
+Set-Location <REPO_PATH>\Genshin-Wiki-RAG-Ollama
+```
+Create SearXNG directories:
+```PowerShell
+New-Item -ItemType Directory -Force ` .\external\searxng\runtime | Out-Null
+```
+Extract `.zip` safely by running:
+```PowerShell
+python .\external\searxng\extract_safe.py ` "$env:USERPROFILE\Downloads\searxng-master.zip" ` ".\external\searxng\runtime"
+```
+> [!NOTE]
+Assume the `.zip` file is in the `Downloads` folder.
+
+Verify the extracted source:
+```PowerShell
+Test-Path .\external\searxng\runtime\searx\webapp.py
+Test-Path .\external\searxng\runtime\searx\settings.yml
+Test-Path .\external\searxng\runtime\searxng_extra
+Test-Path .\external\searxng\runtime\requirements.txt
+Test-Path .\external\searxng\runtime\setup.py
+```
+And set `searx` root:
+```PowerShell
+$SearxRoot = ( Resolve-Path .\external\searxng\runtime ).Path
+``` 
 
 ## To-do list
 - [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
