@@ -47,14 +47,17 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
             params={
                 "q": query,
                 "format": "json",
+                "categories": "general",
                 "language": "en",
                 "safesearch": 1,
             },
             timeout=search_timeout_s,
         )
         response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        if "json" not in content_type:
+            raise RuntimeError(f"[SearXNG] did not return JSON: status={response.status_code}, content_type={content_type!r}, body={response.text[:300]!r}")
         payload = response.json()
-
         for search_rank, result in enumerate(payload.get("results", []), start=1):
             url = str(result.get("url", "")).strip()
 

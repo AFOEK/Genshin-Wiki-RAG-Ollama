@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import yaml
+import requests
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-import yaml
 
 from audit import run_dataset_audit
 from dataset_loader import iter_dataset_bundles
@@ -29,6 +29,19 @@ def append_jsonl(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+def require_searxng(base_url: str, *, timeout_s: float = 5.0) -> None:
+    base_url = base_url.rstrip("/")
+    try:
+        response = requests.get(f"{base_url}/config", timeout=timeout_s)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"[SearXNG] is not available at {base_url!r}. Start it before running internet validation.") from exc
+
+    content_type = response.headers.get("content-type", "",).lower()
+
+    if "json" not in content_type:
+        raise RuntimeError(f"[SearXNG] /config did not return JSON: content_type={content_type!r}")
 
 def evaluate_validation(*, validation_cfg: dict, bundle: dict, evidence: list[dict], oracle: dict, audit: dict) -> dict:
     evidence_by_id = {str(row["evidence_id"]): row for row in evidence}
@@ -139,6 +152,8 @@ def main() -> None:
         cfg = yaml.safe_load(handle)
 
     validation_cfg = cfg["internet_validation"]
+    searxng_url = str(validation_cfg["searxng_url"]).strip()
+    require_searxng(searxng_url, timeout_s=float(validation_cfg.get("searxng_health_timeout_s", 5.0,)))
     policies = load_source_policies(cfg)
     source_workers = min(int(validation_cfg.get("source_workers", 5)), len(policies))
     sft_path = Path(validation_cfg["sft_dataset_path"])

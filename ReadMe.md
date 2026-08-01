@@ -354,10 +354,10 @@ python3 fine_tune/dataset_creation.py --model ollama --limit 10 --qa-per-chunk 5
 In order the dataset creation runs perfectly, it required 2 additional models such as qwen3:8b, and gemma3:12b. This combination can be controlled in [rag/config.yaml](rag/config.yaml). To pull the additional model:
 `ollama pull qwen3:8b` and `ollama pull gemma3:12b`. The model is flexible, it can accept other bigger and better model according with devices computational powers.
 
-### Blind Validations
+### Internet Blind Validations
 To validate dataset created from [`fine_tune/dataset_creation.py`](fine_tune/dataset_creation.py), it has to get validated by blind meta search using [SearXNG](https://github.com/searxng/searxng). Installation depends with underlying operating system, and administrator access.
 
-#### Windows Installation
+#### SearXNG Windows Installation
 Download `.zip` file from [SearXNG](https://github.com/searxng/searxng) github repository, open powershell without administrator escalation. Run command below:
 ```PowerShell
 Set-Location <REPO_PATH>\Genshin-Wiki-RAG-Ollama
@@ -385,6 +385,62 @@ And set `searx` root:
 ```PowerShell
 $SearxRoot = ( Resolve-Path .\external\searxng\runtime ).Path
 ``` 
+Create new SearXNG environment and install dependency:
+```PowerShell
+conda create -n searxng python=3.12 
+pip -y conda activate searxng
+python -m pip install --upgrade pip setuptools wheel pyyaml msgspec typing-extenstions pybind11
+```
+Install SearXNG:
+```PowerShell
+Set-Location $SearxRoot
+python -m pip install --use-pep517 --no-build-isolation --editable
+```
+For Windows, it required to add small patch, for `searx/valkeydb.py` since it try to import Linux only library:
+```PowerShell
+$ValkeyFile = Join-Path $SearxRoot "searx\valkeydb.py"
+Copy-Item $ValkeyFile "$ValkeyFile.bak" -Force
+$Content = Get-Content $ValkeyFile -Raw
+
+if ($Content -notmatch "except ModuleNotFoundError") {
+    $Content = $Content.Replace(
+        "import pwd",
+        "try:`n    import pwd`nexcept ModuleNotFoundError:`n    pwd = None"
+    )
+    [System.IO.File]::WriteAllText($ValkeyFile, $Content, [System.Text.UTF8Encoding]::new($false))
+}
+```
+Then, change or copy the content of [external/searxng/settings.example.yml](external/searxng/settings.example.yml) to `external/searxng/settings.yml`, and create a secret key by running:
+```PowerShell
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$secretKey = ([System.BitConverter]::ToString($bytes) -replace '-').ToLowerInvariant()
+$secretKey | Set-Clipboard
+Write-Output "$secretKey has been copied to clipboard"
+```
+Copy-paste the secret key value into `external/searxng/settings.yml` `server.secret_key` field.
+
+For starting `SearXNG` server:
+```PowerShell
+conda activate searxng 
+$SearxRoot = ( Resolve-Path .\external\searxng\runtime ).Path
+$env:SEARXNG_SETTINGS_PATH = ( Resolve-Path .\external\searxng\settings.yml ).Path
+Set-Location $SearxRoot
+python -m searx.webapp
+```
+
+Testing API, open new PowerShell tab or terminal session:
+```PowerShell
+$uri = "http://127.0.0.1:8888/search?" + "q=Genshin%20Impact%20Zhongli&format=json"
+$result = Invoke-RestMethod $uri
+$result.results | Select-Object -First 10 title,url,engine
+```
+
+#### Running blind verification
+Make sure that SearXNG running on other tab or terminal session, and run:
+```Shell
+python fine_tune/internet_validation/validate_dataset.py
+```
 
 ## To-do list
 - [x] JSONL for Q/LoRA (Quantization Low-rank adaptation) or Q/DoRA (Quantization/Weight-Decomposed Low-Rank Adaptation) fine-tuning.
