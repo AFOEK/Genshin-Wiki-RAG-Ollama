@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS parent_dirty_docs (
     marked_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS splade_dirty_docs (
+    doc_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    marked_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_docs_source ON docs(source);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);

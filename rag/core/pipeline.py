@@ -8,7 +8,7 @@ from utils.codec import zstd_compress_text
 from utils.clean_fandom import clean_fandom_text
 from utils.versioning import extract_version_signal
 from core.parent import mark_parent_dirty_doc
-
+from core.splade import mark_splade_dirty_doc
 from core.fts import mark_fts_dirty_docs
 
 log = logging.getLogger(__name__)
@@ -340,6 +340,7 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             )
         mark_fts_dirty_docs(conn, doc_id, reason="chunks_changed")
         mark_parent_dirty_doc(conn, doc_id, reason="chunks_changed")
+        mark_splade_dirty_doc(conn, doc_id, reason="chunks_changed")
         if doc_changed:
             cur.execute(
                 """

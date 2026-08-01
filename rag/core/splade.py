@@ -12,8 +12,8 @@ import json
 import shutil
 
 from utils.io import write_json_atomic
-from .db import read_only_connect
-from .paths import resolve_db_path, resolve_splade_dir, resolve_storage_root, resolve_cache_folder
+from .db import read_only_connect, connect
+from .paths import resolve_db_path, resolve_splade_dir, resolve_cache_folder
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +53,18 @@ def resolve_splade_device(requested_device: str | None) -> str:
         raise ValueError(f"Invalid SPLADE device: {requested_device!r}") from exc
 
     return device
+
+def mark_splade_dirty_doc(conn, doc_id: int, reason: str = "chunks_changed") -> None:
+    conn.execute(
+        """
+        INSERT INTO splade_dirty_docs(doc_id, reason, marked_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(doc_id) DO UPDATE SET
+            reason=excluded.reason,
+            marked_at=CURRENT_TIMESTAMP
+        """,
+        (int(doc_id), reason),
+    )
 
 def get_splade_output_dimension(model: SparseEncoder) -> int:
     tokenizer = getattr(model, "tokenizer", None)
@@ -237,6 +249,7 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
         }
 
         write_json_atomic(manifest_path, manifest)
+        initial_watermark = int(manifest["last_chunk_id"])
     
     expected = {
         "model": model_name,
@@ -342,6 +355,48 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
     finally:
         conn.close()
 
+    rw_conn = connect(str(db_path))
+    try:
+        dirty_rows = rw_conn.execute(
+            """
+            SELECT DISTINCT c.chunk_id, d.title, c.text
+            FROM splade_dirty_docs sd
+            JOIN chunks c ON c.doc_id = sd.doc_id
+            JOIN docs d ON d.doc_id = c.doc_id
+            WHERE c.is_active = 1
+            AND c.chunk_id <= ?
+            ORDER BY c.chunk_id
+            """,
+            (initial_watermark,),
+        ).fetchall()
+
+        if dirty_rows:
+            texts = [(f"{row['title'] or ''}\n{row['text'] or ''}").strip() or "[empty chunk]" for row in dirty_rows]
+
+            if matrix_method == "csc":
+                reactivated_matrix = encode_documents_to_csc(model, texts, batch_size=batch_size, max_active_dims=max_active_dims)
+            else:
+                reactivated_matrix = encode_documents_to_csr(model, texts, batch_size=batch_size, max_active_dims=max_active_dims).tocsc()
+
+            reactivated_ids = np.asarray([int(r["chunk_id"]) for r in dirty_rows], dtype=np.int64)
+
+            reactivated_dir = current_dir / "shard_reactivated"
+            tmp_reactivated_dir = current_dir / ".shard_reactivated.tmp"
+            if tmp_reactivated_dir.exists():
+                shutil.rmtree(tmp_reactivated_dir)
+            if reactivated_dir.exists():
+                shutil.rmtree(reactivated_dir)
+
+            save_csc_shard(tmp_reactivated_dir, reactivated_matrix, reactivated_ids)
+            tmp_reactivated_dir.replace(reactivated_dir)
+
+            log.info("[SPLADE] rebuilt reactivated/edited-chunk shard rows=%d", len(reactivated_ids))
+
+        rw_conn.execute("DELETE FROM splade_dirty_docs")
+        rw_conn.commit()
+    finally:
+        rw_conn.close()
+    
     if exhausted and not manifest.get("completed", False):
         manifest["completed"] = True
         write_json_atomic(manifest_path, manifest)

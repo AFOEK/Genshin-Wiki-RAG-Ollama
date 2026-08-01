@@ -363,10 +363,12 @@ def main() -> None:
     else:
         log.info("[PULL] --no-pull set; using existing work-dir: %s", output_root)
 
-    artifact_dir = find_artifact_dir(output_root, FAISS_REQUIRED)
-
-    show_available_files(artifact_dir)
-    show_meta(artifact_dir)
+    if args.replace_faiss:
+        artifact_dir = find_artifact_dir(output_root, FAISS_REQUIRED)
+        show_available_files(artifact_dir)
+        show_meta(artifact_dir)
+    else:
+        log.info("[INFO] --replace-faiss not set; skipping FAISS artifact check")
 
     if args.import_embeddings:
         embedding_dir = find_artifact_dir(output_root, EMBEDDING_REQUIRED)

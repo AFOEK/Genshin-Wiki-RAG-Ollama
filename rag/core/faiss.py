@@ -111,6 +111,7 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
     offset = 0
 
     train_vecs: list[np.ndarray] = []
+    train_ids: list[list[int]] = []
     trained = not isinstance(index, faiss.IndexIVF)
 
     while True:
@@ -150,16 +151,31 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
 
         if isinstance(index, faiss.IndexIVF) and not trained:
             train_vecs.append(X)
+            train_ids.append(batch_ids)
             total_train = sum(arr.shape[0] for arr in train_vecs)
             nlist = int(faiss_cfg.get("nlist", 256))
+
             if total_train >= max(10000, nlist * 40):
                 Xtrain = np.vstack(train_vecs)
-                log.info("[FAISS] training IVF index on %d vector", Xtrain.shape[0])
+                log.info("[FAISS] training IVF index on %d vectors", Xtrain.shape[0])
                 index.train(Xtrain)
                 trained = True
+
+                for buffered_X, buffered_ids in zip(train_vecs, train_ids):
+                    bn = buffered_X.shape[0]
+                    start = 0
+                    while start < bn:
+                        end = min(start + add_batch, bn)
+                        index.add(buffered_X[start:end])
+                        ids.extend(buffered_ids[start:end])
+                        total += (end - start)
+                        start = end
+
                 train_vecs.clear()
-        
-        if isinstance(index, faiss.IndexIVF) and not trained:
+                train_ids.clear()
+                offset += len(rows)
+                continue
+
             offset += len(rows)
             continue
 
