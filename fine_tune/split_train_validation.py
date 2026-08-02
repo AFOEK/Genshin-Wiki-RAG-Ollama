@@ -33,6 +33,11 @@ def load_cfg(path: str | None) -> dict:
     with p.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def format_template_path(value: str, mode: str) -> str:
+    try:
+        return value.format(method=mode, method_name=mode, mode=mode)
+    except (KeyError, IndexError):
+        return value
 
 def expand_path(value: str | Path) -> Path:
     raw = str(value).strip()
@@ -107,6 +112,7 @@ def main() -> None:
     ap.add_argument("--val-out", default=None)
     ap.add_argument("--val-ratio", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--mode", default=None)
     ap.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
 
     args = ap.parse_args()
@@ -124,9 +130,10 @@ def main() -> None:
         log.info("[SPLIT] dataset_split.enabled=false; skipping")
         return
 
-    src = resolve_output_path(args.src or split_cfg.get("src", "data/training/genshin_lora_candidates.jsonl"), cfg)
-    train_out = resolve_output_path(args.train_out or split_cfg.get("train_out", "data/training/genshin_lora_train.jsonl"), cfg)
-    val_out = resolve_output_path(args.val_out or split_cfg.get("val_out", "data/training/genshin_lora_val.jsonl"), cfg)
+    mode = str(args.mode or split_cfg.get("mode") or cfg.get("peft", {}).get("mode", "lora")).strip().lower()
+    src = resolve_output_path(format_template_path(args.src or split_cfg.get("src", "data/training/genshin_sft_candidates.jsonl"), mode), cfg)
+    train_out = resolve_output_path(format_template_path(args.train_out or split_cfg.get("train_out", "data/training/genshin_{mode}_train.jsonl"), mode), cfg)
+    val_out = resolve_output_path(format_template_path(args.val_out or split_cfg.get("val_out", "data/training/genshin_{mode}_val.jsonl"), mode), cfg)
     val_ratio = cfg_float(args.val_ratio, cfg_float(split_cfg.get("val_ratio"), 0.05))
     seed = cfg_int(args.seed, cfg_int(split_cfg.get("seed"), 1337))
 
@@ -146,18 +153,35 @@ def main() -> None:
     if not rows:
         raise RuntimeError(f"Input JSONL is empty: {src}")
 
-    random.Random(seed).shuffle(rows)
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        doc_id = metadata.get("positive_doc_id")
+        key = f"doc:{doc_id}" if doc_id is not None else f"id:{row.get('id')}"
+        groups.setdefault(key, []).append(row)
 
-    n_val = max(1, int(len(rows) * val_ratio))
+    group_keys = list(groups.keys())
+    random.Random(seed).shuffle(group_keys)
 
-    if n_val >= len(rows):
-        n_val = max(1, len(rows) - 1)
+    n_val_target = max(1, int(len(rows) * val_ratio))
 
-    val_rows = rows[:n_val]
-    train_rows = rows[n_val:]
+    val_rows: list[dict] = []
+    train_rows: list[dict] = []
+
+    for key in group_keys:
+        group_rows = groups[key]
+        if len(val_rows) < n_val_target:
+            val_rows.extend(group_rows)
+        else:
+            train_rows.extend(group_rows)
 
     if not train_rows:
         raise RuntimeError("Train split is empty. Increase dataset size or reduce val_ratio.")
+
+    if not val_rows:
+        raise RuntimeError("Validation split is empty. Increase dataset size or val_ratio.")
+
+    log.info("[SPLIT] groups=%d (train_groups=%d val_groups=%d)", len(group_keys), len(group_keys) - sum(1 for k in group_keys if k in [gk for gk in group_keys]), 0)
 
     write_jsonl(train_out, train_rows)
     write_jsonl(val_out, val_rows)

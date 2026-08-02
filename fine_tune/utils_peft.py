@@ -37,7 +37,7 @@ def freeze_all_parameters(model: nn.Module) -> None:
         p.requires_grad = False
 
 def format_template_path(value: str | Path, *, mode: str) -> str:
-    return str(value).format(method=mode, method_name=mode)
+    return str(value).format(method=mode, method_name=mode, mode=mode)
 
 def resolve_template_path(value: str | Path, cfg: dict, *, method: str) -> Path:
     return resolve_path(format_template_path(value, method=method), cfg)
