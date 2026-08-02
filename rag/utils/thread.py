@@ -141,6 +141,7 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
                 try:
                     nxt = embed_q.get_nowait()
                     if nxt is STOP:
+                        embed_q.task_done()
                         embed_q.put(STOP)
                         break
                     jobs.append(nxt)

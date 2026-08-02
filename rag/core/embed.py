@@ -37,7 +37,7 @@ def auto_embedding_profile(model_name: str) -> str:
 
     return "none"
 
-def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str | None = None):
+def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str | None = None, title: str | None = None):
     prompt_cfg = cfg.get("embedding_prompts", {}) or {}
 
     enabled = str(prompt_cfg.get("enabled", True)).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -69,7 +69,7 @@ def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str 
             return x
         
         if "{text}" in prefix:
-            return prefix.replace("{title}", "").replace("{text}", x)
+            return prefix.replace("{title}", title or "").replace("{text}", x)
         return prefix + x
     
     if isinstance(text_or_texts, (list, tuple)):
