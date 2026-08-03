@@ -902,6 +902,13 @@ def quote_fts5_phrase(value: str) -> str:
     value = value.replace('"', '""')
     return f'"{value}"'
 
+def is_talent_value_lookup_question(question: str) -> bool:
+    q = str(question or "").lower()
+    has_value = re.search(r"\b(?:damage|dmg|percentage|percent|multiplier|scaling|value)\b", q)
+    has_talent = re.search(r"\b(?:normal attack|charged attack|plunging attack|elemental skill|elemental burst|skill|burst|talent)\b", q)
+    has_level = re.search(r"\b(?:level|lv\.?)\s*\d+\b", q)
+    return bool(has_value and has_talent and has_level)
+
 def make_fts5_query(user_query: str) -> str:
     raw_tokens = re.findall(r"[A-Za-z0-9_']+", user_query.lower())
 
@@ -965,14 +972,20 @@ def make_intent_fts5_query(question: str, intent: str) -> str | None:
         return f"title:{entity}"
     
     if intent == "build":
-        build_entity = (
-            extract_build_entity(question)
-            or (
-                extract_entity_terms(question)[0]
-                if extract_entity_terms(question)
-                else None
-            )
-        )
+        build_entity = extract_build_entity(question)
+        if not build_entity and is_build_recommendation_question(question):
+            entity_terms = extract_entity_terms(question)
+            if entity_terms:
+                build_entity = entity_terms[0]
+
+        if build_entity:
+            entity_key = normalize_title_key(build_entity)
+            entity_chunks = [row for row in selected_chunks if entity_key in normalize_title_key(str(row.get("title") or ""))]
+
+            if entity_chunks:
+                selected_chunks = entity_chunks
+            else:
+                log.warning("[BUILD] final context lost target entity=%r selected_titles=%s", build_entity, [row.get("title") for row in selected_chunks])
 
         if not build_entity:
             return None
@@ -1213,10 +1226,9 @@ def detect_intent(question: str) -> str:
     q = question.lower()
     build_subtypes = detect_build_subtypes(question)
     BUILD_MARKERS = [
-        "weapon", "artifact", "build", "damage", "dps", "team", "team comp", "rotation", 
-        "stats", "crit", "signature weapon",
-        "recommended weapon", "bis weapon", "talent priority", "stat priority", "main stats",
-        "substats", "elemental mastery", "energy recharge", "sub-dps",
+        "weapon", "artifact", "build", "dps", "team", "team comp", "rotation", "stats", "crit","signature weapon",
+        "recommended weapon", "bis weapon", "talent priority", "stat priority", "main stats", "substats",
+        "elemental mastery", "energy recharge", "sub-dps"
     ]
     LORE_MARKERS = [
         "lore", "story", "history", "background", "past",
@@ -1256,11 +1268,18 @@ def detect_intent(question: str) -> str:
         return "location"
 
     build_entity = extract_build_entity(question)
-    if (build_entity or build_subtypes or is_build_recommendation_question(question) or contains_any_marker(q, BUILD_MARKERS)):
+
+    if (build_entity or build_subtypes or is_build_recommendation_question(question)):
         return "build"
+
+    if is_talent_value_lookup_question(question):
+        return "mechanic"
 
     if contains_any_marker(q, MECHANICS_MARKERS):
         return "mechanic"
+
+    if contains_any_marker(q, BUILD_MARKERS):
+        return "build"
 
     if extract_lookup_entity(question):
         return "lookup"

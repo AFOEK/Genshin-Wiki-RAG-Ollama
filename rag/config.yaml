@@ -338,22 +338,25 @@ dataset_creation:
 
 internet_validation:
   enabled: True
-  searxng_url: "http://localhost:8080"
+  searxng_url: "http://localhost:8888"
   ollama_url: "http://localhost:11434"
   ollama_model: "qwen3.5:9b"
 
   source_workers: 6
   results_per_source: 3
-  fetch_pages_per_source: 2
+  fetched_pages_per_source: 2
 
-  searxng_timeout: 30
-  fetch_timeout: 25
+  searxng_timeout_s: 30
+  fetch_timeout_s: 25
+  searxng_health_timeout_s: 5.0
 
   max_chars_per_page: 3000
   max_total_evidence_chars: 24000
   max_negative_chars: 1500
 
-  min_oracle_confident: 0.90 #0.85 >= x <= 0.95
+  min_oracle_confidence: 0.90   #0.85 >= x <= 0.95
+  min_audit_confidence: 0.90
+  min_negative_confidence: 0.85
 
   limit: 10
 
@@ -370,7 +373,6 @@ internet_validation:
     fine_tune/internet_validation/output/validation_results.jsonl
 
   source_policy_version: 1
-  validator_version: 1
 
 peft:
   mode: lora    #lora | loraplus | dora | vera | dvora | qlora | qdora | adalora | pvera | loha | lokr | bora | randlora | ia3 | oft | boft | xlora

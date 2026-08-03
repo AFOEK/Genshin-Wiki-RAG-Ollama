@@ -8,15 +8,14 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rag"))
+
 from audit import run_dataset_audit
 from dataset_loader import iter_dataset_bundles
 from oracle import run_blind_oracle
 from policy_loader import load_source_policies
 from search import collect_parallel_evidence
-
 from utils.logging_setup import setup_logging
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rag"))
 
 log = logging.getLogger(__name__)
 
@@ -147,10 +146,11 @@ def load_completed_ids(path: Path) -> set[str]:
     return completed
 
 def main() -> None:
-    config_path = Path("rag/config.yaml")
+    config_path = Path(__file__).resolve().parents[2] / "rag" / "config.yaml"
     with config_path.open("r", encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle)
 
+    setup_logging(cfg.get("logging", {}).get("file"), cfg.get("logging", {}).get("level", "INFO"))
     validation_cfg = cfg["internet_validation"]
     searxng_url = str(validation_cfg["searxng_url"]).strip()
     require_searxng(searxng_url, timeout_s=float(validation_cfg.get("searxng_health_timeout_s", 5.0,)))

@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
-
 from pathlib import Path
 
 from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
-from .utils import normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key, extract_build_entity
+from .utils import normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key, extract_build_entity, extract_entity_terms, is_build_recommendation_question
 from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
 from .retrieval_cache import RetrievalCache
 from .resources import RESOURCES, path_signature
@@ -684,7 +682,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     max_per_doc = dedup_max_per_doc
 
     if intent == "build":
-        entity = (extract_build_entity(question) or extract_lookup_entity(question))
+        entity = (extract_build_entity(question))
         if entity:
             entity_key = normalized_phrase(entity)
             matching = [row for row in chunks if entity_key in normalized_phrase(str(row.get("title") or ""))]
@@ -831,6 +829,16 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         else:
             selected_chunks = chunks[:direct_top_k]
 
+        if intent in {"mechanic", "lookup"}:
+            target_entity = extract_possessive_entity(question)
+            if target_entity:
+                entity_key = normalize_title_key(target_entity)
+                entity_chunks = [row for row in selected_chunks if entity_key in normalize_title_key(str(row.get("title") or ""))]
+                if entity_chunks:
+                    entity_chunk_ids = {int(row["chunk_id"]) for row in entity_chunks}
+                    selected_chunks = [*entity_chunks, *(row for row in selected_chunks if int(row["chunk_id"]) not in entity_chunk_ids),]
+                    log.debug("[ENTITY] prioritized possessive entity=%r matching_chunks=%d", target_entity, len(entity_chunks))
+
         parent_cfg = cfg.get("parent_child", {}) or {}
         parent_enabled = as_bool(parent_cfg.get("enabled", False))
 
@@ -863,7 +871,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     hyde_selected_count = sum(1 for row in selected_chunks if (retrieval_signals.get(int(row["chunk_id"]), {}).get("in_hyde", False)))
     hyde_used = hyde_selected_count > 0
     if intent == "build":
-        build_entity = (extract_build_entity(question) or extract_lookup_entity(question))
+        build_entity = (extract_build_entity(question))
         if build_entity:
             entity_key = normalize_title_key(build_entity)
             entity_chunks = [row for row in selected_chunks if entity_key in normalize_title_key(str(row.get("title") or ""))]
@@ -989,21 +997,22 @@ def fetch_exact_lookup_seed_chunks(conn, entity: str, *, max_docs: int = 2, chun
     if not ordered_chunk_ids:
         return []
 
-    fetched = fetch_chunks(
-        conn,
-        ordered_chunk_ids,
+    fetched = fetch_chunks(conn, ordered_chunk_ids,)
+    fetched_by_id = {int(row["chunk_id"]): dict(row) for row in fetched}
+    return [fetched_by_id[chunk_id] for chunk_id in ordered_chunk_ids if chunk_id in fetched_by_id]
+
+def extract_possessive_entity(question: str) -> str | None:
+    match = re.search(
+        r"\b("
+        r"[A-Z][A-Za-z'-]*"
+        r"(?:\s+[A-Z][A-Za-z'-]*){0,2}"
+        r")'s\b",
+        str(question or ""),
     )
 
-    fetched_by_id = {
-        int(row["chunk_id"]): dict(row)
-        for row in fetched
-    }
-
-    return [
-        fetched_by_id[chunk_id]
-        for chunk_id in ordered_chunk_ids
-        if chunk_id in fetched_by_id
-    ]
+    if not match:
+        return None
+    return re.sub(r"\s+", " ", match.group(1)).strip()
 
 def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, backend: str | None = None) -> RetrievalResult:
     intent = detect_intent(question)
