@@ -13,6 +13,7 @@ import sys
 import time
 import yaml
 import threading
+import traceback
 
 from pathlib import Path
 from contextlib import ExitStack
@@ -360,8 +361,10 @@ def cfg_float(x, default: float) -> float:
     return float(x)
 
 def resolve_user_path(value: str | Path) -> Path:
-        path = Path(str(value)).expanduser()
-        return path if path.is_absolute() else (Path.cwd() / path).resolve()
+    path = expand_path(value)
+    if path.is_absolute():
+        return path.resolve()
+    return (REPO_ROOT / path).resolve()
 
 def cfg_sources(x, default: str) -> list[str]:
     if x is None:
@@ -430,7 +433,7 @@ def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, 
     data = response.json()
     thinking_trace = str(data.get("thinking") or "").strip()
     raw_answer = str(data.get("response") or "").strip()
-    done_reason = str(data.get("done_reason") or "").strip()
+    done_reason = str(data.get("done_reason") or "").strip().lower()
     if done_reason == "length":
         raise ValueError(
             "Ollama output was truncated because "
@@ -498,6 +501,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         items = extract_json_array(raw)
 
     except Exception as exc:
+        traceback_text = traceback.format_exc()
         result.skipped += 1
         result.rejected.append(
             {
@@ -506,6 +510,7 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 "positive_doc_id": doc_id,
                 "error_type": type(exc).__name__,
                 "error": str(exc),
+                "traceback": traceback_text
             }
         )
         return result
@@ -634,6 +639,7 @@ Return [] only if there is genuinely no factual statement in the source.
             )
 
         except Exception as exc:
+            traceback_text = traceback.format_exc()
             result.skipped += 1
             result.rejected.append(
                 {
@@ -643,6 +649,7 @@ Return [] only if there is genuinely no factual statement in the source.
                     "positive_chunk_id": chunk_id,
                     "positive_doc_id": doc_id,
                     "error_type": type(exc).__name__,
+                    "traceback": traceback_text,
                     "error": str(exc),
                 }
             )
@@ -781,6 +788,7 @@ Return [] only if there is genuinely no factual statement in the source.
                         negative_sft
                     )
             except Exception as exc:
+                traceback_text = traceback.format_exc()
                 log.warning(
                 "[NEGATIVE] generation failed "
                 "chunk_id=%d question=%r err=%s: %s", chunk_id, question, type(exc).__name__, exc)
@@ -793,6 +801,7 @@ Return [] only if there is genuinely no factual statement in the source.
                         "positive_doc_id": doc_id,
                         "origin_record_id": record["id"],
                         "error_type": type(exc).__name__,
+                        "traceback": traceback_text,
                         "error": str(exc),
                     }
                 )
@@ -848,6 +857,7 @@ def run_bounded_workers(rows: list[dict], *, workers: int, max_inflight: int, cf
                     result = future.result()
 
                 except Exception as exc:
+                    traceback_text = traceback.format_exc()
                     result = ChunkTaskResult(
                         task_index=task_index,
                         chunk_id=int(
@@ -862,6 +872,7 @@ def run_bounded_workers(rows: list[dict], *, workers: int, max_inflight: int, cf
                                     rows[task_index]["chunk_id"]
                                 ),
                                 "error_type": type(exc).__name__,
+                                "traceback": traceback_text,
                                 "error": str(exc),
                             }
                         ],
@@ -1615,7 +1626,15 @@ def main() -> None:
     answer_jitter = dict(ds_cfg.get("answer_jitter") or {})
     validator_jitter = dict(ds_cfg.get("validator_jitter") or {})
 
-    db_path = expand_path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).resolve()
+    db_override = (args.db or ds_cfg.get("db_path"))
+    if db_override:
+        raw_db_path = expand_path(db_override)
+        if raw_db_path.is_absolute():
+            db_path = raw_db_path.resolve()
+        else:
+            db_path = resolve_output_path(str(raw_db_path), cfg,)
+    else:
+        db_path = resolve_db_path_from_cfg(cfg).resolve()
     default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
     if args.out:
