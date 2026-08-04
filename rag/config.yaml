@@ -316,6 +316,8 @@ dataset_creation:
     top_k: 25
     min_p: 0.05
     repeat_penalty: 1.0
+    num_predict: 256
+    num_ctx: 16384
 
   draft_jitter:
     enabled: true

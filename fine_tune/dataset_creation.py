@@ -46,6 +46,33 @@ REFUSAL_MARKERS = (
     "cannot determine from the context",
     "context does not provide",
     "couldn't retrieve any relevant chunks",
+    "does not explicitly mention",
+    "not explicitly stated",
+    "not provided in the context",
+    "provided context does not",
+    "insufficient information",
+    "cannot be determined",
+    "the context lacks",
+)
+
+ANSWER_STYLE_MARKERS = (
+    "[chunk_id=",
+    "supporting evidence:",
+    "**supporting evidence:**",
+)
+
+BAD_QUESTION_PATTERNS = (
+    r"\bofficial (?:english )?name\b",
+    r"\bliteral meaning\b",
+    r"\bpronunciation\b",
+    r"\bromanization\b",
+    r"\btransliteration\b",
+    (
+        r"\b(?:chinese|japanese|korean|spanish|"
+        r"french|german|thai|portuguese|russian|"
+        r"vietnamese|indonesian)"
+        r"(?:\s*\([^)]*\))?\s+name\b"
+    ),
 )
 
 NEGATIVE_VALIDATION_SCHEMA = {
@@ -293,6 +320,13 @@ def jitter_options(options: dict[str, Any], jitter_cfg: dict[str, Any] | None, r
 
     return out
 
+
+def is_low_value_question(question: str) -> bool:
+    question = re.sub(r"\s+", " ", question,).strip()
+    if len(question) > 220:
+        return True
+    return any(re.search(pattern, question, flags=re.IGNORECASE) for pattern in BAD_QUESTION_PATTERNS)
+
 def resolve_output_path(path_value: str, cfg: dict) -> Path:
     p = expand_path(path_value)
 
@@ -346,6 +380,18 @@ def get_worker_http_session() -> requests.Session:
         _worker_local.http_session = session
 
     return session
+
+def normalize_for_match(text: str) -> str:
+    text = str(text).casefold()
+    text = re.sub(r"[^\w%.-]+", " ", text,)
+    return re.sub(r"\s+", " ", text,).strip()
+
+def candidate_contains_reference(reference_answer: str, candidate_text: str) -> bool:
+    reference_key = normalize_for_match(reference_answer)
+    candidate_key = normalize_for_match(candidate_text)
+    if len(reference_key) < 8:
+        return False
+    return reference_key in candidate_key
 
 def ollama_generate(base_url: str, model: str, prompt: str, timeout: int = 300, response_format: dict | str | None = None, temperature: float = 0.2, top_p: float = 0.9, repeat_penalty: float = 1.05, min_p: float = 0.05, thinking: bool | str | None = None, options: dict[str, Any] | None = None) -> str:
     request_options: dict[str, Any] = {
@@ -468,16 +514,16 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
         log.warning("[DRAFT_EMPTY] Retrying chunk_id=%d source=%s title=%r raw=%r", chunk_id, source, title, raw[:120])
         retry_prompt = (
         prompt + """
-    Retry instruction:
-    The source passed programmatic content filtering.
-    If it contains even one explicit factual statement, return exactly one
-    useful and directly supported question-reference_answer pair.
+Retry instruction:
+The source passed programmatic content filtering.
+If it contains even one explicit factual statement, return exactly one
+useful and directly supported question-reference_answer pair.
 
-    Do not return [] merely because the text is fragmentary, contains tables,
-    or lacks a complete article introduction.
+Do not return [] merely because the text is fragmentary, contains tables,
+or lacks a complete article introduction.
 
-    Return [] only if there is genuinely no factual statement in the source.
-    """)
+Return [] only if there is genuinely no factual statement in the source.
+""")
         retry_options = dict(draft_options)
         retry_options.update(
             {
@@ -559,6 +605,20 @@ def process_source_row(task_index: int, row: dict, *, cfg: dict, settings: dict[
                 settings.get("answer_jitter") or {},
                 answer_rng,
             )
+
+            if is_low_value_question(question):
+                result.skipped += 1
+                result.rejected.append(
+                    {
+                        "reason": "low_value_generated_question",
+                        "question": question,
+                        "reference_answer": reference_answer,
+                        "positive_chunk_id": chunk_id,
+                        "positive_doc_id": doc_id,
+                    }
+                )
+                continue
+
             record, rejection, retrieval = process_generated_pair(
                 cfg,
                 question=question,
@@ -863,6 +923,17 @@ def extract_json_object(text: str) -> dict:
     return data
 
 def validate_negative_candidate(*, question: str, reference_answer: str, candidate: dict, ollama_url: str, validator_model: str, min_confidence: float, timeout: int, think: bool | str | None, options: dict[str, Any] | None = None) -> tuple[bool, dict]:
+    candidate_text = clean_text(candidate.get("text") or "")
+    if candidate_contains_reference(reference_answer, candidate_text,):
+        return False, {
+            "answerable_from_candidate": True,
+            "confidence": 1.0,
+            "reason": (
+                "The candidate contains the "
+                "reference-answer phrase."
+            ),
+            "deterministic_rejection": True,
+        }
     candidate_context = f"Title: {candidate.get('title')}\nSource: {candidate.get('source')}\nURL: {candidate.get('url')}\n\nText:\n{clean_text(candidate.get('text') or '')[:1800]}"
     prompt = f"""
     Determine whether the candidate passage alone contains enough
@@ -1165,6 +1236,12 @@ def fetch_chunks(conn: sqlite3.Connection, *, sources: list[str], limit: int, mi
 
     return cur.fetchall()
 
+def has_answer_style_artifact(answer: str) -> bool:
+    lowered = answer.lower()
+    if any(marker in lowered for marker in ANSWER_STYLE_MARKERS):
+        return True
+    return bool(re.search(r"(?mi)^\s*\*{0,2}answer\*{0,2}\s*:", answer))
+
 def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None, answer_options: dict[str, Any] | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
     retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
     candidate_doc_rank = find_document_rank(retrieval.candidate_chunks, int(positive["doc_id"]))
@@ -1202,7 +1279,27 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     answer_style_cfg = cfg.get("answer_style", {}) or {}
     answer_prompt = build_grounded_answer_prompt(question, retrieval.context, intent=retrieval.intent, build_subtypes=retrieval.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
+    answer_prompt += """
+Dataset response rules:
+- Return only the direct answer.
+- Keep the answer concise and complete.
+- Do not include chunk IDs.
+- Do not include source citations.
+- Do not include a Supporting Evidence section.
+- Do not include an Answer: label.
+- Do not repeat the answer.
+""".rstrip()
     final_answer = str(generate(cfg, answer_prompt, model_override=answer_model, think_override=answer_think, options_override=answer_options)).strip()
+
+    if has_answer_style_artifact(final_answer):
+        return None, {
+            "reason": "answer_style_artifact",
+            "question": question,
+            "final_answer": final_answer,
+            "positive_chunk_id": int(
+                positive["chunk_id"]
+            ),
+        }, retrieval
 
     if not final_answer:
         return None, {
@@ -1235,8 +1332,7 @@ def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, p
 
     user_content = (
         f"Question:\n{question}\n\n"
-        f"Context:\n{retrieval.context}"
-    )
+        f"Context:\n{retrieval.context}")
 
     record = {
         "id": record_id,
@@ -1295,6 +1391,7 @@ def make_negative_sft_record(*, base_id: str, question: str, negative: dict, neg
         f"URL: {negative.get('url')}\n\n"
         f"{clean_text(negative.get('text') or '')[:max_chars]}"
     )
+    validation = (negative.get("negative_validation") or {})
 
     return {
         "id": (
@@ -1335,6 +1432,9 @@ def make_negative_sft_record(*, base_id: str, question: str, negative: dict, neg
             "title": negative.get("title"),
             "url": negative.get("url"),
             "retrieval_validated": True,
+            "negative_answerability_validated": (not bool(validation.get("answerable_from_candidate", True))),
+            "negative_validation_confidence": float(validation.get("confidence", 0.0)),
+            "negative_validation_reason": str(validation.get("reason", "")),
             "human_verified": False,
         },
     }
@@ -1515,7 +1615,7 @@ def main() -> None:
     answer_jitter = dict(ds_cfg.get("answer_jitter") or {})
     validator_jitter = dict(ds_cfg.get("validator_jitter") or {})
 
-    db_path = Path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).expanduser()
+    db_path = expand_path(args.db or ds_cfg.get("db_path") or resolve_db_path_from_cfg(cfg)).resolve()
     default_filename = str(ds_cfg.get("sft_out", ds_cfg.get("lora_out", "genshin_rag_sft_candidates.jsonl")))
 
     if args.out:

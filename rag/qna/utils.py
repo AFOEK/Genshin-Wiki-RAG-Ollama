@@ -1307,21 +1307,19 @@ def build_grounded_answer_prompt(question: str, context: str, *, intent: str | N
 
     if intent == "build" and "weapon" in subtypes and is_comparison:
         format_rules = """
-    This is a weapon comparison question.
-
-    Answer format:
-    1. Compare only the weapons explicitly requested.
-    2. Use a compact table with: weapon, Energy Recharge, energy generation, team buffs, and best use case.
-    3. State which weapon is preferable for each requested criterion.
-    4. Do not introduce additional weapons unless needed for brief context.
-    5. Do not infer stats, passives, rankings, or trade-offs not explicitly supported by the context.
-    6. If evidence for one criterion is missing, state that the retrieved context does not provide it.
+This is a weapon comparison question.
+Answer format:
+1. Compare only the weapons explicitly requested.
+2. Use a compact table with: weapon, Energy Recharge, energy generation, team buffs, and best use case.
+3. State which weapon is preferable for each requested criterion.
+4. Do not introduce additional weapons unless needed for brief context.
+5. Do not infer stats, passives, rankings, or trade-offs not explicitly supported by the context.
+6. If evidence for one criterion is missing, state that the retrieved context does not provide it.
     """
         
     elif intent == "build" and "weapon" in subtypes:
         format_rules = f"""
 This is a weapon recommendation question.
-
 Answer format:
 1. Give the top recommendation first.
 2. Then list up to {max_recommendations} explicitly supported weapon options in ranked order.
@@ -1336,7 +1334,6 @@ Answer format:
     elif intent == "biography":
         format_rules = """
 This is an identity or biography question.
-
 Answer rules:
 1. Begin with a direct 2–4 sentence identification of the person or character.
 2. Prefer explicit identity, affiliation, role, title, origin, and status statements.
@@ -1353,7 +1350,6 @@ Answer rules:
     elif intent == "build" and "artifact" in subtypes:
         format_rules = f"""
 This is an artifact recommendation question.
-
 Answer format:
 1. Give the top artifact set first.
 2. Then list up to {max_recommendations} explicitly supported artifact options in ranked order.
@@ -1369,10 +1365,8 @@ Answer format:
     elif intent == "build" and "team" in subtypes:
         format_rules = f"""
 This is a team recommendation question.
-
 List up to {max_recommendations} supported team compositions in ranked order.
 For each team, identify the members and briefly explain their roles and synergy using only the context.
-
 Answer format:
 1. List a team only when the context explicitly presents those characters together as one team, party, lineup, or team composition.
 2. Do not construct a team by combining character names found in separate passages.
@@ -1383,20 +1377,16 @@ Answer format:
     elif intent == "build" and "talent" in subtypes:
         format_rules = """
 This is a talent-priority question.
-
 Give the priority as an ordered sequence such as:
 1. Elemental Skill
 2. Elemental Burst
 3. Normal Attack
-
 Explain each priority only when the context provides enough evidence.
 """
 
     return f"""
 You are a retrieval-grounded Genshin Impact assistant.
-
 Answer the question using only the supplied context.
-
 General rules:
 - Do not invent unsupported facts.
 - Treat headings, numbered rankings, bullet lists, tables, and item descriptions as explicit evidence.
@@ -1409,12 +1399,9 @@ General rules:
 - Do not infer relationships, equivalence, causation, chronology, or shared titles from co-occurrence.
 - Do not merge statements from separate chunks into a new claim unless one chunk explicitly states the resulting relationship.
 - Preserve distinctions such as "introduced," "announced," "released," and "became playable."
-
 {format_rules}
-
 Question:
 {question}
-
 Context:
 {context}
 """.strip()
