@@ -94,6 +94,19 @@ query_decomposition:
   repeat_penalty: 1.0
   num_predict: 256  # 512 | 256
 
+query_expansion:
+  enabled: true
+  model: "qwen3.5:9b"
+  max_expansions: 2
+  include_original: true
+  temperature: 0.2
+  top_p: 0.9
+  top_k: 30
+  num_predict: 256
+  max_query_chars: 300
+  original_weight: 1.0
+  expansion_weight: 0.75
+
 multi_hop:
   enabled: true
   mode: auto
