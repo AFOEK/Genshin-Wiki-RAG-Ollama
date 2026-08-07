@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
+from sentence_transformers import CrossEncoder
 from functools import lru_cache
 
 log = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2)
 def get_cross_encoder(model_name: str):
-    from sentence_transformers import CrossEncoder
-
     try:
         model = CrossEncoder(model_name, local_files_only=True)
         log.info("[CROSS_ENCODER] Loaded model from local cache: %s", model_name)

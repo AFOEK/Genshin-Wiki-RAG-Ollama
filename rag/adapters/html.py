@@ -11,8 +11,17 @@ from requests.exceptions import RequestException, Timeout, ConnectionError
 
 log = logging.getLogger(__name__)
 
-_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_RETRY_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 
+SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
+            ".svg", ".pdf", ".zip", ".mp4", ".mp3",
+            ".ico", ".css", ".js", ".woff", ".woff2",
+            ".avi", ".mkv", ".webm")
+
+_GAME8_RETRY_STATUSES = {403, *_RETRY_STATUSES}
+_GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
+    "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
+_GAME8_ARCHIVE_PREFIX = ("/games/Genshin-Impact/archives/")
 GAME8_NOISE_SELECTORS = (
     ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", ".comments", ".comment-list", ".comment-thread", ".reply", ".replies", ".discussion", ".message-board",
     "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside")
@@ -49,31 +58,35 @@ def find_game8_article_root(soup: BeautifulSoup):
         "[role='main']",
         "main",
         "#content",
+        "[class*='article']",
     )
 
+    candidates: list[tuple[int, object]] = []
+    seen_nodes: set[int] = set()
     for selector in selectors:
-        candidates = soup.select(selector)
-        for candidate in candidates:
-            text = candidate.get_text(" ", strip=True,)
-            headings = candidate.find_all(["h1", "h2", "h3"])
-            if (len(text) >= 1_000 and candidate.find("h1") is not None and len(headings) >= 3):
-                return candidate
-
-    for heading in soup.find_all("h1"):
-        heading_text = heading.get_text(" ", strip=True)
-        if not heading_text:
-            continue
-
-        for parent in heading.parents:
-            if parent.name not in {"article", "main", "section", "div"}:
+        for candidate in soup.select(selector):
+            node_id = id(candidate)
+            if node_id in seen_nodes:
                 continue
-            text = parent.get_text(" ", strip=True)
-            subheadings = parent.find_all(["h2", "h3"])
 
-            if (len(text) >= 1_000 and len(subheadings) >= 2):
-                return parent
+            seen_nodes.add(node_id)
+            text = candidate.get_text(" ", strip=True,)
+            if len(text) < 800:
+                continue
 
-    return None
+            headings = candidate.find_all(["h1", "h2", "h3"])
+            score = len(text)
+            score += (len(headings) * 400)
+            if candidate.find("h1"):
+                score += 1200
+
+            candidates.append((score, candidate,))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0], reverse=True,)
+    return candidates[0][1]
 
 def is_low_value_game8_text(text: str) -> bool:
     normalized = " ".join((text or "").split())
@@ -137,8 +150,21 @@ def sleep_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> None:
     delay *= (0.7 + random.random() * 0.6)
     time.sleep(delay)
 
+def normalized_host(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
 def same_site(url: str, base_url: str) -> bool:
-    return urlparse(url).netloc == urlparse(base_url).netloc
+    return (normalized_host(url) == normalized_host(base_url))
+
+def is_game8_url(url: str) -> bool:
+    return (normalized_host(url) == "game8.co")
+
+def is_allowed_game8_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (normalized_host(url) == "game8.co" and parsed.path.startswith(_GAME8_ARCHIVE_PREFIX))
 
 def soup_text_fallback(node) -> str:
     try:
@@ -222,11 +248,29 @@ def html_to_text(html: str, url: str | None = None) -> str:
 
     return text
 
+def game8_response_problem(response: requests.Response, html: str) -> str | None:
+    final_url = normalize_url( response.url)
+    if not is_allowed_game8_url(final_url):
+        return (f"redirected outside approved Game8 archive: {final_url}")
+
+    if len(response.content) < 1500:
+        return (f"undersized response body: {len(response.content)} bytes")
+
+    lowered = html[:100_000].casefold()
+    marker = next((marker for marker in _GAME8_BLOCK_MARKERS if marker in lowered), None,)
+    if marker:
+        return ("blocking or challenge page: "  f"{marker!r}")
+
+    return None
+
 def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
-    q = deque(seeds)
+    q = deque(normalize_url (url) for url in seeds)
     seen: set[str] = set()
     retries: dict[str, int] = {}
     session = requests.Session()
+    game8_source = is_game8_url(base_url)
+    request_delay_s = (max(rate_limit_s, 3.0) if game8_source else rate_limit_s)
+    max_retries = (4 if game8_source else 10)
     session.headers.update(
         {
             "User-Agent": (
@@ -235,7 +279,6 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/136.0 Safari/537.36 "
-                "GenshinRAG/1.0"
             ),
             "Accept": (
                 "text/html,application/xhtml+xml,"
@@ -245,124 +288,146 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
                 "en-US,en;q=0.9"
             ),
             "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         }
     )
 
+    def schedule_retry(requested_url: str, *, reason: str, response: (requests.Response | None) = None,) -> bool:
+        attempt = (retries.get(requested_url, 0,) + 1)
+        retries[requested_url] = attempt
+        if attempt > max_retries:
+            log.warning("[HTML] Giving up url=%s retries=%d reason=%s", requested_url, attempt - 1, reason,)
+            seen.add(requested_url)
+            return False
+
+        retry_after = None
+
+        if response is not None:
+            retry_after = (response.headers.get("Retry-After"))
+
+        log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=%s", requested_url, attempt, max_retries, reason,)
+
+        if (retry_after and retry_after.isdigit()):
+            time.sleep(min(int(retry_after), 120,))
+        else:
+            sleep_backoff(attempt - 1, base=2.0, cap=90.0,)
+
+        q.append(requested_url)
+        return True
+
     while q and (max_pages is None or len(seen) < max_pages):
-        url = q.popleft()
-        if url in seen:
+        requested_url = normalize_url(q.popleft())
+
+        if requested_url in seen:
+            continue
+        if not same_site(requested_url, base_url):
             continue
 
-        if not same_site(url, base_url):
-            continue
-        if deny_url and deny_url.search(url):
-            log.warning("[WARN] SKIP url:%s, illegal content detected", url)
-            seen.add(url)
-            continue
-        if allow_url and not allow_url.search(url):
-            log.info("[WARN] SKIP not in allow list: %s", url)
-            seen.add(url)
-            continue
-        if not allow_lang(url, allowed_langs):
-            seen.add(url)
+        if deny_url and deny_url.search(requested_url):
+            log.warning("[HTML] Skip denied URL: %s", requested_url)
+            seen.add(requested_url)
             continue
 
-        SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
-                    ".svg", ".pdf", ".zip", ".mp4", ".mp3",
-                    ".ico", ".css", ".js", ".woff", ".woff2",
-                    ".avi", ".mkv", ".webm")
-        
-        url = normalize_url(url)
-        path = urlsplit(url).path.lower()
+        if allow_url and not allow_url.search(requested_url):
+            log.info("[HTML] Skip URL outside allow list: %s", requested_url)
+            seen.add(requested_url)
+            continue
+
+        if not allow_lang(requested_url, allowed_langs):
+            seen.add(requested_url)
+            continue
+
+        path = urlsplit(requested_url).path.lower()
         if path.endswith(SKIP_EXT):
-            seen.add(url)
+            seen.add(requested_url)
             continue
-
-        attempt = retries.get(url, 0)
 
         try:
-            r = session.get(url, timeout=60)
-            last_modified = r.headers.get("Last-Modified")
-            etag = r.headers.get("ETag")
-
-            if r.status_code in _RETRY_STATUSES:
-                retries[url] = attempt + 1
-                if retries[url] <= 10:
-                    ra = r.headers.get("Retry-After")
-                    if ra and ra.isdigit():
-                        time.sleep(min(int(ra), 120))
-                    else:
-                        sleep_backoff(attempt)
-                    q.append(url)
-                    continue
-                else:
-                    log.warning("[HTML] Giving up url=%s after %d retries status=%d", url, retries[url], r.status_code)
-                    seen.add(url)
-                    time.sleep(rate_limit_s)
-                    continue
-
-            if r.status_code >= 400:
-                log.warning("HTTP %d url=%s", r.status_code, url)
-                seen.add(url)
-                time.sleep(rate_limit_s)
-                continue
-            ct = (r.headers.get("Content-Type") or "").lower()
-            if ("text/html" not in ct) and ("application/xhtml+xml" not in ct):
-                log.info("[HTML] Skip non-HTML content-type=%s url=%s", ct, url)
-                seen.add(url)
-                time.sleep(rate_limit_s)
-                continue
-            html = r.text
-
-        except (Timeout, ConnectionError) as e:
-            retries[url] = attempt + 1
-            if retries[url] <= 10:
-                log.warning("[HTML] Network error (%s) url=%s retry=%d/10", type(e).__name__, url, retries[url])
-                sleep_backoff(attempt)
-                q.append(url)
-                continue
-            log.warning("[HTML] Giving up url=%s after %d retries (%s)", url, retries[url], type(e).__name__)
-            seen.add(url)
-            time.sleep(rate_limit_s)
+            if game8_source:
+                time.sleep(request_delay_s + random.uniform(0.2, 0.8))
+            response = session.get(requested_url, timeout=(15, 60), allow_redirects=True)
+        except (Timeout, ConnectionError, RequestException) as exc:
+            schedule_retry(requested_url, reason=f"{type(exc).__name__}: {exc}")
             continue
 
-        except RequestException as e:
-            retries[url] = attempt + 1
-            if retries[url] <= 10:
-                log.warning("[HTML] RequestException url=%s retry=%d/10 err=%s", url, retries[url], e)
-                sleep_backoff(attempt)
-                q.append(url)
-                continue
-            log.warning("[HTML] Giving up url=%s after %d retries (RequestException)", url, retries[url])
-            seen.add(url)
-            time.sleep(rate_limit_s)
+        final_url = normalize_url(response.url)
+        retry_statuses = _GAME8_RETRY_STATUSES if game8_source else _RETRY_STATUSES
+
+        if response.status_code in retry_statuses:
+            schedule_retry(requested_url, reason=f"HTTP {response.status_code}", response=response)
             continue
 
-        seen.add(url)
-
-        for link in extract_links(html, url):
-            link = normalize_url(link)
-            path = urlsplit(link).path.lower()
-            if path.endswith(SKIP_EXT):
-                continue
-            if not allow_lang(link, allowed_langs):
-                continue
-            if (link not in seen and same_site(link, base_url) and not (deny_url and deny_url.search(link)) and not (allow_url and not allow_url.search(link))):
-                q.append(link)
-
-        text = html_to_text(html, url)
-        if not text or not text.strip():
-            log.warning("[HTML] Skipping empty extraction url=%s", url)
-            time.sleep(rate_limit_s)
+        if response.status_code >= 400:
+            log.warning("[HTML] HTTP %d requested=%s final=%s", response.status_code, requested_url, final_url)
+            seen.add(requested_url)
+            time.sleep(request_delay_s)
             continue
 
-        title = url
+        if not same_site(final_url, base_url):
+            log.warning("[HTML] Redirect outside approved site requested=%s final=%s", requested_url, final_url)
+            seen.add(requested_url)
+            continue
+
+        if allow_url and not allow_url.search(final_url):
+            log.warning("[HTML] Redirect outside allow list requested=%s final=%s", requested_url, final_url)
+            seen.add(requested_url)
+            continue
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+            log.info("[HTML] Skip non-HTML content-type=%s url=%s", content_type, final_url)
+            seen.add(requested_url)
+            continue
+
+        html = response.text
+
+        if game8_source:
+            problem = game8_response_problem(response, html)
+            if problem:
+                schedule_retry(requested_url, reason=problem, response=response)
+                continue
+
+        text = html_to_text(html, final_url)
+        if not text.strip():
+            if game8_source:
+                schedule_retry(requested_url, reason="empty or rejected article extraction", response=response)
+            else:
+                log.warning("[HTML] Skipping empty extraction url=%s", final_url)
+                seen.add(requested_url)
+            continue
+
+        title = final_url
         try:
             soup = BeautifulSoup(html, "lxml")
             if soup.title and soup.title.string:
                 title = soup.title.string.strip()
         except Exception:
-            log.exception("[HTML] Failed to extract title url=%s", url)
+            log.exception("[HTML] Failed to extract title url=%s", final_url)
 
-        yield url, title, text, last_modified, etag
-        time.sleep(rate_limit_s)
+        seen.add(requested_url)
+        seen.add(final_url)
+
+        for link in extract_links(html, final_url):
+            link = normalize_url(link)
+            link_path = urlsplit(link).path.lower()
+
+            if link_path.endswith(SKIP_EXT):
+                continue
+            if not allow_lang(link, allowed_langs):
+                continue
+            if not same_site(link, base_url):
+                continue
+            if deny_url and deny_url.search(link):
+                continue
+            if allow_url and not allow_url.search(link):
+                continue
+            if link not in seen and link not in q:
+                q.append(link)
+
+        last_modified = response.headers.get("Last-Modified")
+        etag = response.headers.get("ETag")
+
+        log.info("[HTML] accepted requested=%s final=%s chars=%d", requested_url, final_url, len(text))
+        yield final_url, title, text, last_modified, etag
+
+        time.sleep(request_delay_s)

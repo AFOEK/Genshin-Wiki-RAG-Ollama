@@ -2,7 +2,7 @@ import requests
 import struct
 import time
 import logging
-from typing import Literal
+from typing import Literal, Any
 
 log = logging.getLogger(__name__)
 session = requests.Session()
@@ -37,7 +37,7 @@ def auto_embedding_profile(model_name: str) -> str:
 
     return "none"
 
-def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str | None = None, title: str | None = None):
+def apply_embedding_prompt(cfg: dict, text_or_texts: str, *, mode: str, backend: str | None = None, title: str | None = None) -> str | list[str]:
     prompt_cfg = cfg.get("embedding_prompts", {}) or {}
 
     enabled = str(prompt_cfg.get("enabled", True)).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -79,7 +79,7 @@ def apply_embedding_prompt(cfg: dict, text_or_texts, *, mode: str, backend: str 
 def pack_vec(vec: list[float]) -> tuple[bytes, int]:
     return struct.pack(f"<{len(vec)}f", *vec), len(vec)
 
-def post_json(url: str, payload: dict, timeout: int = 180):
+def post_json(url: str, payload: dict, timeout: int = 180) -> dict[str, Any]:
     r = session.post(url, json=payload, timeout=timeout)
 
     if r.status_code == 400:

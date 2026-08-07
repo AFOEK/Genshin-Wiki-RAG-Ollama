@@ -1,6 +1,9 @@
 import logging
 import re
+import sqlite3
 from datetime import datetime, timezone
+from typing import Any
+from collections.abc import Callable
 
 from utils.hashing import sha256_text
 from utils.textproc import normalize, chunk_text
@@ -11,9 +14,11 @@ from core.parent import mark_parent_dirty_doc
 from core.splade import mark_splade_dirty_doc
 from core.fts import mark_fts_dirty_docs
 
-log = logging.getLogger(__name__)
-MOVED_URL_SOURCE = set()
+EmbedFn = Callable[[str], tuple[bytes, int]]
 
+log = logging.getLogger(__name__)
+
+MOVED_URL_SOURCE = set()
 
 def defang_tables(s: str) -> str:
     lines = s.splitlines()
@@ -30,7 +35,17 @@ def defang_tables(s: str) -> str:
         s = s.replace("{{", " ").replace("}}", " ")
     return s
 
-def process_document(conn, embed_fn, config, source, url, title, raw_text, tier="primary", weight=1.0, do_embed: bool=True, last_modified=None, etag=None):
+def process_document(conn: sqlite3.Connection, embed_fn: EmbedFn, config: dict[str, Any], source: str, url: str, title: str, raw_text: str, *, tier: str = "primary", weight: float =1.0, do_embed: bool=True, last_modified: str | None = None, etag: str | None =None) -> list[tuple[int, str]]:
+    raw_text = str(raw_text or "").strip()
+
+    if not raw_text:
+        log.warning("[PIPELINE] Refusing empty documents: source: %s, url: %s", source, url)
+        return []
+
+    if (source == "game8" and len(raw_text) < 800):
+        log.warning("[GAME8] Refusing undersized document url: %s chars: %d", url, len(raw_text))
+        return []
+    
     cur = conn.cursor()
     source_cfg = next(
         (
@@ -163,6 +178,32 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
 
         norm = normalize(cleaned)
         norm_hash = sha256_text(norm)
+
+        if source == "game8":
+            cur.execute(
+                """
+                SELECT
+                    doc_id,
+                    url,
+                    title
+                FROM docs
+                WHERE source = 'game8'
+                AND norm_hash = ?
+                AND url <> ?
+                AND status = 1
+                LIMIT 1
+                """,
+                (norm_hash, url,),)
+
+            duplicate = cur.fetchone()
+            if duplicate is not None:
+                duplicate_doc_id = int(duplicate[0])
+                duplicate_url = str(duplicate[1])
+                duplicate_title = str(duplicate[2] or "")
+                log.warning("[GAME8] Rejecting duplicate body " "url=%s duplicate_doc_id=%d " "duplicate_url=%s " "duplicate_title=%r", url, duplicate_doc_id, duplicate_url, duplicate_title,)
+                conn.rollback()
+                return []
+            
         chunks = chunk_text(norm, config["pipeline"]["chunk_size"], config["pipeline"]["chunk_overlap"])
 
         global_filter_cfg = config.get("filters", {}) or {}
@@ -218,64 +259,8 @@ def process_document(conn, embed_fn, config, source, url, title, raw_text, tier=
             raw_zst_len = len(raw_zst)
 
         if not chunks:
-            log.warning("[SKIP] No chunks produced source=%s title=%s url=%s", source, title, url)
-            existing_doc_id = row[0] if row else None
-            if existing_doc_id is not None:
-                cur.execute(
-                    """
-                    DELETE FROM embeddings
-                    WHERE chunk_id IN (
-                        SELECT chunk_id
-                        FROM chunks
-                        WHERE doc_id=?
-                    )
-                    """,
-                    (existing_doc_id,),
-                )
-                cur.execute("DELETE FROM chunks WHERE doc_id=?", (existing_doc_id,))
-                mark_fts_dirty_docs(conn, existing_doc_id, reason="no_chunks")
-                mark_parent_dirty_doc(conn, existing_doc_id, reason="no_chunks")
-
-                cur.execute(
-                    """
-                    UPDATE docs
-                    SET status=0,
-                        title=?,
-                        fetched_at=?,
-                        raw_hash=?,
-                        norm_hash=?,
-                        tier=?,
-                        weight=?,
-                        last_modified=?,
-                        etag=?,
-                        version_label=?,
-                        version_ord=?,
-                        raw_zst=?,
-                        raw_len=?,
-                        raw_zst_len=?
-                    WHERE doc_id=?
-                    """,
-                    (
-                        title,
-                        datetime.now(timezone.utc).isoformat(),
-                        raw_hash,
-                        norm_hash,
-                        tier,
-                        weight,
-                        last_modified,
-                        etag,
-                        version_label,
-                        version_ord,
-                        raw_zst,
-                        raw_len,
-                        raw_zst_len,
-                        existing_doc_id,
-                    ),
-                )
-                conn.commit()
-            else:
-                conn.commit()
-
+            log.warning("[PIPELINE] No usable chunks producedm preserving previous document source=%s title=%s url=%s", source, title, url,)
+            conn.rollback()
             return []
 
         cur.execute(
