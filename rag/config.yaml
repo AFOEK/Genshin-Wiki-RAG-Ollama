@@ -110,6 +110,25 @@ query_expansion:
   max_total_candidates: 1800
   rrf_k: 60
 
+unsupported_claim_detection:
+  enabled: true
+  action: repair
+  fail_closed: true
+  model: "qwen3.5:9b"
+  repair_model: "qwen3.5:9b"
+
+  min_confidence: 0.85
+  temperature: 0.0
+  repair_temperature: 0.0
+  top_p: 0.8
+  top_k: 20
+  num_predict: 1024
+  repair_num_predict: 1024
+  
+  broad_max_chunks: 30
+  broad_max_context_chars: 30000
+  fallback_message: "I couldn't produce a sufficiently grounded answer from the retrieved context."
+
 multi_hop:
   enabled: true
   mode: auto

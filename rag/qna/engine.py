@@ -20,6 +20,7 @@ from .multi_hop import generate_bridge_queries, merge_multi_hop_results
 from .parent_child import fetch_parent_context_chunks
 from .query_decomposition import decompose_query, merge_decomposition_runs
 from .query_expansion import build_retrieval_queries
+from .claim_validation import enforce_claim_support, build_broad_validation_context
 from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
@@ -1087,32 +1088,29 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
     log.info("[RETRIEVAL_CACHE] stored key=%s chunks=%d context_chars=%d", cache_key[:12], len(result.selected_chunks), len(result.context))
     return result
 
-def answer_question(cfg: dict, question: str, *, retriever_name: str = "hybrid", direct_top_k: int = 12, broad_top_k: int = 60, summarize_batch_size: int = 8, backend: str | None = None) -> str:
-    result = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, broad_top_k=broad_top_k, backend=backend)
+def answer_question(cfg: dict,question: str,*,retriever_name: str="hybrid",direct_top_k: int=12,broad_top_k: int=60,summarize_batch_size: int=8,backend: str|None=None) -> str:
+    result=retrieve_question_context(cfg,question,retriever_name=retriever_name,direct_top_k=direct_top_k,broad_top_k=broad_top_k,backend=backend)
     if not result.selected_chunks:
         return "I couldn't retrieve any relevant chunks from the knowledge base."
 
     if result.broad:
-        runtime = cfg.get("runtime", {}) or {}
-        provider = str(runtime.get("qa_provider", "ollama")).strip().lower()
-        if provider == "llamacpp":
-            qa_timeout = int(cfg.get("llamacpp", {}).get("timeout", 300))
-        else:
-            qa_timeout = int(cfg.get("ollama", {}).get("timeout", 1800))
+        runtime=cfg.get("runtime",{}) or {}
+        provider=str(runtime.get("qa_provider","ollama")).strip().lower()
+        qa_timeout=int(cfg.get("llamacpp",{}).get("timeout",300)) if provider=="llamacpp" else int(cfg.get("ollama",{}).get("timeout",1800))
+        notes=[summarize_chunk_group(cfg,question,group) for group in chunk_batch(result.candidate_chunks,summarize_batch_size)]
+        answer=synthesize_final_answer(cfg,question,notes,qa_timeout).strip()
+        validation_context=build_broad_validation_context(result.candidate_chunks,max_chunks=int((cfg.get("unsupported_claim_detection",{}) or {}).get("broad_max_chunks",30)),max_chars=int((cfg.get("unsupported_claim_detection",{}) or {}).get("broad_max_context_chars",30000)))
+    else:
+        answer_style_cfg=cfg.get("answer_style",{}) or {}
+        prompt=build_grounded_answer_prompt(question,result.context,intent=result.intent,build_subtypes=result.build_subtypes,max_recommendations=int(answer_style_cfg.get("max_build_recommendations",5)))
+        answer=generate(cfg,prompt).strip()
+        validation_context=result.context
 
-        notes = []
-        for group in chunk_batch(result.candidate_chunks, summarize_batch_size):
-            notes.append(summarize_chunk_group(cfg, question, group))
-        return synthesize_final_answer(cfg, question, notes, qa_timeout)
-    
-    answer_style_cfg = cfg.get("answer_style", {}) or {} 
-    prompt = build_grounded_answer_prompt(question, result.context, intent=result.intent, build_subtypes=result.build_subtypes, max_recommendations=int(answer_style_cfg.get("max_build_recommendations", 5)))
-    answer = generate(cfg, prompt).strip()
+    if len(answer.split())<3:
+        log.warning("[QNA] Generator returned suspiciously short output: %r",answer)
+        if result.intent=="lookup":
+            return "I couldn't produce a reliable answer from the retrieved context."
 
-    if len(answer.split()) < 3:
-        log.warning("[QNA] Generator returned suspiciously short output: %r", answer)
-
-        if result.intent == "lookup":
-            return ("I couldn't produce a reliable answer from the retrieved context.")
-
+    answer, claim_report=enforce_claim_support(cfg,question,answer,validation_context)
+    log.info("[CLAIM_CHECK] broad=%s passed=%s claims=%d unsafe=%d",result.broad,claim_report.get("passed"),len(claim_report.get("claims",[])),len(claim_report.get("unsafe_claims",[])))
     return answer

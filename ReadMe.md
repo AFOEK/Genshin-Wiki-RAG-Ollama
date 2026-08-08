@@ -472,7 +472,7 @@ python fine_tune/internet_validation/validate_dataset.py
 - [x] SPLADE support. [^5]
 - [ ] RAG-Fusion retrieval.
 - [ ] Query complexity classification.
-- [ ] LLM query expansion.
+- [x] LLM query expansion.
 - [ ] Retrieval confidence scoring.
 - [ ] Corrective RAG support.
 - [ ] Automatic retrieval retry/fallback.
@@ -486,7 +486,7 @@ python fine_tune/internet_validation/validate_dataset.py
 - [ ] LambdaMART feature fusion.
 - [ ] Trained retrieval score calibration.
 - [ ] Claim-level grounding verification.
-- [ ] Unsupported-claim detection.
+- [x] Unsupported-claim detection.
 - [ ] Answer regeneration on grounding failure.
 - [ ] SearXNG query result validations. 
 - [ ] Native retrieval benchmark suite.
