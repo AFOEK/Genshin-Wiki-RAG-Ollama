@@ -8,7 +8,7 @@ faiss_path: data/faiss
 ollama: 
   base_url: http://localhost:11434
   embedding_model: snowflake-arctic-embed2:568m #snowflake-arctic-embed:xs | all-minilm:latest | snowflake-arctic-embed2:568m
-  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
+  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma4:12b | deepseek-r1:14b | qwen3.6:27b | qwen3.5:9b | gemma3:12b
   qa_timeout: 900
   timeout: 900
   connect_timeout: 15
@@ -75,7 +75,7 @@ splade:
 query_decomposition:
   enabled: true
   mode: auto  # auto | always | off
-  model: qwen3.5:9b
+  model: qwen3.6:27b
   think: false
   timeout: 120
 
@@ -96,7 +96,7 @@ query_decomposition:
 
 query_expansion:
   enabled: true
-  model: "qwen3.5:9b"
+  model: qwen3.6:27b
   max_expansions: 2
   include_original: true
   temperature: 0.2
@@ -114,8 +114,8 @@ unsupported_claim_detection:
   enabled: true
   action: repair
   fail_closed: true
-  model: "qwen3.5:9b"
-  repair_model: "qwen3.5:9b"
+  model: qwen3.6:27b
+  repair_model: qwen3.6:27b
 
   min_confidence: 0.85
   temperature: 0.0
@@ -124,7 +124,7 @@ unsupported_claim_detection:
   top_k: 20
   num_predict: 1024
   repair_num_predict: 1024
-  
+
   broad_max_chunks: 30
   broad_max_context_chars: 30000
   fallback_message: "I couldn't produce a sufficiently grounded answer from the retrieved context."
@@ -132,7 +132,7 @@ unsupported_claim_detection:
 multi_hop:
   enabled: true
   mode: auto
-  model: qwen3.5:9b
+  model: qwen3.6:27b
   think: false
   timeout: 120
   min_words: 7
@@ -185,7 +185,7 @@ retrieval_cache:
 
 hyde:
   enabled: true
-  model: qwen3.5:9b # deepseek-r1:14b
+  model: qwen3.6:27b # deepseek-r1:14b
   think: false
   temperature: 0.0
   top_p: 0.9
@@ -290,8 +290,8 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3.5:9b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
-  answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.5:9b
+  draft_model: qwen3.6:27b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
+  answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.6:27b
   draft_think: false
   answer_think: true
   validator_think: false
@@ -323,7 +323,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3.5:9b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.5:9b
+  validator_model: qwen3.6:27b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 5
 
@@ -377,7 +377,7 @@ internet_validation:
   enabled: True
   searxng_url: "http://localhost:8888"
   ollama_url: "http://localhost:11434"
-  ollama_model: "qwen3.5:9b"
+  ollama_model: "qwen3.6:27b"
 
   source_workers: 6
   results_per_source: 3

@@ -174,54 +174,48 @@ Original question:
     log.info("[DECOMP] original=%r subqueries=%s", question, queries,)
     return queries
 
-def merge_decomposition_runs(runs: list[tuple[str, list[tuple[int, float]], dict[int, dict], float,]], *, rrf_k: int, rrf_scale: float, max_total_candidates: int) -> tuple[list[tuple[int, float]], dict[int, dict]]:
-    merged: dict[int, dict] = {}
+def merge_query_runs(runs:list[tuple[str,list[tuple[int,float]],dict[int,dict],float]],*,rrf_k:int,rrf_scale:float,max_total_candidates:int)->tuple[list[tuple[int,float]],dict[int,dict]]:
+    merged:dict[int,dict]={}
 
-    for query_number, (query_text, results, signals, query_weight,) in enumerate(runs):
-        for rank, (chunk_id, _) in enumerate(results, start=1,):
-            chunk_id = int(chunk_id)
-
-            destination = merged.setdefault(
-                chunk_id,
-                {
-                    "rrf_score": 0.0,
-                    "decomposition_hits": 0,
-                    "decomposition_best_rank": None,
-                    "decomposition_query_ids": [],
-                },
-            )
+    for query_number,(query_text,results,signals,query_weight) in enumerate(runs):
+        for rank,(chunk_id,_) in enumerate(results,start=1):
+            chunk_id=int(chunk_id)
+            destination=merged.setdefault(chunk_id,{
+                "rrf_score":0.0,
+                "query_hits":0,
+                "query_best_rank":None,
+                "query_ids":[],
+            })
 
             for channel in CHANNELS:
-                destination.setdefault(f"{channel}_score", 0.0)
-                destination.setdefault(f"{channel}_rank", None)
-                destination.setdefault(f"in_{channel}", False)
+                destination.setdefault(f"{channel}_score",0.0)
+                destination.setdefault(f"{channel}_rank",None)
+                destination.setdefault(f"in_{channel}",False)
 
-            destination["rrf_score"] += (rrf_scale * float(query_weight) / (rrf_k + rank))
+            destination["rrf_score"]+=rrf_scale*float(query_weight)/(rrf_k+rank)
+            destination["query_hits"]+=1
+            destination["query_ids"].append(query_number)
 
-            destination["decomposition_hits"] += 1
-            destination["decomposition_query_ids"].append(query_number)
-            best_rank = destination["decomposition_best_rank"]
-            destination["decomposition_best_rank"] = (rank if best_rank is None else min(best_rank, rank))
-            source = signals.get(chunk_id, {})
+            best_rank=destination["query_best_rank"]
+            destination["query_best_rank"]=rank if best_rank is None else min(best_rank,rank)
+            source=signals.get(chunk_id,{})
 
             for channel in CHANNELS:
-                in_key = f"in_{channel}"
-                rank_key = f"{channel}_rank"
-                score_key = f"{channel}_score"
-                destination[in_key] = (bool(destination[in_key]) or bool(source.get(in_key)))
-                source_rank = source.get(rank_key)
+                in_key=f"in_{channel}"
+                rank_key=f"{channel}_rank"
+                score_key=f"{channel}_score"
+                destination[in_key]=bool(destination[in_key]) or bool(source.get(in_key))
+                source_rank=source.get(rank_key)
 
                 if source_rank is not None:
-                    current_rank = destination[rank_key]
-                    destination[rank_key] = (int(source_rank) if current_rank is None else min(int(current_rank), int(source_rank)))
+                    current_rank=destination[rank_key]
+                    destination[rank_key]=int(source_rank) if current_rank is None else min(int(current_rank),int(source_rank))
 
-                destination[score_key] = max(float(destination.get(score_key, 0.0,)), float(source.get(score_key, 0.0,) or 0.0))
+                destination[score_key]=max(float(destination.get(score_key,0.0)),float(source.get(score_key,0.0) or 0.0))
 
-    ranked = sorted(((chunk_id, signal["rrf_score"]) for chunk_id, signal in merged.items()), key=lambda item: item[1], reverse=True)
+    ranked=sorted(((chunk_id,signal["rrf_score"]) for chunk_id,signal in merged.items()),key=lambda item:item[1],reverse=True)
+    if max_total_candidates>0:
+        ranked=ranked[:max_total_candidates]
 
-    if max_total_candidates > 0:
-        ranked = ranked[:max_total_candidates]
-
-    retained_ids = {chunk_id for chunk_id, _ in ranked}
-    retained_signals = {chunk_id: merged[chunk_id] for chunk_id in retained_ids}
-    return ranked, retained_signals
+    retained_ids={chunk_id for chunk_id,_ in ranked}
+    return ranked,{chunk_id:merged[chunk_id] for chunk_id in retained_ids}

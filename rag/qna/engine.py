@@ -18,7 +18,7 @@ from .cross_encoder import cross_encoder_rerank
 from .context_expand import expand_context_windows
 from .multi_hop import generate_bridge_queries, merge_multi_hop_results
 from .parent_child import fetch_parent_context_chunks
-from .query_decomposition import decompose_query, merge_decomposition_runs
+from .query_decomposition import decompose_query, merge_query_runs
 from .query_expansion import build_retrieval_queries
 from .claim_validation import enforce_claim_support, build_broad_validation_context
 from .types import RetrievalResult
@@ -334,7 +334,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 sub_results, sub_signals = search_hybrid_fusion(name, subquery_k, subquery)
                 runs.append((subquery, sub_results, sub_signals, float(decomp_cfg.get("subquery_weight", 0.8))))
 
-            merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800)))
+            merged_results, merged_signals = merge_query_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800)))
             log.info("[DECOMP] retriever=%s original=%d subqueries=%d candidates=%d", name, len(original_results), len(decomposition_subqueries), len(merged_results))
             return merged_results, merged_signals
 
@@ -346,7 +346,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 expansion_results, expansion_signals = search_hybrid_fusion(name, expansion_k, expanded_query)
                 runs.append((expanded_query, expansion_results, expansion_signals, expansion_weight))
 
-            merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=int(expansion_cfg.get("rrf_k", rrf_k)), rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(expansion_cfg.get("max_total_candidates", 1800)))
+            merged_results, merged_signals = merge_query_runs(runs, rrf_k=int(expansion_cfg.get("rrf_k", rrf_k)), rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(expansion_cfg.get("max_total_candidates", 1800)))
             log.info("[QUERY_EXPANSION] retriever=%s original=%d expansions=%d candidates=%d", name, len(original_results), len(expanded_queries), len(merged_results))
             return merged_results, merged_signals
 
@@ -630,7 +630,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         lookup_cfg = cfg.get("lookup", {}) or {}
         correction_k = min(candidate_k, int(lookup_cfg.get("correction_candidate_k", 300,)))
         correction_results, correction_signals = (search_hybrid_fusion(retriever_name, correction_k, ranking_question))
-        results, retrieval_signals = merge_decomposition_runs(
+        results, retrieval_signals = merge_query_runs(
             [
                 (
                     question,

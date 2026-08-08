@@ -464,7 +464,7 @@ python fine_tune/internet_validation/validate_dataset.py
 - [x] Parent-child retriever.
 - [x] Cache layer retriever.
 - [x] Query decomposition.
-- [ ] Sub-query retrieval and fusion.
+- [x] Sub-query retrieval and fusion.
 - [x] HyDE retrieval support.
 - [ ] Multi-query retrieval.
 - [x] Adaptive HyDE fallback.
