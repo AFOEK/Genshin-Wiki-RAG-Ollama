@@ -106,6 +106,9 @@ query_expansion:
   max_query_chars: 300
   original_weight: 1.0
   expansion_weight: 0.75
+  candidate_k_per_expansion: 300
+  max_total_candidates: 1800
+  rrf_k: 60
 
 multi_hop:
   enabled: true

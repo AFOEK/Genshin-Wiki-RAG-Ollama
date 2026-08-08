@@ -6,26 +6,10 @@ import re
 
 from typing import Any
 
-from qna.generators import generate
+from .generators import generate
+from .utils import as_bool
 
 log = logging.getLogger(__name__)
-
-QUERY_EXPANSION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "queries": {
-            "type": "array",
-            "items": {
-                "type": "string",
-            },
-            "maxItems": 5,
-        },
-    },
-    "required": [
-        "queries",
-    ],
-    "additionalProperties": False,
-}
 
 def normalize_query(query: str) -> str:
     return re.sub(r"\s+", " ", str(query)).strip()
@@ -49,10 +33,15 @@ def dedupe_queries(queries: list[str]) -> list[str]:
 
     return output
 
-def build_retrieval_queries(cfg: dict[str, Any], question: str, *, max_expansions: int = 3, model: str | None = None) -> list[str]:
+def build_retrieval_queries(cfg: dict[str, Any], question: str, *, max_expansions: int | None = None, model: str | None = None) -> list[str]:
+    expansion_cfg = cfg.get("query_expansion", {}) or {}
     original = normalize_query(question)
-    expansions = expand_query(cfg, original, max_expansions=max_expansions, model=model,)
-    return dedupe_queries([original, *expansions,])
+    expansions = expand_query(cfg, original, max_expansions=max_expansions, model=model)
+    include_original = as_bool(expansion_cfg.get("include_original", True))
+    if include_original:
+        return dedupe_queries([original, *expansions])
+
+    return dedupe_queries(expansions)
 
 def parse_expansion_json(raw: str) -> dict[str, Any]:
     text = str(raw).strip()
@@ -70,15 +59,29 @@ def parse_expansion_json(raw: str) -> dict[str, Any]:
 
     return value
 
-def expand_query(cfg: dict[str, Any], question: str, *, max_expansions: int = 3, model: str | None = None) -> list[str]:
+def expand_query(cfg: dict[str, Any], question: str, *, max_expansions: int | None = None, model: str | None = None) -> list[str]:
+    expansion_cfg = cfg.get("query_expansion", {}) or {}
+
     question = normalize_query(question)
+    max_query_chars = max(1, int(expansion_cfg.get("max_query_chars", 300)))
+    question = question[:max_query_chars].strip()
 
     if not question:
         return []
 
+    if max_expansions is None:
+        max_expansions = int(expansion_cfg.get("max_expansions", 2))
+
+    max_expansions = max(0, min(5, int(max_expansions)))
+    if max_expansions == 0:
+        return []
+
+    if model is None:
+        configured_model = str(expansion_cfg.get("model", "")).strip()
+        model = configured_model or None
+
     prompt = f"""
-Generate alternative search queries for a Genshin Impact
-retrieval system.
+Generate alternative search queries for a Genshin Impact retrieval system.
 
 Original query:
 {question}
@@ -98,29 +101,38 @@ Rules:
 
 Format:
 {{
-  "queries": ["query 1", "query 2"]
+  "queries": [
+    "query 1",
+    "query 2"
+  ]
 }}
 """.strip()
 
-    raw = generate(cfg, prompt, model_override=model, think_override=False,
+    raw = generate(
+        cfg,
+        prompt,
+        model_override=model,
+        think_override=False,
         options_override={
-            "temperature": 0.2,
-            "top_p": 0.9,
-            "top_k": 30,
-            "num_predict": 256,
-        })
+            "temperature": float(expansion_cfg.get("temperature", 0.2)),
+            "top_p": float(expansion_cfg.get("top_p", 0.9)),
+            "top_k": int(expansion_cfg.get("top_k", 30)),
+            "num_predict": int(expansion_cfg.get("num_predict", 256)),
+        },
+    )
 
     try:
-        result = json.loads(str(raw).strip())
-    except json.JSONDecodeError:
-        log.warning("[QUERY_EXPANSION] invalid JSON " "question=%r raw=%r", question, str(raw)[:500],)
+        result = parse_expansion_json(str(raw))
+    except (json.JSONDecodeError, ValueError) as exc:
+        log.warning("[QUERY_EXPANSION] invalid JSON question=%r error=%s raw=%r", question, exc, str(raw)[:500])
         return []
 
-    queries = result.get("queries", [],)
-    if not isinstance(queries, list,):
+    queries = result.get("queries", [])
+    if not isinstance(queries, list):
         return []
 
     queries = dedupe_queries([str(query) for query in queries])
-    original_key = (question.casefold())
+    original_key = question.casefold()
     queries = [query for query in queries if query.casefold() != original_key]
+
     return queries[:max_expansions]

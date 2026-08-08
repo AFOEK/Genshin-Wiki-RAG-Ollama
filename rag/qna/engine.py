@@ -19,6 +19,7 @@ from .context_expand import expand_context_windows
 from .multi_hop import generate_bridge_queries, merge_multi_hop_results
 from .parent_child import fetch_parent_context_chunks
 from .query_decomposition import decompose_query, merge_decomposition_runs
+from .query_expansion import build_retrieval_queries
 from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
@@ -104,6 +105,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     hyde_error: str | None = None
     decomposition_subqueries: list[str] = []
     multi_hop_queries: list[str] = []
+    expanded_queries: list[str] = []
+    query_expansion_enabled = False
     
     hyde_cfg = cfg.get("hyde", {}) or {}
     hyde_enabled = as_bool(hyde_cfg.get("enabled", False))
@@ -320,21 +323,33 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     
     def search_hybrid_fusion_decomposed(name: str, k: int, *, force_hyde: bool = False, force_reason: str | None = None):
         decomp_cfg = cfg.get("query_decomposition", {}) or {}
+        expansion_cfg = cfg.get("query_expansion", {}) or {}
         original_results, original_signals = search_hybrid_fusion(name, k, question, force_hyde=force_hyde, force_reason=force_reason)
 
-        if not decomposition_subqueries:
-            return original_results, original_signals
+        if decomposition_subqueries:
+            runs = [(question, original_results, original_signals, float(decomp_cfg.get("original_weight", 1.0)))]
+            subquery_k = min(k, int(decomp_cfg.get("candidate_k_per_subquery", 300)))
+            for subquery in decomposition_subqueries:
+                sub_results, sub_signals = search_hybrid_fusion(name, subquery_k, subquery)
+                runs.append((subquery, sub_results, sub_signals, float(decomp_cfg.get("subquery_weight", 0.8))))
 
-        runs = [(question, original_results, original_signals, float(decomp_cfg.get("original_weight", 1.0)))]
-        subquery_k = min(k, int(decomp_cfg.get("candidate_k_per_subquery", 300)))
+            merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800)))
+            log.info("[DECOMP] retriever=%s original=%d subqueries=%d candidates=%d", name, len(original_results), len(decomposition_subqueries), len(merged_results))
+            return merged_results, merged_signals
 
-        for subquery in decomposition_subqueries:
-            sub_results, sub_signals = search_hybrid_fusion(name, subquery_k, subquery)
-            runs.append((subquery, sub_results, sub_signals, float(decomp_cfg.get("subquery_weight", 0.8))))
+        if expanded_queries:
+            runs = [(question, original_results, original_signals, float(expansion_cfg.get("original_weight", 1.0)))]
+            expansion_k = min(k, int(expansion_cfg.get("candidate_k_per_expansion", 300)))
+            expansion_weight = float(expansion_cfg.get("expansion_weight", 0.70))
+            for expanded_query in expanded_queries:
+                expansion_results, expansion_signals = search_hybrid_fusion(name, expansion_k, expanded_query)
+                runs.append((expanded_query, expansion_results, expansion_signals, expansion_weight))
 
-        merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(decomp_cfg.get("max_total_candidates", 1800)))
-        log.info("[DECOMP] retriever=%s original=%d subqueries=%d candidates=%d", name, len(original_results), len(decomposition_subqueries), len(merged_results))
-        return merged_results, merged_signals
+            merged_results, merged_signals = merge_decomposition_runs(runs, rrf_k=int(expansion_cfg.get("rrf_k", rrf_k)), rrf_scale=float(retrieval_cfg.get("rrf_scale", 10.0)), max_total_candidates=int(expansion_cfg.get("max_total_candidates", 1800)))
+            log.info("[QUERY_EXPANSION] retriever=%s original=%d expansions=%d candidates=%d", name, len(original_results), len(expanded_queries), len(merged_results))
+            return merged_results, merged_signals
+
+        return original_results, original_signals
 
     def should_trigger_hyde(faiss_results: list[tuple[int, float]], bm25_results: list[tuple[int, float]]) -> tuple[bool, str]:
         if not hyde_enabled:
@@ -457,7 +472,17 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         retriever_name = "sqlite"
 
     if retriever_name in HYBRID_FUSION_SPECS:
-        decomposition_subqueries = decompose_query(cfg, question, backend=backend)
+        decomposition_subqueries = decompose_query(cfg, question, backend=backend,)
+        expansion_cfg = (
+            cfg.get("query_expansion", {}) or {})
+
+        query_expansion_enabled = as_bool(
+            expansion_cfg.get("enabled", False))
+
+        if (query_expansion_enabled and not decomposition_subqueries):
+            retrieval_queries = (build_retrieval_queries(cfg, question, max_expansions = max(0, min(5, int(expansion_cfg.get("max_expansions", 2)))), model=(str(expansion_cfg.get("model")).strip() if expansion_cfg.get("model") else None)))
+            expanded_queries = (retrieval_queries[1:])
+            log.info("[QUERY_EXPANSION] original=%r expansions=%r", question, expanded_queries)
 
     if retriever_name == "faiss":
         log.info("[QNA] using FAISS retriever")
@@ -799,6 +824,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "hyde_fallback_reason": hyde_fallback_reason,
                 "hyde_error": hyde_error,
                 "hyde_candidate_count": hyde_signal_count,
+                "query_expansion_enabled": (query_expansion_enabled),
+                "query_expansion_used": bool(expanded_queries),
+                "expanded_queries": list(expanded_queries),
                 "query_decomposition_enabled": as_bool((cfg.get( "query_decomposition",{}) or {}).get("enabled", False,)),
                 "query_decomposition_used": bool(decomposition_subqueries), "decomposition_subqueries": list(decomposition_subqueries),
                 "multi_hop_enabled": as_bool((cfg.get("multi_hop", {}) or {}).get("enabled", False)),
@@ -920,6 +948,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             "hyde_used": hyde_used,
             "hyde_candidate_count": hyde_signal_count,
             "hyde_selected_count": hyde_selected_count,
+            "query_expansion_enabled": (query_expansion_enabled),
+            "query_expansion_used": bool(expanded_queries),
+            "expanded_queries": list(expanded_queries),
             "query_decomposition_enabled": as_bool((cfg.get("query_decomposition", {}) or {}).get("enabled", False)),
             "query_decomposition_used": bool(decomposition_subqueries),
             "decomposition_subqueries": list(decomposition_subqueries),
@@ -1024,8 +1055,26 @@ def retrieve_question_context(cfg: dict, question: str, *, retriever_name: str =
 
     db_path = resolve_db_path(cfg)
     cache_cfg = cfg.get("retrieval_cache", {}) or {}
+    expansion_cfg = (cfg.get("query_expansion", {}) or {})
+    expansion_signature = {
+        "enabled": as_bool(expansion_cfg.get("enabled", False)),
+        "model": str(expansion_cfg.get("model", "")),
+        "max_expansions": int(expansion_cfg.get("max_expansions", 2)),
+        "original_weight": float(expansion_cfg.get("original_weight", 1.0)),
+        "expansion_weight": float(expansion_cfg.get("expansion_weight", 0.70)),
+        "rrf_k": int(expansion_cfg.get("rrf_k", 60)),
+    }
     cache_version = int(cache_cfg.get("version", 1))
-    cache_key = make_retrieval_cache_key(question=question, retriever_name=retriever_name, backend=backend, direct_top_k=direct_top_k, intent=f"{intent}:v{cache_version}", subtypes=build_subtypes, db_path=db_path, index_meta={})
+    cache_key = make_retrieval_cache_key(
+        question=question,
+        retriever_name=retriever_name,
+        backend=backend,
+        direct_top_k=direct_top_k,
+        intent=f"{intent}:v{cache_version}",
+        subtypes=build_subtypes,
+        db_path=db_path,
+        index_meta={"query_expansion": expansion_signature},
+    )
 
     cached = cache.get(cache_key)
     if cached is not None:
