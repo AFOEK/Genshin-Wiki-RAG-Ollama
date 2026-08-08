@@ -75,7 +75,7 @@ splade:
 query_decomposition:
   enabled: true
   mode: auto  # auto | always | off
-  model: qwen3.6:27b
+  model: qwen3.5:9b
   think: false
   timeout: 120
 
@@ -96,7 +96,7 @@ query_decomposition:
 
 query_expansion:
   enabled: true
-  model: qwen3.6:27b
+  model: qwen3.5:9b
   max_expansions: 2
   include_original: true
   temperature: 0.2
@@ -185,7 +185,7 @@ retrieval_cache:
 
 hyde:
   enabled: true
-  model: qwen3.6:27b # deepseek-r1:14b
+  model: qwen3.5:9b # deepseek-r1:14b
   think: false
   temperature: 0.0
   top_p: 0.9
@@ -290,8 +290,8 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3.6:27b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
-  answer_model: deepseek-r1:14b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.6:27b
+  draft_model: qwen3.5:9b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
+  answer_model: qwen3.6:27b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.6:27b
   draft_think: false
   answer_think: true
   validator_think: false
