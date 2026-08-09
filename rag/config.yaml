@@ -62,7 +62,7 @@ splade:
   cache_folder: data/models
   model: naver/splade-v3 #naver/splade-v3 | naver/splade-cocondenser-ensembledistil
   device: auto    # auto | cpu | cuda
-  batch_size: 32  # 32-64, 64 for GPU
+  batch_size: 64  # 32-64, 64 for GPU
   max_length: 256 # 512 | 256
   max_active_dims: 256
   encode_block_size: 512
@@ -356,12 +356,12 @@ dataset_creation:
 
   draft_jitter:
     enabled: true
-    temperature_min: 0.05
+    temperature_min: 0.0
     temperature_max: 0.25
     top_p_min: 0.85
     top_p_max: 0.95
-    top_k_min: 40
-    top_k_max: 75
+    top_k_min: 45
+    top_k_max: 85
     repeat_penalty_min: 1.00
     repeat_penalty_max: 1.06
 
