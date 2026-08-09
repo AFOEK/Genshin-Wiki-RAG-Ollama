@@ -21,6 +21,7 @@ from .parent_child import fetch_parent_context_chunks
 from .query_decomposition import decompose_query, merge_query_runs
 from .query_expansion import build_retrieval_queries
 from .claim_validation import enforce_claim_support, build_broad_validation_context
+from .lambdamart import LambdaMARTRanker
 from .types import RetrievalResult
 
 log = logging.getLogger(__name__)
@@ -185,6 +186,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 expected_model=expected_faiss_model,
                 mismatch_policy=faiss_mismatch_policy,
             ))
+    def get_lambdamart_ranker():
+        lcfg=cfg.get("lambdamart",{}) or {}
+        raw=Path(str(lcfg.get("model_path","data/models/lambdamart.txt")))
+        path=raw if raw.is_absolute() else resolve_storage_root(cfg)/raw
+        return RESOURCES.get(("lambdamart",str(path.resolve())),path_signature(path),lambda:LambdaMARTRanker(path))
 
     def search_hyde(k: int) -> list[tuple[int, float]]:
         nonlocal hyde_document_cache
@@ -725,18 +731,33 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     baseline_label, baseline_ord = get_kqm_news_fetch_version_baseline(conn)
     log.info("[QNA] current version baseline from kqm_news: label=%s ord=%s", baseline_label, baseline_ord,)
 
-    if reranker_mode in ("feature", "cross_encoder"):
-        chunks = rerank_chunks(ranking_question, chunks, retrieval_signals, baseline_ord,)
-        dedupe_scores = {int(row["chunk_id"]): float(row["_rerank_score"]) for row in chunks}
+    if reranker_mode in ("feature","cross_encoder"):
+        chunks=rerank_chunks(ranking_question,chunks,retrieval_signals,baseline_ord)
     else:
-        dedupe_scores = initial_scores
+        for row in chunks:
+            row["_rerank_score"]=float(initial_scores.get(int(row["chunk_id"]),0.0))
 
-    chunks = dedupe_chunks(chunks, dedupe_scores, max_per_doc=max_per_doc)
-    
-    if reranker_mode == "cross_encoder":
-        chunks = cross_encoder_rerank(ranking_question, chunks, model_name=reranker_cfg.get("cross_encoder_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"), top_n=int(reranker_cfg.get("cross_encoder_top_n", 32)), batch_size=int(reranker_cfg.get("cross_encoder_batch_size", 8)), max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars", 1200)))
-    elif reranker_mode not in ("none", "feature", "cross_encoder"):
+    ltr_cfg=cfg.get("lambdamart",{}) or {}
+    if as_bool(ltr_cfg.get("enabled",False)):
+        ranker=get_lambdamart_ranker()
+        chunks=ranker.rerank(cfg,ranking_question,chunks,retrieval_signals)
+        top_n=int(ltr_cfg.get("top_n",128))
+        if top_n>0:
+            chunks=chunks[:top_n]
+        dedupe_scores={int(row["chunk_id"]):float(row["_ltr_score"]) for row in chunks}
+    else:
+        dedupe_scores={int(row["chunk_id"]):float(row["_rerank_score"]) for row in chunks}
+
+    chunks=dedupe_chunks(chunks,dedupe_scores,max_per_doc=max_per_doc)
+
+    if reranker_mode=="cross_encoder":
+        chunks=cross_encoder_rerank(ranking_question,chunks,model_name=reranker_cfg.get("cross_encoder_model","cross-encoder/ms-marco-MiniLM-L12-v2"),top_n=int(reranker_cfg.get("cross_encoder_top_n",32)),batch_size=int(reranker_cfg.get("cross_encoder_batch_size",8)),max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars",1200)))
+    elif reranker_mode not in ("none","feature","cross_encoder"):
         raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
+
+    for row in chunks:
+        row.pop("_rerank_score",None)
+        row.pop("_ltr_score",None)
 
     effective_lookup_entity = (resolved_lookup_entity or lookup_entity)
     exact_page_entity: str | None = None

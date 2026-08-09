@@ -483,7 +483,7 @@ python fine_tune/internet_validation/validate_dataset.py
 - [ ] ColBERT hybrid retrieval.
 - [ ] Learned sparse retrieval.
 - [ ] Learned-to-rank reranker.
-- [ ] LambdaMART feature fusion.
+- [x] LambdaMART feature fusion.
 - [ ] Trained retrieval score calibration.
 - [ ] Claim-level grounding verification.
 - [x] Unsupported-claim detection.
