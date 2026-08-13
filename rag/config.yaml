@@ -246,6 +246,10 @@ versioning:
     luna ix: 608
     luna 10: 609
     luna x: 609
+
+retrieval_metrics:
+  enabled: true
+  print_every: 25
   
 runtime:
   embedding_provider: ollama   #ollama | llamacpp

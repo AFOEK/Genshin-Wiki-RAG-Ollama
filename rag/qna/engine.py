@@ -64,6 +64,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     db_path = resolve_db_path(cfg)
     faiss_dir = resolve_faiss_dir(cfg)
     splade_dir = resolve_splade_dir(cfg)
+    metrics_enabled=as_bool((cfg.get("retrieval_metrics",{}) or {}).get("enabled",False))
+    metric_candidate_doc_ids=[]
+    metric_reranked_doc_ids=[]
+    metric_context_doc_ids=[]
     tv_cfg = cfg.get("turbovec", {}) or {}
     tv_raw = Path(str(tv_cfg.get("path", "data/turbovec")))
     turbovec_dir = tv_raw if tv_raw.is_absolute() else db_path.parent.parent / tv_raw
@@ -728,6 +732,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     elif intent in ("biography", "location"):
         max_per_doc = max(dedup_max_per_doc, 2)
 
+    if metrics_enabled:
+        rank_index={int(cid): i for i,(cid,_) in enumerate(results)}
+        chunks.sort(key = lambda row: rank_index.get(int(row["chunk_id"]), len(rank_index)))
+        metric_candidate_doc_ids = unique_doc_ids(chunks)
+
     baseline_label, baseline_ord = get_kqm_news_fetch_version_baseline(conn)
     log.info("[QNA] current version baseline from kqm_news: label=%s ord=%s", baseline_label, baseline_ord,)
 
@@ -755,6 +764,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     elif reranker_mode not in ("none","feature","cross_encoder"):
         raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
+    if metrics_enabled:
+        metric_reranked_doc_ids = unique_doc_ids(chunks)
+
     for row in chunks:
         row.pop("_rerank_score",None)
         row.pop("_ltr_score",None)
@@ -772,47 +784,12 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
 
     if exact_page_entity:
         lookup_cfg = cfg.get("lookup", {}) or {}
-
-        exact_seed_chunks = fetch_exact_lookup_seed_chunks(
-            conn,
-            exact_page_entity,
-            max_docs=int(
-                lookup_cfg.get(
-                    "exact_title_max_docs",
-                    2,
-                )
-            ),
-            chunks_per_doc=int(
-                lookup_cfg.get(
-                    "exact_title_chunks_per_doc",
-                    4,
-                )
-            ),
-        )
+        exact_seed_chunks = fetch_exact_lookup_seed_chunks(conn, exact_page_entity, max_docs=int(lookup_cfg.get("exact_title_max_docs", 2)), chunks_per_doc=int(lookup_cfg.get("exact_title_chunks_per_doc", 4)))
 
         if exact_seed_chunks:
-            exact_ids = {
-                int(row["chunk_id"])
-                for row in exact_seed_chunks
-            }
-
-            chunks = (
-                exact_seed_chunks
-                + [
-                    row
-                    for row in chunks
-                    if int(row["chunk_id"])
-                    not in exact_ids
-                ]
-            )
-
-            log.info(
-                "[ENTITY] exact-title seeds "
-                "intent=%s entity=%r chunks=%d",
-                intent,
-                exact_page_entity,
-                len(exact_seed_chunks),
-            )
+            exact_ids = {int(row["chunk_id"]) for row in exact_seed_chunks}
+            chunks = exact_seed_chunks + [row for row in chunks if int(row["chunk_id"]) not in exact_ids]
+            log.info("[ENTITY] exact-title seeds intent=%s entity=%r chunks=%d", intent, exact_page_entity, len(exact_seed_chunks))
 
 
     for row in chunks:
@@ -854,6 +831,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 "multi_hop_enabled": as_bool((cfg.get("multi_hop", {}) or {}).get("enabled", False)),
                 "multi_hop_used": bool(multi_hop_queries),
                 "multi_hop_queries": list(multi_hop_queries),
+                "metric_candidate_doc_ids": metric_candidate_doc_ids,
+                "metric_reranked_doc_ids": metric_reranked_doc_ids,
+                "metric_context_doc_ids": metric_context_doc_ids,
             },
         )
 
@@ -932,6 +912,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 log.warning("[BUILD] final context lost target entity=%r selected_titles=%s", build_entity, [row.get("title") for row in selected_chunks])
 
     selected_chunks = trim_chunks_to_context_budget(selected_chunks, max_chunks=int(answer_context_cfg.get(f"{intent}_max_chunks", default_max_chunks)), max_chars=int(answer_context_cfg.get(f"{intent}_max_chars", default_max_chars)), max_chars_per_chunk=int(answer_context_cfg.get("max_chars_per_chunk", 2200)))
+    if metrics_enabled:
+        metric_context_doc_ids = unique_doc_ids(selected_chunks)
+
     context = build_context(selected_chunks)
     if (intent == "version" and baseline_ord is not None):
         major_version = int(baseline_ord) // 100
@@ -979,7 +962,20 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             "multi_hop_enabled": as_bool((cfg.get("multi_hop", {}) or {}).get("enabled", False)),
             "multi_hop_used": bool(multi_hop_queries),
             "multi_hop_queries": list(multi_hop_queries),
+            "metric_candidate_doc_ids": metric_candidate_doc_ids,
+            "metric_reranked_doc_ids": metric_reranked_doc_ids,
+            "metric_context_doc_ids": metric_context_doc_ids,
         })
+
+def unique_doc_ids(rows: list[dict]) -> list[int]:
+    output = []
+    seen = set()
+    for row in rows:
+        doc_id = int(row["doc_id"])
+        if doc_id not in seen:
+            seen.add(doc_id)
+            output.append(doc_id)
+    return output
 
 def fetch_exact_lookup_seed_chunks(conn, entity: str, *, max_docs: int = 2, chunks_per_doc: int = 4) -> list[dict]:
     entity = re.sub(r"\s+", " ", entity).strip()
