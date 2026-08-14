@@ -12,6 +12,7 @@ STOP = object()
 class EmbedJob:
     chunk_id: int
     text: str
+    title: str | None = None
 
 @dataclass(frozen=True)
 class EmbedResult:
@@ -24,9 +25,10 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
         return []
 
     texts = [txt for _, txt in prepared_jobs]
+    titles = [job.title for job, _ in prepared_jobs]
 
     try:
-        batch_results = embed_fn(texts)
+        batch_results = embed_fn(texts, title=titles)
         if len(batch_results) != len(prepared_jobs):
             raise RuntimeError(f"Batch result count mismatch: got={len(batch_results)} expected={len(prepared_jobs)}")
 
@@ -42,7 +44,7 @@ def embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id):
 
             for attempt in range(8):
                 try:
-                    vec, dims = embed_fn(cur_txt)
+                    vec, dims = embed_fn(cur_txt, title = job.title)
                     return [EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=vec)]
                 except NonRetryableEmbedError as ex:
                     last_err = ex
@@ -159,8 +161,9 @@ def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Qu
             batch_success = False
             if len(prepared_jobs) > 1:
                 batch_texts = [txt for _, txt in prepared_jobs]
+                batch_titles = [job.title for job, _ in prepared_jobs]
                 try:
-                    batch_result = embed_fn(batch_texts)
+                    batch_result = embed_fn(batch_texts, title = batch_titles)
                     if isinstance(batch_result, list) and len(batch_result) == len(prepared_jobs):
                         for (job, _), (blob, dims) in zip(prepared_jobs, batch_result):
                             res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=blob))
@@ -265,7 +268,7 @@ def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_
                         log.warning("[INGEST] embed queue FULL; waiting chunk_id=%s", chunk_id)
                     while True:
                         try:
-                            embed_q.put(EmbedJob(chunk_id=chunk_id, text=chunk_text), timeout=1.0)
+                            embed_q.put(EmbedJob(chunk_id=chunk_id, text=chunk_text, title=title), timeout=1.0)
                             pending_embeds += 1
                             break
                         except queue.Full:

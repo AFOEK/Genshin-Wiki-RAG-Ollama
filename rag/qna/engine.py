@@ -757,7 +757,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     else:
         dedupe_scores={int(row["chunk_id"]):float(row["_rerank_score"]) for row in chunks}
 
-    chunks=dedupe_chunks(chunks,dedupe_scores,max_per_doc=max_per_doc)
+    chunks=dedupe_chunks(chunks, dedupe_scores, max_per_doc=max_per_doc)
 
     if reranker_mode=="cross_encoder":
         chunks=cross_encoder_rerank(ranking_question,chunks,model_name=reranker_cfg.get("cross_encoder_model","cross-encoder/ms-marco-MiniLM-L12-v2"),top_n=int(reranker_cfg.get("cross_encoder_top_n",32)),batch_size=int(reranker_cfg.get("cross_encoder_batch_size",8)),max_pair_text_chars=int(reranker_cfg.get("max_pair_text_chars",1200)))

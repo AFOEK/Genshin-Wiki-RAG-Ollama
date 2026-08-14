@@ -41,7 +41,7 @@ def auto_embedding_profile(model_name: str) -> str:
 
     return "none"
 
-def apply_embedding_prompt(cfg: dict, text_or_texts: str, *, mode: str, backend: str | None = None, title: str | None = None) -> str | list[str]:
+def apply_embedding_prompt(cfg: dict, text_or_texts: str | list[str] | tuple[str,...], *, mode: str, backend: str | None = None, title: str | list[str] | tuple[str,...] | None=None) -> str | list[str]:   
     prompt_cfg = cfg.get("embedding_prompts", {}) or {}
 
     enabled = str(prompt_cfg.get("enabled", True)).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -76,9 +76,15 @@ def apply_embedding_prompt(cfg: dict, text_or_texts: str, *, mode: str, backend:
             return prefix.replace("{title}", title or "").replace("{text}", x)
         return prefix + x
     
-    if isinstance(text_or_texts, (list, tuple)):
-        return [one(str(x)) for x in text_or_texts]
-    return one(str(text_or_texts))
+    if isinstance(text_or_texts,(list,tuple)):
+        if isinstance(title,(list,tuple)):
+            titles = list(title)
+        else:
+            titles = [title] * len(text_or_texts)
+        return [one(str(x), str(titles[i] or "") if i < len(titles) else "") for i, x in enumerate(text_or_texts)]
+
+    single_title = title[0] if isinstance(title, (list, tuple)) and title else title
+    return one(str(text_or_texts) ,str(single_title or ""))
 
 def pack_vec(vec: list[float]) -> tuple[bytes, int]:
     return struct.pack(f"<{len(vec)}f", *vec), len(vec)
@@ -149,10 +155,10 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, timeout: int):
         return pack_vec(rows[0])
     return [pack_vec(vec) for vec in rows]
 
-def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int = 10, backoff_s: float = 1.0, mode: Literal["passage", "query"] = "passage"):
+def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int=10, backoff_s: float=1.0, mode: Literal["passage", "query"] = "passage", title: str | list[str] | tuple[str,...] | None = None):
     runtime = cfg.get("runtime", {})
     provider = normalize_backend_name(backend if backend is not None else runtime.get("embedding_provider", "ollama"))
-    text_or_texts = apply_embedding_prompt(cfg, text_or_texts, mode=mode, backend=backend)
+    text_or_texts = apply_embedding_prompt(cfg, text_or_texts, mode=mode, backend=backend, title=title)
     last_err =  None
     for attempt in range(retries):
         try:

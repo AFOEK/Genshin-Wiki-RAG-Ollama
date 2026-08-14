@@ -72,7 +72,7 @@ def repair_missing_embeddings(conn: sqlite3.Connection, embed_fn: Callable, cfg:
         txt = row["text"] or ""
         safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
         try:
-            vec, dims = embed_fn(safe_txt)
+            vec, dims = embed_fn(safe_txt, title=row.get("title"))
             cur.execute("INSERT OR REPLACE INTO embeddings(chunk_id, dims, vector) VALUES (?, ?, ?)", (chunk_id, dims, vec))
             repaired += 1
         except Exception:

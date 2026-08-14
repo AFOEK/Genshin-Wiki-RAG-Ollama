@@ -144,7 +144,7 @@ def process_document(conn: sqlite3.Connection, embed_fn: EmbedFn, config: dict[s
                         last_err = None
                         for attempt in range(6):
                             try:
-                                vec, dims = embed_fn(safe_txt)
+                                vec, dims = embed_fn(safe_txt, title=title)
                                 break
                             except Exception as e:
                                 last_err = e
@@ -367,7 +367,7 @@ def process_document(conn: sqlite3.Connection, embed_fn: EmbedFn, config: dict[s
 
             for attempt in range(8):
                 try:
-                    vec, dims = embed_fn(safe_txt)
+                    vec, dims = embed_fn(safe_txt, title=title)
                     break
                 except Exception as e:
                     last_err = e
