@@ -71,18 +71,42 @@ Format:
     for row in claims:
         if not isinstance(row,dict):
             continue
-        claim=str(row.get("claim") or "").strip()
-        verdict=str(row.get("verdict") or "uncertain").strip().lower()
-        try:
-            confidence=max(0.0,min(1.0,float(row.get("confidence",0.0))))
-        except (TypeError,ValueError):
-            confidence=0.0
-        if verdict not in {"supported","unsupported","uncertain"}:
-            verdict="uncertain"
-        normalized.append({"claim":claim,"verdict":verdict,"confidence":confidence,"reason":str(row.get("reason") or "").strip()})
 
-    unsafe=[row for row in normalized if row["verdict"]!="supported" or row["confidence"]<min_conf]
-    return {"passed":not unsafe,"claims":normalized,"unsafe_claims":unsafe,"reason":"ok" if not unsafe else "unsupported_or_uncertain_claims"}
+        claim = str(row.get("claim") or "").strip()
+        if not claim:
+            continue
+        
+        verdict = str(row.get("verdict") or "uncertain").strip().lower()
+        try:
+            confidence = max(0.0, min(1.0, float(row.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        if verdict not in {"supported","unsupported","uncertain"}:
+            verdict = "uncertain"
+
+        normalized.append({
+            "claim": claim,
+            "verdict": verdict,
+            "confidence": confidence,
+            "reason": str(row.get("reason") or "").strip()
+        })
+
+    if not normalized and answer.strip():
+        return {
+            "passed":False,
+            "claims":[],
+            "unsafe_claims":[],
+            "reason":"validator_returned_no_claims",
+        }
+
+    unsafe = [row for row in normalized if row["verdict"] != "supported" or row["confidence"] < min_conf]
+    return {
+        "passed":not unsafe,
+        "claims":normalized,
+        "unsafe_claims":unsafe,
+        "reason":"ok" if not unsafe else "unsupported_or_uncertain_claims",
+    }
 
 def build_broad_validation_context(chunks:list[dict],max_chunks:int=30,max_chars:int=30000,max_chars_per_chunk:int=1500)->str:
     parts=[]

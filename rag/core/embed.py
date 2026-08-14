@@ -1,11 +1,15 @@
 import requests
 import struct
 import time
+import threading
 import logging
 from typing import Literal, Any
 
 log = logging.getLogger(__name__)
+thread_local=threading.local()
 session = requests.Session()
+
+RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 class NonRetryableEmbedError(RuntimeError):
     pass
@@ -79,18 +83,24 @@ def apply_embedding_prompt(cfg: dict, text_or_texts: str, *, mode: str, backend:
 def pack_vec(vec: list[float]) -> tuple[bytes, int]:
     return struct.pack(f"<{len(vec)}f", *vec), len(vec)
 
-def post_json(url: str, payload: dict, timeout: int = 180) -> dict[str, Any]:
-    r = session.post(url, json=payload, timeout=timeout)
+def get_session() -> requests.Session:
+    session = getattr(thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        thread_local.session = session
+    return session
 
-    if r.status_code == 400:
+def post_json(url: str, payload: dict, timeout: int = 180) -> dict[str, Any]:
+    r = get_session().post(url, json=payload, timeout=timeout)
+    if 400 <= r.status_code < 500 and r.status_code not in RETRYABLE_STATUS:
         try:
             msg = r.json().get("error") or r.text
         except Exception:
             msg = r.text
-        raise NonRetryableEmbedError(f"HTTP 400: {msg[:300]}")
+        raise NonRetryableEmbedError(f"HTTP {r.status_code}: {msg[:300]}")
     
-    if r.status_code >= 500:
-        raise requests.HTTPError(f"HTTP {r.status_code}: {r.text[:300]}", response=r)
+    if r.status_code in RETRYABLE_STATUS:
+        raise requests.HTTPError(f"Retryable HTTP {r.status_code}: {r.text[:300]}", response=r)
     
     r.raise_for_status()
     return r.json()
@@ -116,10 +126,7 @@ def embed_ollama(base_url: str, model: str, text_or_texts, keep_alive: str, time
             "input": payload_input,
             "truncate": True,
             "keep_alive": keep_alive
-        }
-        ,
-        timeout=timeout
-    )
+        }, timeout = timeout)
     embeddings = data["embeddings"]
     if not is_batch:
         vec = embeddings[0]
@@ -136,9 +143,7 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, timeout: int):
         {
             "model": model,
             "input": payload_input,
-        },
-        timeout=timeout
-    )
+        }, timeout = timeout)
     rows = [item["embedding"] for item in data["data"]]
     if not is_batch:
         return pack_vec(rows[0])

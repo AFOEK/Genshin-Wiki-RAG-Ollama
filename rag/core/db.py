@@ -112,6 +112,11 @@ CREATE TABLE IF NOT EXISTS splade_dirty_docs (
     marked_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS embedding_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_docs_source ON docs(source);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_docs_source_raw_hash ON docs(source, raw_hash);
@@ -243,7 +248,6 @@ def init_db(path: str) -> None:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(SCHEMA)
-
         log.info(f"[DB] Initialized sqlite db schema at {p}")
     finally:
         conn.close()
