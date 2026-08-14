@@ -626,8 +626,11 @@ Return [] only if there is genuinely no factual statement in the source.
                     }
                 )
                 continue
-            retrieval_started = time.perf_counter()
-            record, rejection, retrieval = process_generated_pair(
+            retrieval_started=time.perf_counter()
+            retrieval=retrieve_question_context(cfg, question, retriever_name = settings["retriever_name"], direct_top_k = settings["direct_top_k"], backend = settings["backend"])
+            retrieval_elapsed_ms=(time.perf_counter() - retrieval_started) * 1000.0
+            result.retrieval_metric_records.append(make_retrieval_metric_record(retrieval, doc_id, latency_ms=retrieval_elapsed_ms))
+            record, rejection, _= process_generated_pair(
                 cfg,
                 question=question,
                 reference_answer=reference_answer,
@@ -638,10 +641,9 @@ Return [] only if there is genuinely no factual statement in the source.
                 require_positive_document=settings["require_positive_document"],
                 answer_model=settings["answer_model"],
                 answer_think=settings["answer_think"],
-                answer_options=answer_options
+                answer_options=answer_options,
+                retrieval=retrieval,
             )
-            retrieval_elapsed_ms = (time.perf_counter() - retrieval_started) * 1000.0
-            result.retrieval_metric_records.append(make_retrieval_metric_record(retrieval, doc_id, latency_ms = retrieval_elapsed_ms))
 
         except Exception as exc:
             traceback_text = traceback.format_exc()
@@ -1259,9 +1261,9 @@ def has_answer_style_artifact(answer: str) -> bool:
         return True
     return bool(re.search(r"(?mi)^\s*\*{0,2}answer\*{0,2}\s*:", answer))
 
-def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None, answer_options: dict[str, Any] | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
+def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool,answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None, answer_options: dict[str, Any] | None = None, retrieval: RetrievalResult | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
     if retrieval is None:
-        retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
+        retrieval = retrieve_question_context(cfg, question, retriever_name = retriever_name, direct_top_k = direct_top_k, backend = backend)
 
     candidate_doc_rank = find_document_rank(retrieval.candidate_chunks, int(positive["doc_id"]))
     selected_doc_rank = find_document_rank(retrieval.selected_chunks, int(positive["doc_id"]))

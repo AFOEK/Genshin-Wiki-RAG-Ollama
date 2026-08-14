@@ -4,7 +4,7 @@ from statistics import mean, median
 from typing import Any
 
 def rank(doc_ids: list[int], positive_doc_id: int) -> int | None:
-    for rank, doc_id in enumerate(doc_id, start=1):
+    for rank, doc_id in enumerate(doc_ids, start=1):
         if int(doc_id) == int(positive_doc_id):
             return rank
     return None
@@ -31,7 +31,7 @@ def percentile(values: list[float], p: float) -> float | None:
     return float(values[lo] + (values[hi] - values[lo]) * (pos - lo))
 
 def rank_stats(ranks: list[int | None]) -> dict[str, float |  int | None]:
-    found = [rank for rank in ranks is not None]
+    found = [rank for rank in ranks if rank is not None]
     return {
         "found":  len(found),
         "missing":  len(ranks) - len(found),
@@ -66,10 +66,10 @@ def make_retrieval_metric_record(retrieval: Any, positive_doc_id: int, *, latenc
         "latency_ms": latency_ms,
     }
 
-class RetrivalMetrics:
+class RetrievalMetrics:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
-        self.erros = 0
+        self.errors = 0
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -86,7 +86,7 @@ class RetrivalMetrics:
     def summary(self) -> dict[str, Any]:
         rows = self.rows
         candidate = [row["candidate_rank"] for row in rows]
-        reranked = [row["reranker_rank"] for row in rows]
+        reranked = [row["reranked_rank"] for row in rows]
         context = [row["context_rank"] for row in rows]
         latency = [float(row["latency_ms"]) for row in rows if row.get("latency_ms")]
         candidate_hits = sum(rank is not None for rank in candidate)
@@ -95,27 +95,27 @@ class RetrivalMetrics:
         return {
             "queries": len(rows),
             "errors": self.errors,
-            "candidaterecall@10": recall(candidate,10),
-            "candidaterecall@32": recall(candidate,32),
-            "candidaterecall@100": recall(candidate,100),
-            "candidaterecall@300": recall(candidate,300),
-            "candidaterecall@950": recall(candidate,950),
-            "candidatemrr@10": mrr(candidate,10),
+            "candidate_recall@10": recall(candidate,10),
+            "candidate_recall@32": recall(candidate,32),
+            "candidate_recall@100": recall(candidate,100),
+            "candidate_recall@300": recall(candidate,300),
+            "candidate_recall@950": recall(candidate,950),
+            "candidate_mrr@10": mrr(candidate,10),
             "candidate_ndcg@10": ndcg(candidate,10),
             "candidate_rank": rank_stats(candidate),
-            "selectedrecall@1": recall(reranked,1),
-            "selectedrecall@3": recall(reranked,3),
-            "selectedrecall@5": recall(reranked,5),
-            "selectedrecall@8": recall(reranked,8),
-            "selectedrecall@10": recall(reranked,10),
-            "selectedrecall@32": recall(reranked,32),
+            "selected_recall@1": recall(reranked,1),
+            "selected_recall@3": recall(reranked,3),
+            "selected_recall@5": recall(reranked,5),
+            "selected_recall@8": recall(reranked,8),
+            "selected_recall@10": recall(reranked,10),
+            "selected_recall@32": recall(reranked,32),
             "mrr@10": mrr(reranked,10),
             "ndcg@10": ndcg(reranked,10),
             "reranked_rank": rank_stats(reranked),
             "contextrecall": context_hits / len(rows) if rows else 0.0,
             "candidate_misses": len(rows) - candidate_hits,
-            "ranking_losses": sum(c is not None and r is None for c, r in zip(candidate,reranked)),
-            "context_losses": sum(r is not None and c is None for r, c in zip(reranked,context)),
+            "ranking_losses": sum(c is not None and r is None for c, r in zip(candidate, reranked)),
+            "context_losses": sum(r is not None and c is None for r, c in zip(reranked, context)),
             "candidate_docs_mean": mean(row["candidate_count"] for row in rows) if rows else 0.0,
             "reranked_docs_mean": mean(row["reranked_count"] for row in rows) if rows else 0.0,
             "context_docs_mean": mean(row["context_count"] for row in rows) if rows else 0.0,
@@ -124,15 +124,15 @@ class RetrivalMetrics:
             "multi_hop_usage": sum(row["multi_hop_used"] for row in rows) / len(rows) if rows else 0.0,
             "hyde_usage": sum(row["hyde_used"] for row in rows) / len(rows) if rows else 0.0,
             "latency_mean_ms": mean(latency) if latency else None,
-            "latency_p50_ms": percentile(latency,0.50),
-            "latency_p95_ms": percentile(latency,0.95),
+            "latency_p50_ms": percentile(latency, 0.50),
+            "latency_p95_ms": percentile(latency, 0.95),
         }
 
     def print(self)->None:
         s=self.summary()
         cr=s["candidate_rank"]
         rr=s["reranked_rank"]
-        def f(value:Any, digits:int=4) -> str:
+        def f(value:Any,  digits:int=4) -> str:
             return "n/a" if value is None else f"{float(value):.{digits}f}"
         print("\n========== RETRIEVAL METRICS ==========")
         print(f"Queries measured        : {s['queries']}")

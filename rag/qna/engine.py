@@ -764,9 +764,6 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     elif reranker_mode not in ("none","feature","cross_encoder"):
         raise RuntimeError(f"Unknown reranker mode: {reranker_mode}")
 
-    if metrics_enabled:
-        metric_reranked_doc_ids = unique_doc_ids(chunks)
-
     for row in chunks:
         row.pop("_rerank_score",None)
         row.pop("_ltr_score",None)
@@ -791,6 +788,8 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             chunks = exact_seed_chunks + [row for row in chunks if int(row["chunk_id"]) not in exact_ids]
             log.info("[ENTITY] exact-title seeds intent=%s entity=%r chunks=%d", intent, exact_page_entity, len(exact_seed_chunks))
 
+    if metrics_enabled:
+        metric_reranked_doc_ids = unique_doc_ids(chunks)
 
     for row in chunks:
         row.pop("_rerank_score", None)
