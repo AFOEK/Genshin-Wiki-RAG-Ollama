@@ -249,8 +249,8 @@ def build_splade_from_sqlite(cfg: dict, *, overwrite: bool = False, limit: int |
         }
 
         write_json_atomic(manifest_path, manifest)
-        initial_watermark = int(manifest["last_chunk_id"])
-    
+
+    initial_watermark = int(manifest["last_chunk_id"])
     expected = {
         "model": model_name,
         "matrix_method": matrix_method,

@@ -789,7 +789,7 @@ sources:
      - "https://genshin.gg/weapons/"
      - "https://genshin.gg/artifacts/"
      - "https://genshin.gg/elements/"
-    allow_url_regex: "^https://genshin\\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$"
+    allow_url_regex: '^https://genshin\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|teams?|farming|elements?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$'
     max_pages: null
     rate_limit_s: 2.0
     validation:

@@ -145,6 +145,7 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
 
     state_path = Path(source_cfg.get("state_file", "data/fandom_last_run.txt"))
     state_path.parent.mkdir(parents=True, exist_ok=True)
+    crawl_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     last_run = None
     if state_path.exists():
@@ -162,7 +163,6 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
     count = 0
     failed = 0
     partial = False
-    oldest_success_ts = None
 
     for title, change_ts in changes:
         html = fetch_page_html(session, api, title)
@@ -170,10 +170,6 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
             text = fandom_html_to_text(html) or ""
             url = f"{api}?title={quote(title)}"
             yield url, title, text, None, None
-
-            if incremental and change_ts:
-                if oldest_success_ts is None or change_ts < oldest_success_ts:
-                    oldest_success_ts = change_ts
         else:
             failed += 1
             log.warning("[WIKI] Skipping page (fetch failed) title=%s", title)
@@ -185,19 +181,10 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int
             break
         time.sleep(rate_limit_s)
 
-    if incremental:
-        if not partial and failed == 0:
-            new_state = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            state_path.write_text(new_state, encoding="utf-8")
-            log.info("[WIKI] incremental state advanced to %s", new_state)
-        else:
-            log.warning(
-                "[WIKI] incremental state NOT advanced (partial=%s failed=%d count=%d)",
-                partial, failed, count
-            )
+    if not partial and failed==0:
+        state_path.write_text(crawl_started_at, encoding="utf-8")
+        log.info("[WIKI] crawl state advanced to %s", crawl_started_at)
     else:
-        new_state = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        state_path.write_text(new_state, encoding="utf-8")
-        log.info("[WIKI] full crawl state set to %s", new_state)
+        log.warning("[WIKI] state NOT advanced partial=%s failed=%d count=%d", partial, failed, count)
     
     log.info("[WIKI] done incremental=%s processed=%d failed=%d partial=%s", incremental, count, failed, partial)

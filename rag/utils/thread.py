@@ -290,7 +290,11 @@ def ingest_consumer(num_producers: int, doc_q: queue.Queue, db_path: str, embed_
 
         log.info("[INGEST] producers finished; waiting embed jobs pending=%d", pending_embeds)
         embed_q.join()
-        drain_results(10_000)
+        while pending_embeds>0:
+            drained=drain_results(5000)
+            if drained==0:
+                time.sleep(0.01)
+
         embed_res_q.join()
         conn.commit()
 

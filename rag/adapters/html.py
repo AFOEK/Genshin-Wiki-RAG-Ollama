@@ -248,19 +248,13 @@ def html_to_text(html: str, url: str | None = None) -> str:
 
     return text
 
-def game8_response_problem(response: requests.Response, html: str) -> str | None:
-    final_url = normalize_url( response.url)
-    if not is_allowed_game8_url(final_url):
-        return (f"redirected outside approved Game8 archive: {final_url}")
-
-    if len(response.content) < 1500:
-        return (f"undersized response body: {len(response.content)} bytes")
-
-    lowered = html[:100_000].casefold()
-    marker = next((marker for marker in _GAME8_BLOCK_MARKERS if marker in lowered), None,)
+def game8_response_problem(response:requests.Response,html:str) -> str | None:
+    if len(response.content)<1500:
+        return f"undersized response body: {len(response.content)} bytes"
+    lowered=html[:100_000].casefold()
+    marker=next((marker for marker in _GAME8_BLOCK_MARKERS if marker in lowered),None)
     if marker:
-        return ("blocking or challenge page: "  f"{marker!r}")
-
+        return f"blocking or challenge page: {marker!r}"
     return None
 
 def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate_limit_s: float = 1.0, max_pages: int | None = 2000, allowed_langs: str = "EN"):
@@ -430,4 +424,5 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         log.info("[HTML] accepted requested=%s final=%s chars=%d", requested_url, final_url, len(text))
         yield final_url, title, text, last_modified, etag
 
-        time.sleep(request_delay_s)
+        if not game8_source:
+            time.sleep(request_delay_s)

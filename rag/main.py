@@ -146,7 +146,9 @@ def main():
                 raw_max = s.get("max_pages", 200)
                 max_pages = int(raw_max) if raw_max is not None else None
                 source_filters = make_source_filters(s)
-
+                for seed in seeds:
+                    if not source_filters.url_allowed(seed):
+                        raise RuntimeError(f"[CRAWLER_CONFIG] source={name} seed rejected by its own filters: {seed}")
                 docs_iter = crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
             else:
                 log.warning(f"[WARN] Not implemented kind={kind}, skipping")

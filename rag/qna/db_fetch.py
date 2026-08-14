@@ -25,7 +25,7 @@ def fetch_chunks(conn: sqlite3.Connection, chunk_ids: list[int]) -> list[dict]:
             d.last_modified
         FROM chunks c
         JOIN docs d ON d.doc_id = c.doc_id
-        WHERE c.chunk_id IN ({placeholders})
+        WHERE c.chunk_id IN ({placeholders}) AND c.is_active = 1 AND COALESCE(d.status, 1) = 1
     """, chunk_ids)
 
     rows = [dict(r) for r in cur.fetchall()]
