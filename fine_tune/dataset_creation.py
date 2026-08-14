@@ -28,6 +28,7 @@ from qna.engine import retrieve_question_context, build_grounded_answer_prompt
 from qna.generators import generate
 from qna.utils import extract_entity_terms
 from qna.types import RetrievalResult
+from qna.retrieval_metrics import RetrievalMetrics, make_retrieval_metric_record
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -115,12 +116,14 @@ class ChunkTaskResult:
     double_negative_records: list[dict] = field(default_factory=list)
     negative_sft_records: list[dict] = field(default_factory=list)
 
+    retrieval_metric_records: list[dict] = field(default_factory=list)
+    retrieval_metric_error: int = 0
+
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
 
 def is_refusal(answer: str) -> bool:
     answer_l = answer.lower()
-
     return any(marker in answer_l for marker in REFUSAL_MARKERS)
 
 def make_record_id(chunk_id: int, question: str) -> str:
@@ -623,7 +626,7 @@ Return [] only if there is genuinely no factual statement in the source.
                     }
                 )
                 continue
-
+            retrieval_started = time.perf_counter()
             record, rejection, retrieval = process_generated_pair(
                 cfg,
                 question=question,
@@ -637,10 +640,13 @@ Return [] only if there is genuinely no factual statement in the source.
                 answer_think=settings["answer_think"],
                 answer_options=answer_options
             )
+            retrieval_elapsed_ms = (time.perf_counter() - retrieval_started) * 1000.0
+            result.retrieval_metric_records.append(make_retrieval_metric_record(retrieval, doc_id, latency_ms = retrieval_elapsed_ms))
 
         except Exception as exc:
             traceback_text = traceback.format_exc()
             result.skipped += 1
+            result.retrieval_metric_error += 1
             result.rejected.append(
                 {
                     "reason": "processing_exception",
@@ -1254,7 +1260,9 @@ def has_answer_style_artifact(answer: str) -> bool:
     return bool(re.search(r"(?mi)^\s*\*{0,2}answer\*{0,2}\s*:", answer))
 
 def process_generated_pair(cfg: dict, *, question: str, reference_answer: str, positive: dict, retriever_name: str, direct_top_k: int, backend: str | None, require_positive_document: bool, answer_model: str = "llama3.2:3b", answer_think: bool | str | None = None, answer_options: dict[str, Any] | None = None) -> tuple[dict | None, dict | None, RetrievalResult]:
-    retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
+    if retrieval is None:
+        retrieval = retrieve_question_context(cfg, question, retriever_name=retriever_name, direct_top_k=direct_top_k, backend=backend)
+
     candidate_doc_rank = find_document_rank(retrieval.candidate_chunks, int(positive["doc_id"]))
     selected_doc_rank = find_document_rank(retrieval.selected_chunks, int(positive["doc_id"]))
 
@@ -1767,6 +1775,10 @@ def main() -> None:
         written_double_negatives = 0
         written_negative_sft = 0
 
+        retrieval_metrics = RetrievalMetrics()
+        metrics_print_every = int((cfg.get("retrieval_metrics", {}) or {}).get("print_every", 250))
+        last_metrics_print = 0
+
         seen_record_ids, seen_questions = load_existing_sft_keys(out_path) if append_outputs else (set(), set())
 
         result_buffer: dict[int, ChunkTaskResult] = {}
@@ -1815,6 +1827,13 @@ def main() -> None:
                 completed_tasks += 1
                 skipped += ready.skipped
 
+                retrieval_metrics.extend(ready.retrieval_metric_records)
+                retrieval_metrics.add_error(ready.retrieval_metric_error)
+
+                if metrics_print_every > 0 and len(retrieval_metrics) >= last_metrics_print + metrics_print_every:
+                    retrieval_metrics.print()
+                    last_metrics_print=len(retrieval_metrics)
+
                 for rejection in ready.rejected:
                     rejected_f.write(
                         json.dumps(
@@ -1859,10 +1878,7 @@ def main() -> None:
                         skipped += 1
                         continue
 
-                    if (
-                        question_key
-                        and question_key in seen_questions
-                    ):
+                    if (question_key and question_key in seen_questions):
                         skipped += 1
                         continue
 
@@ -1964,6 +1980,7 @@ def main() -> None:
                         negative_sft_f.flush()
 
     log.info(f"[LORA_DATASET] Done. written={written} skipped={skipped} out={out_path}")
+    retrieval_metrics.print()
 
 if __name__ == "__main__":
     main()
