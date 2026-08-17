@@ -54,3 +54,5 @@ dependencies:
       - pennylane
       - pennylane-lightning
       - lightgbm
+      - neo4j
+      - fastapi[standard]
