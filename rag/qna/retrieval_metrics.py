@@ -1,5 +1,11 @@
 from __future__ import annotations
+
 import math
+import csv
+import json
+
+from datetime import datetime, timezone
+from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
@@ -50,6 +56,7 @@ def make_retrieval_metric_record(retrieval: Any, positive_doc_id: int, *, latenc
     reranked=[int(x) for x in d.get("metric_reranked_doc_ids", [])]
     context=[int(x) for x in d.get("metric_context_doc_ids", [])]
     return {
+        "question":str(retrieval.question),
         "positive_doc_id": int(positive_doc_id),
         "candidate_rank": rank(candidate, positive_doc_id),
         "reranked_rank": rank(reranked, positive_doc_id),
@@ -65,6 +72,20 @@ def make_retrieval_metric_record(retrieval: Any, positive_doc_id: int, *, latenc
         "hyde_used": bool(d.get("hyde_used", False)),
         "latency_ms": latency_ms,
     }
+
+def flatten_metadata(data:dict[str,Any], prefix:str="meta")->dict[str,Any]:
+        out={}
+        for key,value in data.items():
+            name=f"{prefix}_{key}"
+            if isinstance(value,dict):
+                out.update(flatten_metadata(value, name))
+            elif isinstance(value,(list,tuple,set)):
+                out[name]=json.dumps(list(value),ensure_ascii=False)
+            elif isinstance(value,Path):
+                out[name]=str(value)
+            else:
+                out[name]=value
+        return out
 
 class RetrievalMetrics:
     def __init__(self) -> None:
@@ -112,12 +133,16 @@ class RetrievalMetrics:
             "mrr@10": mrr(reranked,10),
             "ndcg@10": ndcg(reranked,10),
             "reranked_rank": rank_stats(reranked),
-            "contextrecall": context_hits / len(rows) if rows else 0.0,
+            "context_recall": context_hits / len(rows) if rows else 0.0,
             "candidate_misses": len(rows) - candidate_hits,
             "ranking_losses": sum(c is not None and r is None for c, r in zip(candidate, reranked)),
             "context_losses": sum(r is not None and c is None for r, c in zip(reranked, context)),
             "candidate_docs_mean": mean(row["candidate_count"] for row in rows) if rows else 0.0,
             "reranked_docs_mean": mean(row["reranked_count"] for row in rows) if rows else 0.0,
+            "reranked_misses":len(rows)-reranked_hits,
+            "context_misses":len(rows)-context_hits,
+            "ranking_survival_rate":reranked_hits/candidate_hits if candidate_hits else 0.0,
+            "context_survival_rate":context_hits/reranked_hits if reranked_hits else 0.0,
             "context_docs_mean": mean(row["context_count"] for row in rows) if rows else 0.0,
             "expansion_usage": sum(row["query_expansion_used"] for row in rows) / len(rows) if rows else 0.0,
             "decomposition_usage": sum(row["query_decomposition_used"] for row in rows) / len(rows) if rows else 0.0,
@@ -128,11 +153,81 @@ class RetrievalMetrics:
             "latency_p95_ms": percentile(latency, 0.95),
         }
 
+    def save_jsonl(self,path:str|Path,*,run_id:str|None=None,metadata:dict[str,Any]|None=None)->None:
+        path=Path(path)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        run_id=run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        metadata=dict(metadata or {})
+        with path.open("w",encoding="utf-8") as f:
+            for row in self.rows:
+                output={
+                    "run_id":run_id,
+                    "metadata":metadata,
+                    **row,
+                }
+                f.write(json.dumps(output,ensure_ascii=False,default=str)+"\n")
+
+    def save_csv(self,path:str|Path,*,run_id:str|None=None,metadata:dict[str,Any]|None=None)->None:
+        path=Path(path)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        if not self.rows:
+            return
+        run_id=run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        flat_metadata=flatten_metadata(metadata or {})
+        rows=[
+            {
+                "run_id":run_id,
+                **flat_metadata,
+                **row,
+            }
+            for row in self.rows
+        ]
+        fieldnames=list(dict.fromkeys(key for row in rows for key in row.keys()))
+        with path.open("w",encoding="utf-8",newline="") as f:
+            writer=csv.DictWriter(f,fieldnames=fieldnames,extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def save_summary(self,path:str|Path,*,run_id:str|None=None,metadata:dict[str,Any]|None=None)->None:
+        path=Path(path)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        run_id=run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output={
+            "run_id":run_id,
+            "generated_at":datetime.now(timezone.utc).isoformat(),
+            "metadata":dict(metadata or {}),
+            "metrics":self.summary(),
+        }
+        path.write_text(
+            json.dumps(output,ensure_ascii=False,indent=2,default=str),
+            encoding="utf-8",
+        )
+
+    def save(self,output_dir:str|Path,*,run_id:str|None=None,metadata:dict[str,Any]|None=None)->None:
+        output_dir=Path(output_dir)
+        output_dir.mkdir(parents=True,exist_ok=True)
+        run_id=run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.save_jsonl(
+            output_dir/f"retrieval_metrics_{run_id}.jsonl",
+            run_id=run_id,
+            metadata=metadata,
+        )
+        self.save_csv(
+            output_dir/f"retrieval_metrics_{run_id}.csv",
+            run_id=run_id,
+            metadata=metadata,
+        )
+        self.save_summary(
+            output_dir/f"retrieval_metrics_summary_{run_id}.json",
+            run_id=run_id,
+            metadata=metadata,
+        )
+
     def print(self)->None:
         s=self.summary()
         cr=s["candidate_rank"]
         rr=s["reranked_rank"]
-        def f(value:Any,  digits:int=4) -> str:
+        def f(value:Any,  digits:int=6) -> str:
             return "n/a" if value is None else f"{float(value):.{digits}f}"
         print("\n========== RETRIEVAL METRICS ==========")
         print(f"Queries measured        : {s['queries']}")
@@ -149,6 +244,10 @@ class RetrievalMetrics:
         print(f"Positive rank mean      : {f(cr['mean'],2)}")
         print(f"Positive rank P90/P95   : {f(cr['p90'],2)} / {f(cr['p95'],2)}")
         print(f"Candidate misses        : {s['candidate_misses']}")
+        print(f"Reranked misses         : {s['reranked_misses']}")
+        print(f"Context misses          : {s['context_misses']}")
+        print(f"Ranking survival        : {f(s['ranking_survival_rate'])}")
+        print(f"Context survival        : {f(s['context_survival_rate'])}")
         print("---------- Final ranking ----------")
         print(f"Selected Recall@1       : {f(s['selected_recall@1'])}")
         print(f"Selected Recall@3       : {f(s['selected_recall@3'])}")

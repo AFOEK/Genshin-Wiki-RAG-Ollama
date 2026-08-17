@@ -1726,6 +1726,56 @@ def main() -> None:
         "seed": args.seed,
     }
 
+    retrieval_metadata={
+        "experiment":"baseline",
+        "dataset":{
+            "seed":worker_settings["seed"],
+            "retriever":worker_settings["retriever_name"],
+            "direct_top_k":worker_settings["direct_top_k"],
+        },
+        "retrieval":{
+            "candidate_k":int((cfg.get("retrieval",{}) or {}).get("candidate_k",0)),
+            "rrf_k":int((cfg.get("retrieval",{}) or {}).get("rrf_k",60)),
+            "deep_candidate_multiplier":int((cfg.get("retrieval",{}) or {}).get("deep_candidate_multiplier",0)),
+        },
+        "reranker":{
+            "mode":str((cfg.get("reranker",{}) or {}).get("mode","")),
+            "top_n":int((cfg.get("reranker",{}) or {}).get("top_n",0)),
+        },
+        "lambdamart":{
+            "enabled":bool((cfg.get("lambdamart",{}) or {}).get("enabled",False)),
+            "model_path":str((cfg.get("lambdamart",{}) or {}).get("model_path","")),
+            "top_n":int((cfg.get("lambdamart",{}) or {}).get("top_n",0)),
+        },
+        "query_expansion":{
+            "enabled":bool((cfg.get("query_expansion",{}) or {}).get("enabled",False)),
+            "model":str((cfg.get("query_expansion",{}) or {}).get("model","")),
+        },
+        "query_decomposition":{
+            "enabled":bool((cfg.get("query_decomposition",{}) or {}).get("enabled",False)),
+            "model":str((cfg.get("query_decomposition",{}) or {}).get("model","")),
+        },
+        "multi_hop":{
+            "enabled":bool((cfg.get("multi_hop",{}) or {}).get("enabled",False)),
+            "model":str((cfg.get("multi_hop",{}) or {}).get("model","")),
+        },
+        "hyde":{
+            "enabled":bool((cfg.get("hyde",{}) or {}).get("enabled",False)),
+            "model":str((cfg.get("hyde",{}) or {}).get("model","")),
+        },
+        "cross_encoder":{
+            "model":str((cfg.get("cross_encoder",{}) or {}).get("model","")),
+            "top_n":int((cfg.get("cross_encoder",{}) or {}).get("top_n",0)),
+        },
+        "models":{
+            "qa_model":str((cfg.get("ollama",{}) or {}).get("qa_model","")),
+            "embedding_model":str((cfg.get("ollama",{}) or {}).get("embedding_model","")),
+        },
+        "cache":{
+            "retrieval_cache_enabled":bool((cfg.get("retrieval_cache",{}) or {}).get("enabled",False)),
+        },
+    }
+
     if not sources:
         raise RuntimeError("[LORA_DATASET] No dataset sources configured.")
 
@@ -1983,6 +2033,7 @@ def main() -> None:
 
     log.info(f"[LORA_DATASET] Done. written={written} skipped={skipped} out={out_path}")
     retrieval_metrics.print()
+    retrieval_metrics.save("rag/logs/retrieval_metrics", metadata = retrieval_metadata)
 
 if __name__ == "__main__":
     main()
