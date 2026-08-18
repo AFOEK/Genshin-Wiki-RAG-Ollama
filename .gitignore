@@ -25,3 +25,5 @@ external/searxng/__pycache__/
 external/searxng/**/*.log
 external/searxng/**/__pycache__/
 external/searxng/**/*.pyc
+
+.env

@@ -46,6 +46,24 @@ faiss:
   hnsw_ef_construction: 200
   hnsw_ef_search: 64
 
+neo4j:
+  enabled: true
+  uri: "neo4j://localhost:7687"
+  user: "neo4j"
+  password_env: "NEO4J_PASSWORD"
+  database: "neo4j"
+
+  # Graph creation
+  source: "genshin_wiki"
+  extraction_model: "qwen3.6:27b"
+  extraction_temperature: 0.0
+
+  # Retrieval
+  candidate_k: 200
+  max_hops: 2
+  rrf_weight: 0.70
+  exact_entity_boost: 2.0
+
 turbovec:
   path: data/turbovec
   bit_width: 4  #2 | 4
