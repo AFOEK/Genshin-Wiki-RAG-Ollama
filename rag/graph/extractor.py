@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any
 
-from qna.generators import generate
+from rag.qna.generators import generate
 
 log = logging.getLogger(__name__)
 

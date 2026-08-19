@@ -1,10 +1,19 @@
 from __future__ import annotations
+
 import os
 import logging
+
 from typing import LiteralString, cast, Any
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
+from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_PATH = PROJECT_ROOT/".env"
+
+load_dotenv(ENV_PATH)
 
 class Neo4jClient:
     def __init__(self, cfg: dict) -> None:
@@ -24,11 +33,8 @@ class Neo4jClient:
         self.driver.verify_connectivity()
 
     def query(self, cypher: str, **params) -> list[dict[str, Any]]:
-        records, summary, keys = self.driver.execute_query(
-            cast(LiteralString , cypher), parameters_ = params, database_= self.database
-        )
-
-        return [dict(record) for record in records]
+        records, summary, keys = self.driver.execute_query(cast(LiteralString , cypher), parameters_ = params, database_= self.database)
+        return [record.data() for record in records]
 
     def close(self):
         self.driver.close()
