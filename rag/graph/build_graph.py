@@ -61,3 +61,44 @@ def upsert_entity(client, name: str, entity_type: str = "unknown", aliases: list
             ENF
     """,
     key=key, name=name, entity_type=entity_type, aliases=aliases)
+
+def link_entity_to_chunk(client, name: str, chunk_id: int) -> None:
+    key = entity_key(name=name)
+    if not key:
+        return
+
+    client.query("""
+        MATCH (e:Entity {key:$key})
+        MATCH (c:Chunk {chunk_id:$chunk_id})
+        MATCH (e)-[:MENTIONED_IN]->(c)
+    """, key=key, chunk_id=int(chunk_id))
+
+def upsert_relationship(client, source: str, target: str, relation_type: str, chunk_id: int, confidence: float=1.0) -> None:
+    source_key = entity_key(source)
+    target_key = entity_key(target)
+    if not source_key or not target_key:
+        return
+    if source_key == target_key:
+        return
+
+    relation_type = relation_type.strip().upper().replace(" ", "_")
+    if not relation_type:
+        relation_type = "RELATED_TO"
+
+    client.query("""
+        MATCH (a:Entity {key:$source_key})
+        MATCH (b:Entity {key:$target_key})
+
+        MERGE (a)-[r:RELATION {
+            relation_type:$relation_type,
+            evidence_chunk_id:$chunk_id
+        }]->(b)
+
+        SET r.confidence=$confidence,
+            r.source='genshin_wiki'
+    """,
+    source_key=source_key,
+    target_key=target_key,
+    relation_type=relation_type,
+    chunk_id=int(chunk_id),
+    confidence=float(confidence))
