@@ -6,10 +6,11 @@ import re
 from typing import Any
 
 from rag.qna.generators import generate
+from rag.graph.utils_graph import entity_key
 
 log = logging.getLogger(__name__)
 
-ALLOWED_ENTITY_TYPES = {
+ALLOWED_ENTITY_TYPES={
     "character",
     "deity",
     "faction",
@@ -17,7 +18,6 @@ ALLOWED_ENTITY_TYPES = {
     "region",
     "location",
     "organization",
-    "affiliations",
     "species",
     "item",
     "weapon",
@@ -26,6 +26,61 @@ ALLOWED_ENTITY_TYPES = {
     "event",
     "concept",
     "unknown",
+}
+
+ALLOWED_RELATION_TYPES={
+    "PARENT_OF",
+    "CHILD_OF",
+    "SIBLING_OF",
+    "SPOUSE_OF",
+    "ANCESTOR_OF",
+
+    "FRIEND_OF",
+    "ALLY_OF",
+    "ENEMY_OF",
+    "RIVAL_OF",
+    "COMPANION_OF",
+
+    "MENTOR_OF",
+    "STUDENT_OF",
+    "DISCIPLE_OF",
+
+    "MEMBER_OF",
+    "LEADER_OF",
+    "FOUNDER_OF",
+    "AFFILIATED_WITH",
+    "SERVES",
+    "WORKS_FOR",
+
+    "CREATED",
+    "CREATED_BY",
+    "OWNS",
+    "OWNED_BY",
+    "WIELDS",
+    "WIELDED_BY",
+
+    "LOCATED_IN",
+    "RESIDES_IN",
+    "ORIGINATES_FROM",
+    "RULES",
+    "PROTECTS",
+
+    "FOUGHT",
+    "DEFEATED",
+    "KILLED",
+    "OPPOSES",
+
+    "WORSHIPS",
+    "WORSHIPPED_BY",
+
+    "SUCCESSOR_OF",
+    "PREDECESSOR_OF",
+
+    "PARTICIPATED_IN",
+    "INVOLVED_IN",
+
+    "ASSOCIATED_WITH",
+    "RELATED_TO",
 }
 
 def build_extraction_prompt(title: str, text: str) -> str:
@@ -115,7 +170,7 @@ def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
             "aliases":aliases,
         })
 
-    known_names = {["name"].casefold() for row in entities}
+    known_keys={entity_key(row["name"]) for row in entities if entity_key(row["name"])}
 
     for row in data.get("relationships", []):
         if not isinstance(row, dict):
@@ -123,13 +178,22 @@ def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
 
         source = str(row.get("source") or "").strip()
         target = str(row.get("target") or "").strip()
-        relation_type = str(row.get("type") or "").strip().upper()
+        relation_type=str(row.get("type") or "RELATED_TO").strip().upper().replace(" ","_")
+        if relation_type not in ALLOWED_RELATION_TYPES:
+            relation_type="RELATED_TO"
 
         if not source or not target or not relation_type:
             continue
-        if source.casefold() not in known_names:
+
+        source_key=entity_key(source)
+        target_key=entity_key(target)
+        if not source_key or not target_key:
             continue
-        if target.casefold() not in known_names:
+        if source_key not in known_keys:
+            continue
+        if target_key not in known_keys:
+            continue
+        if source_key==target_key:
             continue
 
         try:
@@ -156,7 +220,9 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
     model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
     prompt = build_extraction_prompt(title, text)
     raw = generate(cfg, prompt, model_override=model, options_override={
-        "temperature": float(ncfg.get("extraction_temperature", 0.0))
+        "temperature": float(ncfg.get("extraction_temperature", 0.0)),
+        "num_ctx":int(ncfg.get("extraction_num_ctx",4096)),
+        "num_predict":int(ncfg.get("extraction_num_predict",1024)),
     }, think_override=False).strip()
 
     if not raw:

@@ -5,6 +5,7 @@ import yaml
 import hashlib
 import json
 import inspect
+import re
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -18,34 +19,63 @@ from rag.utils.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
 
-RELATION_MARKERS=(
-    "friend",
-    "friends",
-    "ally",
-    "allies",
-    "enemy",
-    "enemies",
-    "brother",
-    "sister",
-    "mother",
-    "father",
-    "parent",
-    "child",
-    "leader",
-    "member",
-    "affiliation",
-    "associated",
-    "serves",
-    "served",
-    "envoy",
-    "disciple",
-    "master",
-    "follower",
-    "created by",
-    "worship",
-    "archon",
-    "god",
-)
+RELATION_MARKER_GROUPS={
+    "family":(
+        "father", "mother", "parent", "son", "daughter",
+        "child", "brother", "sister", "sibling", "husband",
+        "wife", "spouse", "ancestor", "descendant", "twin",
+    ),
+    "social":(
+        "friend", "friends", "companion", "ally", "allies",
+        "partner", "rival", "enemy", "enemies",
+    ),
+    "mentorship":(
+        "master", "mentor", "teacher", "student",
+        "disciple", "apprentice", "follower",
+    ),
+    "affiliation":(
+        "affiliation", "affiliated with", "member", "member of",
+        "belongs to", "joined", "leader", "founder", "founded",
+        "commander", "captain", "general", "chief", "director",
+        "boss"
+    ),
+    "service":(
+        "serves", "served", "serves under", "served under",
+        "works for", "worked for", "subordinate", "envoy",
+        "agent", "representative", "retainer",
+    ),
+    "creation":(
+        "created", "created by", "creator", "made by",
+        "forged by", "invented", "inventor", "owner",
+        "owned by", "wielder", "wielded by",
+    ),
+    "location":(
+        "located in", "located at", "resides in", "lives in",
+        "native of", "originated in", "rules", "ruled",
+        "governs", "governed", "protects", "guardian",
+    ),
+    "conflict":(
+        "fought", "fought against", "battle", "defeated",
+        "defeated by", "killed", "killed by", "opposed",
+        "opposes", "betrayed",
+    ),
+    "divine":(
+        "god", "goddess", "deity", "archon", "worship",
+        "worships", "worshipped", "divine", "celestia",
+    ),
+    "association":(
+        "associated with", "connected to", "related to",
+        "relationship", "successor", "predecessor",
+        "succeeded", "replaced",
+    ),
+    "event":(
+        "participated in", "involved in", "appeared in",
+        "takes part in", "during the",
+    ),
+}
+
+RELATION_MARKERS=tuple(marker for markers in RELATION_MARKER_GROUPS.values() for marker in markers)
+RELATION_PATTERN=re.compile(r"\b(?:" + "|".join(re.escape(marker) for marker in sorted(RELATION_MARKERS, key=len, reverse=True)) + r")\b", flags=re.IGNORECASE)
 
 def graph_source_hash(row:dict)->str:
     payload={
@@ -78,9 +108,9 @@ def graph_extractor_signature(cfg: dict) -> str:
             inspect.getsource(prepare_graph_extraction).encode("utf-8")
         ).hexdigest(),
         "relation_markers":RELATION_MARKERS,
-        "model":str(ncfg.get("extraction_model","qwen3.6:27b")),
+        "model":str(ncfg.get("extraction_model", "qwen3.6:27b")),
         "temperature":float(ncfg.get("extraction_temperature",0.0)),
-        "source":str(ncfg.get("source","genshin_wiki")),
+        "source":str(ncfg.get("source", "genshin_wiki")),
     }
 
     raw=json.dumps(
@@ -165,7 +195,7 @@ def prepare_graph_extraction(extraction: dict) -> tuple[list[dict], list[dict]]:
         if source_key==target_key:
             continue
 
-        relation_type=str(relationship.get("type") or "RELATED_TO").strip().upper().replace(" ","_")
+        relation_type=str(relationship.get("type") or "RELATED_TO").strip().upper().replace(" ", "_")
 
         try:
             confidence=float(relationship.get("confidence",0.0))
@@ -181,9 +211,17 @@ def prepare_graph_extraction(extraction: dict) -> tuple[list[dict], list[dict]]:
 
     return list(entities_by_key.values()),relationships
 
-def likely_graph_chunk(text:str)->bool:
+def relation_marker_hits(text: str) -> set[str]:
     lowered=text.casefold()
-    return any(marker in lowered for marker in RELATION_MARKERS)
+    hits=set()
+    for group,markers in RELATION_MARKER_GROUPS.items():
+        if any(re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in markers):
+            hits.add(group)
+
+    return hits
+
+def likely_graph_chunk(text: str) -> bool:
+    return bool(relation_marker_hits(text))
 
 def replace_graph_chunk(client, row:dict, extraction:dict, *, content_hash:str, extractor_signature:str) -> None:
     entities, relationships=prepare_graph_extraction(extraction)
@@ -464,6 +502,8 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
             text=str(row["text"])
             content_hash=graph_source_hash(row)
             state=existing_states.get(chunk_id)
+            hits=relation_marker_hits(text)
+            log.info("[GRAPH] chunk=%s relation_markers=%s", chunk_id, sorted(hits))
             if not likely_graph_chunk(text):
                 ineligible+=1
                 if state is not None:
@@ -505,7 +545,7 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
 
     if limit is None and failed==0:
         set_pipeline_meta(conn, "neo4j", "extractor_signature", extractor_sig)
-        set_pipeline_meta(conn, "neo4j", "extraction_model", str(ncfg.get("extraction_model","qwen3.6:27b")))
+        set_pipeline_meta(conn, "neo4j", "extraction_model", str(ncfg.get("extraction_model", "qwen3.6:27b")))
         set_pipeline_meta(conn, "neo4j", "sync_status", "success")
         log.info("[GRAPH] full synchronization committed signature=%s", extractor_sig[:12])
     elif limit is not None:
@@ -613,8 +653,8 @@ def main() -> None:
     logging_cfg=cfg.get("logging",{}) or {}
 
     setup_logging(
-        log_path=str(logging_cfg.get("file","rag/logs/pipeline.log")),
-        level=str(logging_cfg.get("level","INFO")),
+        log_path=str(logging_cfg.get("file", "rag/logs/pipeline.log")),
+        level=str(logging_cfg.get("level", "INFO")),
     )
 
     if args.db:

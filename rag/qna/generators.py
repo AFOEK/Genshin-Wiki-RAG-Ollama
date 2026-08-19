@@ -263,9 +263,7 @@ def strip_thinking_blocks(text: str) -> str:
 
 def generate(cfg: dict, prompt: str, *, retries: int | None = None, timeout: int | None = None, model_override: str | None = None, provider_override: str | None = None, options_override: dict[str, Any] | None = None, think_override: bool | str | None = None) -> str:
     runtime = cfg.get("runtime", {}) or {}
-
     provider = str(provider_override or runtime.get("qa_provider", "ollama")).strip().lower()
-
     if provider in {"llama.cpp", "llama-cpp"}:
         provider = "llamacpp"
 
