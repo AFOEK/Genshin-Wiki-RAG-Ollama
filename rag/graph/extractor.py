@@ -150,3 +150,20 @@ def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
         "entities": entities,
         "relationships": relationships,
     }
+
+def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> dict[str, Any]:
+    ncfg = cfg.get("neo4j", {}) or {}
+    model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
+    prompt = build_extraction_prompt(title, text)
+    raw = generate(cfg, prompt, model_override=model, options_override={
+        "temperature": float(ncfg.get("extraction_temperature", 0.0))
+    }, think_override=False).strip()
+
+    if not raw:
+        return {
+            "entities": [],
+            "relationships": []
+        }
+
+    data = parse_extraction_json(raw)
+    return normalize_extraction(data)

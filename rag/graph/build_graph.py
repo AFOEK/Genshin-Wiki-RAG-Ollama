@@ -1,6 +1,46 @@
 import sqlite3
+import logging
 
 from .utils import entity_key
+from .extractor import extract_graph_from_chunk 
+
+log = logging.getLogger(__name__)
+
+RELATION_MARKERS=(
+    "friend",
+    "friends",
+    "ally",
+    "allies",
+    "enemy",
+    "enemies",
+    "brother",
+    "sister",
+    "mother",
+    "father",
+    "parent",
+    "child",
+    "leader",
+    "member",
+    "affiliation",
+    "associated",
+    "serves",
+    "served",
+    "envoy",
+    "disciple",
+    "master",
+    "follower",
+    "created by",
+    "worship",
+    "archon",
+    "god",
+)
+
+def likely_graph_chunk(text:str)->bool:
+    lowered=text.casefold()
+    return any(
+        marker in lowered
+        for marker in RELATION_MARKERS
+    )
 
 def iter_genshin_wiki_chunks(conn: sqlite3.Connection):
     cur = conn.execute("""
@@ -102,3 +142,42 @@ def upsert_relationship(client, source: str, target: str, relation_type: str, ch
     relation_type=relation_type,
     chunk_id=int(chunk_id),
     confidence=float(confidence))
+
+
+def process_graph_chunk(cfg: dict, client, row: dict) -> dict:
+    upsert_chunk(client, row)
+    extraction = extract_graph_from_chunk(cfg, title=str(row["title"]), text=str(row["text"]))
+    chunk_id = int(row["chunk_id"])
+
+    for entity in extraction["entities"]:
+        upsert_entity(client, name=entity["name"], entity_type=entity["type"], aliases=entity["aliases"])
+        link_entity_to_chunk(client, entity["name"], chunk_id)
+
+    for relationship in extraction["relationships"]:
+        upsert_relationship(client, source=relationship["source"], target=relationship["target"], relation_type=relationship["type"], chunk_id=chunk_id, confidence=relationship["confidence"])
+
+def build_graph(cfg: dict, conn, client, limit: int | None = None) -> None:
+    processed=0
+    entity_count=0
+    relationship_count=0
+
+    for row in iter_genshin_wiki_chunks(conn):
+        try:
+            if not likely_graph_chunk(str(row["text"])):
+                continue
+            
+            extraction=process_graph_chunk(cfg, client, row)
+        except Exception:
+            log.exception("[GRAPH] failed chunk_id=%s title=%r", row["chunk_id"], row["title"])
+            continue
+
+        processed += 1
+        entity_count += len(extraction["entities"])
+        relationship_count += len(extraction["relationships"])
+
+        log.info("[GRAPH] chunk=%s title=%r entities=%d relationships=%d", row["chunk_id"], row["title"], len(extraction["entities"]), len(extraction["relationships"]),)
+
+        if limit is not None and processed>=limit:
+            break
+
+    log.info("[GRAPH] done chunks=%d entities=%d relationships=%d", processed, entity_count, relationship_count)
