@@ -16,6 +16,7 @@ dependencies:
   - six
   - tqdm
   - typing_extensions
+  - dotenv
 
   - requests
   - urllib3

@@ -36,3 +36,4 @@ turbovec
 scipy
 fastapi[standard]
 neo4j
+dotenv

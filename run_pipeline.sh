@@ -184,7 +184,7 @@ log "Activating virtual environment"
 source .venv/bin/activate
 
 log "Starting crawl, repair, audit, and FAISS migrations"
-if ! python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --GRAPH_SYNC=False --GRAPH_FORCE=False --GRAPH_PRUNE=False --GRAPH_LIMIT=False; then
+if ! python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --GRAPH_SYNC=False --GRAPH_FORCE=False --GRAPH_PRUNE=False; then
     log "[CRAWL] FATAL — main pipeline stage failed, aborting before export/Kaggle upload"
     exit 1
 fi
@@ -207,7 +207,7 @@ log "Done upload"
 #log "SPLADE records finished"
 
 #log "Creating Neo4j records"
-#python3 rag/main.py --DB_CRAWL=False --GRAPH_SYNC=True --GRAPH_FORCE=True --GRAPH_PRUNE=True --GRAPH_LIMIT=True
+#python3 rag/main.py --DB_CRAWL=False --GRAPH_SYNC=True --GRAPH_FORCE=True --GRAPH_PRUNE=True
 #log "Neo4j graph records finished"
 
 log "Test first local embedding"
