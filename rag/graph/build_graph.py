@@ -10,12 +10,12 @@ import re
 from dotenv import load_dotenv
 from pathlib import Path
 
-from rag.graph.utils_graph import entity_key
-from rag.graph.extractor import extract_graph_from_chunk
-from rag.graph.neo4j_client import Neo4jClient
-from rag.graph.schema import ensure_schema
-from rag.core.paths import resolve_db_path
-from rag.utils.logging_setup import setup_logging
+from .utils_graph import entity_key
+from .extractor import extract_graph_from_chunk
+from .neo4j_client import Neo4jClient
+from .schema import ensure_schema
+from core.paths import resolve_db_path
+from utils.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
 
@@ -630,55 +630,3 @@ def prune_graph_orphans(client) -> None:
         }
         DELETE e
     """)
-
-def main() -> None:
-    parser=argparse.ArgumentParser(description="Build the Genshin Wiki Neo4j knowledge graph")
-    parser.add_argument("--config", default="rag/config.yaml", help="Path to config.yaml")
-    parser.add_argument("--db", default=None, help="Optional path to genshin_rag.db")
-    parser.add_argument("--limit", type=int, default=None, help="Maximum number of qualifying chunks to process")
-    parser.add_argument("--force", action="store_true", help="Re-extract eligible chunks even when unchanged")
-    parser.add_argument("--no-prune", action="store_true", help="Do not remove Neo4j chunks that are stale in SQLite")
-    args=parser.parse_args()
-
-    project_root=Path(__file__).resolve().parents[2]
-    load_dotenv(project_root/".env")
-
-    config_path=Path(args.config)
-    if not config_path.is_absolute():
-        config_path=project_root/config_path
-
-    with config_path.open("r", encoding="utf-8") as f:
-        cfg=yaml.safe_load(f) or {}
-
-    logging_cfg=cfg.get("logging",{}) or {}
-
-    setup_logging(
-        log_path=str(logging_cfg.get("file", "rag/logs/pipeline.log")),
-        level=str(logging_cfg.get("level", "INFO")),
-    )
-
-    if args.db:
-        db_path=Path(args.db)
-        if not db_path.is_absolute():
-            db_path=project_root/db_path
-    else:
-        db_path=resolve_db_path(cfg)
-
-    if not db_path.exists():
-        raise FileNotFoundError(f"SQLite database not found: {db_path}")
-
-    log.info("[GRAPH] SQLite DB: %s",db_path)
-
-    conn=sqlite3.connect(db_path)
-    conn.row_factory=sqlite3.Row
-    client=Neo4jClient(cfg)
-
-    try:
-        ensure_schema(client)
-        build_graph(cfg, conn, client, limit=args.limit, force=args.force, prune=not args.no_prune)
-    finally:
-        conn.close()
-        client.close()
-
-if __name__=="__main__":
-    main()

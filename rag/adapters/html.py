@@ -2,6 +2,8 @@ import time
 import requests
 import logging
 import random
+import re
+
 from urllib.parse import urlsplit, urlunsplit, parse_qs
 from collections import deque
 from urllib.parse import urljoin, urlparse
@@ -21,10 +23,25 @@ SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
 _GAME8_RETRY_STATUSES = {403, *_RETRY_STATUSES}
 _GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
     "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
-_GAME8_ARCHIVE_PREFIX = ("/games/Genshin-Impact/archives/")
+_GAME8_ARCHIVE_PREFIX = "/games/Genshin-Impact/archives/"
 GAME8_NOISE_SELECTORS = (
     ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", ".comments", ".comment-list", ".comment-thread", ".reply", ".replies", ".discussion", ".message-board",
     "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside")
+GAME8_DISCOVERY_PATHS={
+    "/games/Genshin-Impact",
+    "/games/Genshin-Impact/archives",
+}
+
+def is_game8_discovery_url(url:str) -> bool:
+    path = urlparse(url).path.rstrip("/")
+    return path in GAME8_DISCOVERY_PATHS
+
+def is_game8_article(url:str) -> bool:
+    path = urlparse(url).path.rstrip("/")
+    return bool(re.fullmatch(r"/games/Genshin-Impact/archives/\d+", path))
+
+def is_allowed_game8_url(url:str)->bool:
+    return is_game8_discovery_url(url) or is_game8_article(url)
 
 def allow_lang(url: str, allowed_lang: str = "EN") -> bool:
     qs = parse_qs(urlsplit(url).query)
@@ -139,7 +156,6 @@ def drop_honey_comment(soup: BeautifulSoup) -> None:
     for sel in selectors:
         for node in soup.select(sel):
             node.decompose()
-
 
 def normalize_url(u: str) -> str:
     parts = urlsplit(u)
@@ -309,6 +325,24 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         q.append(requested_url)
         return True
 
+    def enqueue_game8_articles(html:str, page_url:str) -> int:
+        added = 0
+        for link in extract_links(html, page_url):
+            link = normalize_url(link)
+
+            if not is_game8_article(link):
+                continue
+            if deny_url and deny_url.search(link):
+                continue
+            if allow_url and not allow_url.search(link):
+                continue
+            if link in seen or link in q:
+                continue
+
+            q.append(link)
+            added+=1
+        return added
+
     while q and (max_pages is None or len(seen) < max_pages):
         requested_url = normalize_url(q.popleft())
 
@@ -323,9 +357,10 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             continue
 
         if allow_url and not allow_url.search(requested_url):
-            log.info("[HTML] Skip URL outside allow list: %s", requested_url)
-            seen.add(requested_url)
-            continue
+            if not (game8_source and is_game8_discovery_url(requested_url)):
+                log.info("[HTML] Skip URL outside allow list: %s",requested_url)
+                seen.add(requested_url)
+                continue
 
         if not allow_lang(requested_url, allowed_langs):
             seen.add(requested_url)
@@ -363,9 +398,10 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             continue
 
         if allow_url and not allow_url.search(final_url):
-            log.warning("[HTML] Redirect outside allow list requested=%s final=%s", requested_url, final_url)
-            seen.add(requested_url)
-            continue
+            if not (game8_source and is_game8_discovery_url(final_url)):
+                log.warning("[HTML] Redirect outside allow list requested=%s final=%s",requested_url,final_url)
+                seen.add(requested_url)
+                continue
 
         content_type = (response.headers.get("Content-Type") or "").lower()
         if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
@@ -373,21 +409,32 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             seen.add(requested_url)
             continue
 
-        html = response.text
+        html=response.text
 
         if game8_source:
             problem = game8_response_problem(response, html)
             if problem:
-                schedule_retry(requested_url, reason=problem, response=response)
+                schedule_retry(requested_url, reason = problem, response = response)
+                continue
+
+            if is_game8_discovery_url(final_url):
+                added = enqueue_game8_articles(html, final_url)
+                seen.add(requested_url)
+                seen.add(final_url)
+                log.info("[GAME8] discovery processed url=%s article_links_added=%d", final_url, added)
+                continue
+
+            if not is_game8_article(final_url):
+                log.info("[GAME8] skipping non-article url=%s", final_url)
+                seen.add(requested_url)
+                seen.add(final_url)
                 continue
 
         text = html_to_text(html, final_url)
         if not text.strip():
-            if game8_source:
-                schedule_retry(requested_url, reason="empty or rejected article extraction", response=response)
-            else:
-                log.warning("[HTML] Skipping empty extraction url=%s", final_url)
-                seen.add(requested_url)
+            log.warning("[HTML] Skipping empty extraction url=%s", final_url)
+            seen.add(requested_url)
+            seen.add(final_url)
             continue
 
         title = final_url
@@ -401,22 +448,26 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
         seen.add(requested_url)
         seen.add(final_url)
 
-        for link in extract_links(html, final_url):
-            link = normalize_url(link)
-            link_path = urlsplit(link).path.lower()
+        if game8_source:
+            added = enqueue_game8_articles(html, final_url)
+            log.debug("[GAME8] article=%s discovered_articles=%d", final_url, added)
+        else:
+            for link in extract_links(html, final_url):
+                link = normalize_url(link)
+                link_path = urlsplit(link).path.lower()
 
-            if link_path.endswith(SKIP_EXT):
-                continue
-            if not allow_lang(link, allowed_langs):
-                continue
-            if not same_site(link, base_url):
-                continue
-            if deny_url and deny_url.search(link):
-                continue
-            if allow_url and not allow_url.search(link):
-                continue
-            if link not in seen and link not in q:
-                q.append(link)
+                if link_path.endswith(SKIP_EXT):
+                    continue
+                if not allow_lang(link, allowed_langs):
+                    continue
+                if not same_site(link, base_url):
+                    continue
+                if deny_url and deny_url.search(link):
+                    continue
+                if allow_url and not allow_url.search(link):
+                    continue
+                if link not in seen and link not in q:
+                    q.append(link)
 
         last_modified = response.headers.get("Last-Modified")
         etag = response.headers.get("ETag")

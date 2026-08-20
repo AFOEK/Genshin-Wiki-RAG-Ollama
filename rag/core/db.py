@@ -239,29 +239,31 @@ def read_only_connect(path: str) -> sqlite3.Connection:
     log.info(f"[DB] Read-only sqlite db connected at {p}")
     return conn
 
-def init_db(path: str) -> None:
-    p = Path(path)
+def ensure_db(path: str) -> None:
+    p=Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-
-    conn = sqlite3.connect(str(p), timeout=120.0, isolation_level=None)
+    conn=sqlite3.connect(str(p), timeout=120.0, isolation_level=None,)
     try:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory=sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(SCHEMA)
-        log.info(f"[DB] Initialized sqlite db schema at {p}")
+        result=conn.execute("PRAGMA quick_check;").fetchone()
+        if not result or str(result[0]).lower()!="ok":
+            raise RuntimeError(f"[DB] SQLite quick_check failed at {p}: {result[0] if result else 'unknown'}")
+
+        log.info("[DB] SQLite ready at %s", p)
     finally:
         conn.close()
 
-def connect(path: str, init_schema: bool = False) -> sqlite3.Connection:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+def init_db(path: str) -> None:
+    ensure_db(path)
 
+def connect(path: str) -> sqlite3.Connection:
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"[DB] SQLite database has not been intialized: {p}")
     conn = sqlite3.connect(str(p), timeout=60.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON;")
-
-    if init_schema:
-        conn.executescript(SCHEMA)
-
     log.info(f"[DB] Connected to sqlite db at {p}")
     return conn

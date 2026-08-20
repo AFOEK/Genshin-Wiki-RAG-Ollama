@@ -1,5 +1,13 @@
-import yaml, logging, queue, threading, argparse
-from core.db import connect, init_db
+import yaml
+import logging
+import queue
+import threading
+import argparse
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+from core.db import connect, ensure_db
 from core.embed import embed
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
@@ -7,6 +15,10 @@ from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_
 from core.parent import rebuild_parent_map, sync_dirty_parent_docs, mark_all_active_docs_parent_dirty
 from core.turbovec import build_turbovec_from_sqlite
 from core.splade import build_splade_from_sqlite
+
+from graph.build_graph import build_graph
+from graph.neo4j_client import Neo4jClient
+from graph.schema import ensure_schema
 
 from utils.filters import Filters
 from utils.audit import audit_integrity, audit_faiss_against_sqlite, audit_turbovec_against_sqlite
@@ -44,7 +56,7 @@ def main():
     ap.add_argument("--TURBOVEC_AUDIT", default="False")
     ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
     ap.add_argument("--SPLADE_MIGRATE", default="False",)
-    ap.add_argument("--SPLADE_OVERWRITE", default="False",)
+    ap.add_argument("--SPLADE_OVERWRITE", default="False")
     ap.add_argument("--SPLADE_LIMIT", type=int, default=None)
     ap.add_argument("--DB_REPAIR", default="False")
     ap.add_argument("--FTS_SYNC", default="False")
@@ -53,6 +65,10 @@ def main():
     ap.add_argument("--PARENT_REBUILD", default="False")
     ap.add_argument("--PARENT_SYNC", default="False")
     ap.add_argument("--PARENT_INIT", default="False")
+    ap.add_argument("--GRAPH_SYNC", default="False")
+    ap.add_argument("--GRAPH_FORCE", default="False")
+    ap.add_argument("--GRAPH_PRUNE", default="True")
+    ap.add_argument("--GRAPH_LIMIT", type=int, default=None)
     ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
     args = ap.parse_args()
 
@@ -73,6 +89,9 @@ def main():
     do_parent_rebuild = parse_bool(args.PARENT_REBUILD)
     do_splade_migrate = parse_bool(args.SPLADE_MIGRATE)
     splade_overwrite = parse_bool(args.SPLADE_OVERWRITE)
+    do_graph_sync = parse_bool(args.GRAPH_SYNC)
+    graph_force = parse_bool(args.GRAPH_FORCE)
+    graph_prune = parse_bool(args.GRAPH_PRUNE)
 
     with open("rag/config.yaml") as f:
         cfg = yaml.safe_load(f)
@@ -84,7 +103,7 @@ def main():
     log = logging.getLogger(__name__)
     log.info("[INFO] Logging initialized")
     db_path = resolve_db_path(cfg)
-    init_db(db_path)
+    ensure_db(str(db_path))
     log.info("[INFO] Database init at %s", db_path)
 
     def embed_fn(text_or_texts, mode: str = "passage", title=None):
@@ -322,7 +341,29 @@ def main():
 
             raise RuntimeError(f"[TURBOVEC_AUDIT] failed: {len(trep.failures)} problems")
         log.info("[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
-        
+
+    if do_graph_sync:
+        graph_cfg=cfg.get("neo4j",{}) or {}
+        if not parse_bool(graph_cfg.get("enabled",False)):
+            log.warning("[GRAPH] GRAPH_SYNC requested but neo4j.enabled=False; skipping")
+        else:
+            log.info("[GRAPH] incremental Neo4j synchronization starting force=%s prune=%s limit=%s", graph_force, graph_prune, args.GRAPH_LIMIT)
+            conn = connect(str(db_path))
+            client = None
+            try:
+                client = Neo4jClient(cfg)
+                ensure_schema(client)
+                build_graph(cfg, conn, client, limit=args.GRAPH_LIMIT, force=graph_force, prune=graph_prune)
+                log.info("[GRAPH] incremental Neo4j synchronization completed")
+            except Exception:
+                log.exception("[GRAPH] Neo4j synchronization failed")
+                raise
+            finally:
+                conn.close()
+                if client is not None:
+                    client.close()
+
+      
     log.info("[ALL] DONE!")
 
 if __name__ == "__main__":
