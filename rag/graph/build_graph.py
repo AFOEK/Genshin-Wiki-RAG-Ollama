@@ -504,7 +504,7 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
             state=existing_states.get(chunk_id)
             hits=relation_marker_hits(text)
             log.info("[GRAPH] chunk=%s relation_markers=%s", chunk_id, sorted(hits))
-            if not likely_graph_chunk(text):
+            if not hits:
                 ineligible+=1
                 if state is not None:
                     delete_graph_chunks(client, [chunk_id])

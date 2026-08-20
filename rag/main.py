@@ -46,6 +46,9 @@ def merge_regex(global_pat: str | None, source_pat: str | None) -> str | None:
     return None
 
 def main():
+    project_root = Path(__file__).resolve().parent.parent
+    load_dotenv(project_root / ".env")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--DB_CRAWL", default="True")
     ap.add_argument("--DB_AUDIT", default="True")

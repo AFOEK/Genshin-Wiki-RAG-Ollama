@@ -5,8 +5,8 @@ import logging
 import re
 from typing import Any
 
-from rag.qna.generators import generate
-from rag.graph.utils_graph import entity_key
+from .utils_graph import entity_key
+from qna.generators import generate
 
 log = logging.getLogger(__name__)
 
