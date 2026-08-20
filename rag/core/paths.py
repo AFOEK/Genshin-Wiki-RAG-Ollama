@@ -27,11 +27,11 @@ def resolve_storage_root(cfg: dict) -> Path:
     primary = expand_path(Path(storage.get("primary_root", "")))
     secondary = expand_path(Path(storage.get("secondary_root", "")))
     if primary and is_usable_dir(primary):
-        log.info("[SPLADE] Storage root: PRIMARY %s", primary)
+        log.info("[STORAGE] Storage root: PRIMARY %s", primary)
         return primary
     
     if secondary and is_usable_dir(secondary):
-        log.info("[SPLADE] Storage root: SECONDARY %s", secondary)
+        log.info("[STORAGE] Storage root: SECONDARY %s", secondary)
         return secondary
     
     raise RuntimeError(f"No usable storage root. primary={primary} secondary={secondary}")
