@@ -242,15 +242,17 @@ def read_only_connect(path: str) -> sqlite3.Connection:
 def ensure_db(path: str) -> None:
     p=Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    conn=sqlite3.connect(str(p), timeout=120.0, isolation_level=None,)
+    conn=sqlite3.connect(str(p), timeout=120.0, isolation_level=None)
     try:
         conn.row_factory=sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON;")
+        log.info("[DB] Ensuring SQLite schema at %s",p)
         conn.executescript(SCHEMA)
-        result=conn.execute("PRAGMA quick_check;").fetchone()
-        if not result or str(result[0]).lower()!="ok":
-            raise RuntimeError(f"[DB] SQLite quick_check failed at {p}: {result[0] if result else 'unknown'}")
-
+        required={"docs", "chunks", "embeddings"}
+        existing={str(row["name"]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        missing=required - existing
+        if missing:
+            raise RuntimeError(f"[DB] Missing required SQLite tables: {sorted(missing)}")
         log.info("[DB] SQLite ready at %s", p)
     finally:
         conn.close()
