@@ -20,7 +20,6 @@ SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
             ".ico", ".css", ".js", ".woff", ".woff2",
             ".avi", ".mkv", ".webm")
 
-_GAME8_RETRY_STATUSES = {403, *_RETRY_STATUSES}
 _GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
     "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
 _GAME8_ARCHIVE_PREFIX = "/games/Genshin-Impact/archives/"
@@ -177,10 +176,6 @@ def same_site(url: str, base_url: str) -> bool:
 
 def is_game8_url(url: str) -> bool:
     return (normalized_host(url) == "game8.co")
-
-def is_allowed_game8_url(url: str) -> bool:
-    parsed = urlparse(url)
-    return (normalized_host(url) == "game8.co" and parsed.path.startswith(_GAME8_ARCHIVE_PREFIX))
 
 def soup_text_fallback(node) -> str:
     try:
@@ -380,7 +375,13 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url = None, rate
             continue
 
         final_url = normalize_url(response.url)
-        retry_statuses = _GAME8_RETRY_STATUSES if game8_source else _RETRY_STATUSES
+        retry_statuses = _RETRY_STATUSES if game8_source else _RETRY_STATUSES
+
+        if game8_source and response.status_code == 403:
+            log.warning("[GAME8] HTTP 403 blocked url=%s", requested_url)
+            seen.add(requested_url)
+            sleep_backoff(2, base=5.0, cap=30.0)
+            continue
 
         if response.status_code in retry_statuses:
             schedule_retry(requested_url, reason=f"HTTP {response.status_code}", response=response)
