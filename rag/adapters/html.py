@@ -22,10 +22,12 @@ SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
 
 _GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
     "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
-_GAME8_ARCHIVE_PREFIX = "/games/Genshin-Impact/archives/"
 GAME8_NOISE_SELECTORS = (
-    ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", ".comments", ".comment-list", ".comment-thread", ".reply", ".replies", ".discussion", ".message-board",
-    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "[class*='member']", "[id*='member']", "[class*='login']", "[id*='login']", "[class*='premium']", "[id*='premium']", "dialog", "aside")
+    ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", 
+    "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", 
+    ".comments", ".comment-list", ".comment-thread", ".reply", 
+    ".replies", ".discussion", ".message-board",
+    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "dialog", "aside")
 GAME8_DISCOVERY_PATHS={
     "/games/Genshin-Impact",
     "/games/Genshin-Impact/archives",
@@ -56,15 +58,14 @@ def drop_game8_noise(root) -> None:
 
     membership_markers = ("what can you do as a free member", "create your free account today", "article watchlist", "game bookmarks", "cross-device sync", "premium articles", "site interface", "game tools")
 
-    for node in list(root.find_all(["h1", "h2", "h3", "h4", "section", "aside", "dialog", "div"])):
-        node_text = node.get_text(" ", strip=True).lower()
-
+    for node in list(root.find_all(["section", "aside", "dialog"])):
+        node_text = node.get_text(" ", strip=True).casefold()
         if len(node_text) > 12_000:
             continue
 
         hits = sum(marker in node_text for marker in membership_markers)
 
-        if hits >= 3:
+        if hits >= 2:
             node.decompose()
 
 def find_game8_article_root(soup: BeautifulSoup):
@@ -214,9 +215,11 @@ def html_to_text(html: str, url: str | None = None) -> str:
         if main is None:
             log.warning("[GAME8] article root not found url=%s", url)
             return ""
-
+        before_noise = main.get_text(" ", strip=True)
+        log.info("[GAME8] article root before cleanup url=%s chars=%d tag=%s class=%s", url, len(before_noise), main.name, main.get("class"))
         drop_game8_noise(main)
         main_preview = main.get_text(" ", strip=True)
+        log.info("[GAME8] article root after cleanup url=%s chars=%d", url, len(main_preview))
         if is_low_value_game8_text(main_preview):
             log.warning("[GAME8] rejected low-value article root url=%s chars=%d", url, len(main_preview))
             return ""
