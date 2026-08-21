@@ -22,12 +22,27 @@ SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
 
 _GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
     "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
-GAME8_NOISE_SELECTORS = (
-    ".c-commentItem__container--padding-sp", ".c-commentItem__header", ".c-commentItem__body", 
-    "a[href*='/comments']", "[data-track-mario-keyword*='comment']", "#comments", 
-    ".comments", ".comment-list", ".comment-thread", ".reply", 
-    ".replies", ".discussion", ".message-board",
-    "img[src^='data:image']", "[class*='modal']", "[id*='modal']", "dialog", "aside")
+GAME8_NOISE_SELECTORS=(
+    ".p-membershipModal__content",
+    ".c-commentItem__container--padding-sp",
+    ".c-commentItem__header",
+    ".c-commentItem__body",
+    "a[href*='/comments']",
+    "[data-track-mario-keyword*='comment']",
+    "#comments",
+    ".comments",
+    ".comment-list",
+    ".comment-thread",
+    ".reply",
+    ".replies",
+    ".discussion",
+    ".message-board",
+    "img[src^='data:image']",
+    "[class*='modal']",
+    "[id*='modal']",
+    "dialog",
+    "aside",
+)
 GAME8_DISCOVERY_PATHS={
     "/games/Genshin-Impact",
     "/games/Genshin-Impact/archives",
@@ -72,37 +87,60 @@ def find_game8_article_root(soup: BeautifulSoup):
     selectors = (
         "main article",
         "article",
+        "#content",
+        "[class*='articleBody']",
+        "[class*='article-body']",
+        "[class*='articleContent']",
+        "[class*='article-content']",
         "[role='main']",
         "main",
-        "#content",
-        "[class*='article']",
+    )
+
+    reject_markers=(
+        "membership",
+        "modal",
+        "login",
+        "signup",
+        "register",
+        "premium",
+        "comment",
     )
 
     candidates: list[tuple[int, object]] = []
     seen_nodes: set[int] = set()
+
     for selector in selectors:
         for candidate in soup.select(selector):
-            node_id = id(candidate)
+            node_id=id(candidate)
             if node_id in seen_nodes:
                 continue
-
             seen_nodes.add(node_id)
-            text = candidate.get_text(" ", strip=True,)
-            if len(text) < 800:
+            classes=" ".join(candidate.get("class",[])).casefold()
+            node_id_attr=str(candidate.get("id") or "").casefold()
+            identity=f"{classes} {node_id_attr}"
+            if any(marker in identity for marker in reject_markers):
+                log.info("[GAME8] rejected candidate selector=%s tag=%s class=%s id=%s", selector, candidate.name, candidate.get("class"), candidate.get("id"))
                 continue
 
-            headings = candidate.find_all(["h1", "h2", "h3"])
-            score = len(text)
-            score += (len(headings) * 400)
-            if candidate.find("h1"):
-                score += 1200
+            text=candidate.get_text(" ",strip=True)
+            if len(text)<800:
+                continue
 
-            candidates.append((score, candidate,))
+            headings=candidate.find_all(["h1","h2","h3"])
+            score=len(text)+(len(headings)*400)
+            if candidate.find("h1"):
+                score+=1200
+            if selector=="main article":
+                score+=3000
+            elif selector=="article":
+                score+=2000
+
+            candidates.append((score,candidate))
 
     if not candidates:
         return None
 
-    candidates.sort(key=lambda item: item[0], reverse=True,)
+    candidates.sort(key=lambda item:item[0],reverse=True)
     return candidates[0][1]
 
 def is_low_value_game8_text(text: str) -> bool:
