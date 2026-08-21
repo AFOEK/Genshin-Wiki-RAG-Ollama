@@ -23,6 +23,9 @@ SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp",
 _GAME8_BLOCK_MARKERS = ("access denied", "temporarily blocked", "too many requests", "verify you are human",
     "checking your browser",  "just a moment",  "cf-chl-",  "enable javascript and cookies")
 GAME8_NOISE_SELECTORS=(
+    ".p-membershipModal__backdrop",
+    ".p-membershipModal__container",
+    ".p-membershipModal__scrollContainer",
     ".p-membershipModal__content",
     ".c-commentItem__container--padding-sp",
     ".c-commentItem__header",
@@ -38,8 +41,6 @@ GAME8_NOISE_SELECTORS=(
     ".discussion",
     ".message-board",
     "img[src^='data:image']",
-    "[class*='modal']",
-    "[id*='modal']",
     "dialog",
     "aside",
 )
@@ -83,43 +84,27 @@ def drop_game8_noise(root) -> None:
         if hits >= 2:
             node.decompose()
 
-def find_game8_article_root(soup: BeautifulSoup):
-    selectors = (
-        "main article",
-        "article",
-        "#content",
-        "[class*='articleBody']",
-        "[class*='article-body']",
-        "[class*='articleContent']",
-        "[class*='article-content']",
-        "[role='main']",
-        "main",
-    )
+def find_game8_article_root(soup:BeautifulSoup):
+    canonical=soup.select_one(".archive-style-wrapper")
+    if canonical is not None:
+        text=canonical.get_text(" ",strip=True)
+        if len(text) >= 800:
+            return canonical
 
-    reject_markers=(
-        "membership",
-        "modal",
-        "login",
-        "signup",
-        "register",
-        "premium",
-        "comment",
+    selectors=(
+        ".p-archiveContent__main",
+        ".p-archiveContent__container",
+        ".p-archiveBody__main",
     )
-
-    candidates: list[tuple[int, object]] = []
-    seen_nodes: set[int] = set()
+    reject_markers = ("membership", "modal", "login", "signup", "register", "premium", "comment")
+    candidates=[]
 
     for selector in selectors:
         for candidate in soup.select(selector):
-            node_id=id(candidate)
-            if node_id in seen_nodes:
-                continue
-            seen_nodes.add(node_id)
-            classes=" ".join(candidate.get("class",[])).casefold()
-            node_id_attr=str(candidate.get("id") or "").casefold()
-            identity=f"{classes} {node_id_attr}"
+            classes=" ".join(candidate.get("class", [])).casefold()
+            node_id=str(candidate.get("id") or "").casefold()
+            identity=f"{classes} {node_id}"
             if any(marker in identity for marker in reject_markers):
-                log.info("[GAME8] rejected candidate selector=%s tag=%s class=%s id=%s", selector, candidate.name, candidate.get("class"), candidate.get("id"))
                 continue
 
             text=candidate.get_text(" ",strip=True)
@@ -130,11 +115,6 @@ def find_game8_article_root(soup: BeautifulSoup):
             score=len(text)+(len(headings)*400)
             if candidate.find("h1"):
                 score+=1200
-            if selector=="main article":
-                score+=3000
-            elif selector=="article":
-                score+=2000
-
             candidates.append((score,candidate))
 
     if not candidates:
