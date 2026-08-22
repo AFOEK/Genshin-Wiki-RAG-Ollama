@@ -1,15 +1,20 @@
 from __future__ import annotations
 import json
 import sqlite3
-from pathlib import Path
-from turbovec import IdMapIndex
 import faiss
 import logging
 import threading
+import re
+
 import numpy as np
 
-from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match
+from pathlib import Path
+from turbovec import IdMapIndex
+
+from .utils import normalize_vec_from_blob, make_fts5_query, normalize_model_name, check_faiss_model_match, extract_entity_terms
 from core.splade import encode_query_sparse, load_csc_shard, load_splade_model, search_csc_shard, resolve_splade_device
+from graph.neo4j_client import Neo4jClient
+from graph.utils_graph import entity_key
 
 log = logging.getLogger(__name__)
 
@@ -276,3 +281,124 @@ class SpladeRetriever:
         results = candidates[:k]
         log.info("[SPLADE] query_dims=%d candidates=%d returned=%d", query_indices.size, len(candidates), len(results))
         return results
+
+class Neo4jGraphRetriever:
+    def __init__(self,cfg:dict):
+        self.cfg=cfg
+        self.client=Neo4jClient(cfg)
+        ncfg=cfg.get("neo4j",{}) or {}
+        self.max_hops=max(1, min(3, int(ncfg.get("max_hops", 2))))
+        self.exact_entity_boost=float(ncfg.get("exact_entity_boost", 2.0))
+
+    @staticmethod
+    def _normalize(value:str)->str:
+        return " ".join(str(value or "").replace("’", "'").casefold().split())
+
+    @classmethod
+    def _contains_phrase(cls,text:str,phrase:str)->bool:
+        text=cls._normalize(text)
+        phrase=cls._normalize(phrase)
+        if not phrase:
+            return False
+        return re.search(r"(?<!\w)"+re.escape(phrase)+r"(?!\w)",text) is not None
+
+    def _seed_keys(self, question:str)->list[str]:
+        term_keys=[]
+        for term in extract_entity_terms(question):
+            key=entity_key(term)
+            if key and key not in term_keys:
+                term_keys.append(key)
+
+        rows=[]
+        if term_keys:
+            rows.extend(self.client.query("""
+                MATCH (e:Entity)
+                WHERE e.key IN $keys
+                RETURN e.key AS key, e.name AS name, coalesce(e.aliases,[]) AS aliases
+            """, keys=term_keys))
+
+        rows.extend(self.client.query("""
+            MATCH (e:Entity)
+            WHERE size(trim(coalesce(e.name,'')))>=2
+              AND (
+                toLower($question) CONTAINS toLower(e.name)
+                OR any(alias IN coalesce(e.aliases, [])
+                    WHERE size(trim(alias)) >= 2
+                    AND toLower($question) CONTAINS toLower(alias))
+              )
+            RETURN e.key AS key, e.name AS name, coalesce(e.aliases, []) AS aliases
+            LIMIT 100
+        """, question=question))
+
+        out=[]
+        seen=set()
+        for row in rows:
+            key=str(row.get("key") or "").strip()
+            name=str(row.get("name") or "").strip()
+            aliases=[str(x).strip() for x in row.get("aliases", []) if str(x).strip()]
+            if not key or key in seen:
+                continue
+
+            matched=(key in term_keys or self._contains_phrase(question, name))
+            if not matched:
+                matched=any(self._contains_phrase(question, alias) for alias in aliases)
+            if not matched:
+                continue
+
+            seen.add(key)
+            out.append(key)
+
+        return out[:8]
+
+    def search(self, question:str, k:int)->list[tuple[int,float]]:
+        if k<=0:
+            return []
+
+        seed_keys=self._seed_keys(question)
+        if not seed_keys:
+            log.info("[GRAPH] query=%r no entity seeds", question)
+            return []
+
+        hops=self.max_hops
+        rows=self.client.query(f"""
+            MATCH (seed:Entity)
+            WHERE seed.key IN $seed_keys
+
+            CALL (seed) {{
+                MATCH (seed)-[:MENTIONED_IN]->(c:Chunk)<-[:HAS_CHUNK]-(d:Document)
+                RETURN
+                    c.chunk_id AS chunk_id,
+                    CASE
+                        WHEN toLower(d.title)=toLower(seed.name)
+                          OR toLower(d.title) STARTS WITH toLower(seed.name)
+                        THEN $exact_boost
+                        ELSE 1.0
+                    END AS score
+
+                UNION ALL
+
+                MATCH p=(seed)-[:RELATION*1..{hops}]-(other:Entity)
+                UNWIND relationships(p) AS rel
+                MATCH (c:Chunk)
+                WHERE c.chunk_id=rel.evidence_chunk_id
+                WITH c, other, rel, length(p) AS distance
+                RETURN
+                    c.chunk_id AS chunk_id,
+                    $exact_boost
+                    * CASE WHEN other.key IN $seed_keys THEN 1.5 ELSE 1.0 END
+                    * coalesce(rel.confidence, 0.5)
+                    / toFloat(distance) AS score
+            }}
+
+            RETURN chunk_id,max(score) AS score
+            ORDER BY score DESC,chunk_id
+            LIMIT $k
+        """, seed_keys=seed_keys, exact_boost=self.exact_entity_boost, k=int(k))
+
+        results=[(int(row["chunk_id"]),float(row["score"])) for row in rows if row.get("chunk_id") is not None]
+
+        log.info("[GRAPH] query=%r seeds=%s hops=%d candidates=%d", question, seed_keys, hops, len(results))
+        return results
+
+    def close(self):
+        self.client.close()
