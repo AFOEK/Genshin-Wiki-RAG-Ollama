@@ -122,11 +122,18 @@ def main():
     threading_cfg = cfg.get("threading", {})
     embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
     embed_workers = int(threading_cfg.get("embed_workers", 2))
+    embed_batch_size = int(threading_cfg.get("embed_batch_size", 32))
+    embed_batch_wait_ms = int(threading_cfg.get("embed_batch_wait_ms", 250))
     document_queue_size = int(threading_cfg.get("document_queue_size", 200))
+    crawler_cfg=cfg.get("crawler", {}) or {}
+    crawler_default_workers=max(1, int(crawler_cfg.get("default_workers", 2)))
+    crawler_max_concurrent=max(1, int(crawler_cfg.get("max_concurrent_requests", 8)))
+    crawl_semaphore=threading.BoundedSemaphore(crawler_max_concurrent)
     fts_cfg = cfg.get("fts5", {})
     fts_batch_size = int(fts_cfg.get("batch_size", 1500))
 
-    log.info("[INFO] Setting up multi-threading: embed_queue=%d document_queue=%d workers=%d", embed_queue_size, document_queue_size, embed_workers)
+    log.info("[INFO] Threading embed_queue=%d document_queue=%d embed_workers=%d embed_batch=%d batch_wait_ms=%d",embed_queue_size, document_queue_size, embed_workers, embed_batch_size, embed_batch_wait_ms)
+    log.info("[INFO] Crawler default_workers=%d max_concurrent_requests=%d", crawler_default_workers, crawler_max_concurrent)
     log.info("[INFO] runtime embedding_provider=%s qa_provider=%s accelerator=%s", cfg.get("runtime", {}).get("embedding_provider", "ollama"), cfg.get("runtime", {}).get("qa_provider", "ollama"), cfg.get("runtime", {}).get("accelerator", "auto"))
     
     if do_crawl:
@@ -146,6 +153,7 @@ def main():
             kind = s["kind"]
             tier_map[name] = s.get("tier", "primary")
             weight_map[name] = s.get("weight", 1.0)
+            crawl_workers = max(1, int(s.get("crawl_workers", crawler_default_workers)))
 
             if kind == "github":
                 docs_iter = load_kqm_tcl_docs(s)
@@ -155,7 +163,7 @@ def main():
                 max_pages = int(raw_max) if raw_max is not None else None
                 rate = float(s.get("rate_limit_s", 1.0))
                 s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
-                docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages)
+                docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages, workers=crawl_workers, request_semaphore=crawl_semaphore)
             
             elif kind in {"honey_html", "game8_html", "genshingg_html"}:
                 seeds = s.get("seeds", [])
@@ -171,12 +179,14 @@ def main():
                 for seed in seeds:
                     if not source_filters.url_allowed(seed):
                         raise RuntimeError(f"[CRAWLER_CONFIG] source={name} seed rejected by its own filters: {seed}")
-                docs_iter = crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN")
+                docs_iter=crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN", workers=crawl_workers, request_semaphore=crawl_semaphore)
             else:
                 log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 
             if docs_iter is None:
                 continue
+
+            log.info("[CRAWLER] source=%s kind=%s workers=%d rate_limit_s=%s", name, kind, 1 if kind=="github" else crawl_workers, s.get("rate_limit_s","n/a"))
             t = threading.Thread(target=producer, args=(name, docs_iter, q, source_filters))
             producers.append(t)
 

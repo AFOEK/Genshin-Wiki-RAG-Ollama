@@ -659,10 +659,15 @@ pipeline:
   min_embed_chars: 100
   archive_raw: true
 
+crawler:
+  default_workers: 2
+  max_concurrent_requests: 8
+
 threading:
   embed_queue_size: 200
   embed_workers: 1
   embed_batch_size: 32
+  embed_batch_wait_ms: 500
   document_queue_size: 120
 
 embedding_prompts:
@@ -755,6 +760,7 @@ sources:
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - genshin-impact.fandom.com
@@ -771,6 +777,7 @@ sources:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - gensh.honeyhunterworld.com
@@ -789,6 +796,7 @@ sources:
     deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
     chunk_deny_text_regex: '(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)'
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - game8.co
@@ -815,6 +823,7 @@ sources:
     allow_url_regex: '^https://genshin\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|teams?|farming|elements?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$'
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - genshin.gg

@@ -127,57 +127,70 @@ def producer(source_name: str, docs_iter, out_q: queue.Queue, source_filters=Non
         out_q.put((source_name, STOP, STOP, STOP, STOP, STOP))
         log.info("[PRODUCER] [%s] finished produced=%d", source_name, produced)
 
-def embed_worker(embed_fn: Callable[[str], tuple[bytes, int]], embed_q: queue.Queue, res_q: queue.Queue, cfg: dict, worker_id: int):
+def embed_worker(embed_fn: Callable, embed_q: queue.Queue, res_q: queue.Queue, cfg: dict, worker_id: int):
     max_chars = int(cfg.get("pipeline", {}).get("max_embed_chars", 1800))
     min_chars = int(cfg.get("pipeline", {}).get("min_embed_chars", 800))
-    batch_size = int(cfg.get("threading", {}).get("embed_batch_size", 4))
+    thread_cfg = cfg.get("threading", {}) or {}
+    batch_size = max(1, int(thread_cfg.get("embed_batch_size", 32)))
+    batch_wait_s = max(0.0, float(thread_cfg.get("embed_batch_wait_ms", 250)) / 1000.0)
 
     while True:
         first_job = embed_q.get()
+        if first_job is STOP:
+            embed_q.task_done()
+            return
+
         jobs = [first_job]
+        deadline = time.monotonic() + batch_wait_s
+        while len(jobs) < batch_size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+
+            try:
+                next = embed_q.get(timeout=remaining)
+            except queue.Empty:
+                break
+
+            if next is STOP:
+                embed_q.task_done()
+                embed_q.put(STOP)
+                break
+
+            jobs.append(next)
+
         try:
-            if first_job is STOP:
-                return
-
-            while len(jobs) < batch_size:
-                try:
-                    nxt = embed_q.get_nowait()
-                    if nxt is STOP:
-                        embed_q.task_done()
-                        embed_q.put(STOP)
-                        break
-                    jobs.append(nxt)
-                except queue.Empty:
-                    break
-
             prepared_jobs: list[tuple[EmbedJob, str]] = []
+
             for job in jobs:
                 assert isinstance(job, EmbedJob)
                 txt = job.text or ""
                 safe_txt = txt[:max_chars] if len(txt) > max_chars else txt
                 safe_txt = defang_tables(safe_txt)
+
+                if not safe_txt:
+                    res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=None, vec=None))
+                    continue
+
                 prepared_jobs.append((job, safe_txt))
 
-            batch_success = False
-            if len(prepared_jobs) > 1:
-                batch_texts = [txt for _, txt in prepared_jobs]
-                batch_titles = [job.title for job, _ in prepared_jobs]
-                try:
-                    batch_result = embed_fn(batch_texts, title = batch_titles)
-                    if isinstance(batch_result, list) and len(batch_result) == len(prepared_jobs):
-                        for (job, _), (blob, dims) in zip(prepared_jobs, batch_result):
-                            res_q.put(EmbedResult(chunk_id=job.chunk_id, dims=dims, vec=blob))
-                        log.debug("[EMBED-%d] batch ok size=%d", worker_id, len(prepared_jobs))
-                        batch_success = True
-                    else:
-                        log.warning("[EMBED-%d] batch unexpected shape expected=%d got=%s, falling back", worker_id, len(prepared_jobs), len(batch_result) if isinstance(batch_result, list) else type(batch_result).__name__)
-                except Exception as e:
-                    log.warning("[EMBED-%d] batch embed failed (%s), falling back to per-item",
-                                worker_id, type(e).__name__)
-            if not batch_success:
-                results = embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id)
-                for res in results:
-                    res_q.put(res)
+            if not prepared_jobs:
+                continue
+
+            started = time.perf_counter()
+            results = embed_batch_resilient(embed_fn, prepared_jobs, min_chars, worker_id)
+            elapsed = time.perf_counter() - started
+            success = 0
+            failed = 0
+            for result in results:
+                res_q.put(result)
+                if result.vec is not None and result.dims is not None:
+                    success += 1
+                else:
+                    failed += 1
+
+            rate = len(prepared_jobs) / elapsed if elapsed > 0 else 0.0
+            log.info("[EMBED-%d] batch=%d ok=%d failed=%d elapsed=%.3fs rate=%.1f chunks/s q=%d", worker_id, len(prepared_jobs), success, failed, elapsed, rate, embed_q.qsize())
 
         finally:
             for _ in jobs:
