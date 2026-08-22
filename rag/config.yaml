@@ -8,7 +8,7 @@ faiss_path: data/faiss
 ollama: 
   base_url: http://localhost:11434
   embedding_model: snowflake-arctic-embed2:568m #snowflake-arctic-embed:xs | all-minilm:latest | snowflake-arctic-embed2:568m
-  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma4:12b | deepseek-r1:14b | qwen3.6:27b | qwen3.5:9b | gemma3:12b
+  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma4:12b | deepseek-r1:14b | qwen3.8:latest | qwen3.8:latest | gemma3:12b
   qa_timeout: 900
   timeout: 900
   connect_timeout: 15
@@ -83,7 +83,7 @@ splade:
   enabled: true
   path: data/splade
   cache_folder: data/models
-  model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledistil
+  model: naver/splade-v3 #naver/splade-v3 | naver/splade-cocondenser-ensembledistil
   device: auto    # auto | cpu | cuda
   batch_size: 64  # 32-64, 64 for GPU
   max_length: 256 # 512 | 256
@@ -159,8 +159,8 @@ unsupported_claim_detection:
   enabled: true
   action: repair
   fail_closed: true
-  model: qwen3.6:27b
-  repair_model: qwen3.6:27b
+  model: qwen3.8:latest
+  repair_model: qwen3.8:latest
 
   min_confidence: 0.85
   temperature: 0.0
@@ -177,7 +177,7 @@ unsupported_claim_detection:
 multi_hop:
   enabled: true
   mode: auto
-  model: qwen3.6:27b
+  model: qwen3.8:latest
   think: false
   timeout: 120
   min_words: 7
@@ -339,8 +339,8 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3.5:9b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
-  answer_model: qwen3.6:27b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.6:27b
+  draft_model: qwen3.8:latest  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.8:latest
+  answer_model: qwen3.8:latest  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.8:latest
   draft_think: false
   answer_think: true
   validator_think: false
@@ -372,7 +372,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3.6:27b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
+  validator_model: qwen3.8:latest #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.8:latest
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 5
 
@@ -426,7 +426,7 @@ internet_validation:
   enabled: True
   searxng_url: "http://localhost:8888"
   ollama_url: "http://localhost:11434"
-  ollama_model: "qwen3.6:27b"
+  ollama_model: "qwen3.8:latest"
 
   source_workers: 6
   results_per_source: 3
