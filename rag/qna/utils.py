@@ -1797,12 +1797,16 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             bm25_rank = signal.get("bm25_rank")
             in_hyde = bool(signal.get("in_hyde", False))
             hyde_rank = signal.get("hyde_rank")
+            in_graph = bool(signal.get("in_graph",False))
+            graph_rank =signal.get("graph_rank")
         else:
             base_score = float(signal)
             in_faiss = False
             in_bm25 = False
             faiss_rank = None
             bm25_rank = None
+            in_graph = False
+            graph_rank = None
 
         text       = row.get("text") or ""
         title      = row.get("title") or ""
@@ -1870,6 +1874,13 @@ def rerank_chunks(question: str, chunks: list[dict], retrieval_signals: dict[int
             retrieval_bonus += 0.03
         elif (hyde_rank is not None and hyde_rank <= 15):
             retrieval_bonus += 0.02
+
+        if in_graph and intent in {"lore","biography","location","lookup"}:
+            retrieval_bonus+=0.06
+        if graph_rank is not None and graph_rank<=5:
+            retrieval_bonus+=0.05
+        elif graph_rank is not None and graph_rank<=15:
+            retrieval_bonus+=0.03
         
         penalty = 0.0
         media_count = sum(text.count(ext) for ext in media_exts)

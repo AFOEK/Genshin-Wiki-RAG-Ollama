@@ -12,7 +12,7 @@ FEATURE_NAMES=(
     "rrf_score","manual_score",
     "faiss_score","bm25_score","splade_score","turbovec_score","hyde_score",
     "faiss_rr","bm25_rr","splade_rr","turbovec_rr","hyde_rr",
-    "in_faiss","in_bm25","in_splade","in_turbovec","in_hyde",
+    "in_faiss","in_bm25","in_splade","in_turbovec","in_hyde", "in_graph",
     "query_hits","query_best_rr",
     "title_overlap","text_overlap","exact_title_match",
     "source_weight","chunk_log_len",
@@ -55,9 +55,9 @@ def extract_ltr_features(cfg:dict,question:str,row:dict,signal:dict|None=None)->
     tkey=" ".join(title.casefold().split())
     return [
         _f(signal.get("rrf_score")),_f(row.get("_rerank_score")),
-        _f(signal.get("faiss_score")),_f(signal.get("bm25_score")),_f(signal.get("splade_score")),_f(signal.get("turbovec_score")),_f(signal.get("hyde_score")),
-        _rr(signal.get("faiss_rank")),_rr(signal.get("bm25_rank")),_rr(signal.get("splade_rank")),_rr(signal.get("turbovec_rank")),_rr(signal.get("hyde_rank")),
-        float(bool(signal.get("in_faiss"))),float(bool(signal.get("in_bm25"))),float(bool(signal.get("in_splade"))),float(bool(signal.get("in_turbovec"))),float(bool(signal.get("in_hyde"))),
+        _f(signal.get("faiss_score")),_f(signal.get("bm25_score")),_f(signal.get("splade_score")),_f(signal.get("turbovec_score")),_f(signal.get("hyde_score")),_f(signal.get("graph_score")),
+        _rr(signal.get("faiss_rank")),_rr(signal.get("bm25_rank")),_rr(signal.get("splade_rank")),_rr(signal.get("turbovec_rank")),_rr(signal.get("hyde_rank")),_rr(signal.get("graph_rank")),
+        float(bool(signal.get("in_faiss"))),float(bool(signal.get("in_bm25"))),float(bool(signal.get("in_splade"))),float(bool(signal.get("in_turbovec"))),float(bool(signal.get("in_hyde"))),float(bool(signal.get("in_graph"))),
         _f(signal.get("query_hits",signal.get("decomposition_hits",0))),_rr(signal.get("query_best_rank",signal.get("decomposition_best_rank"))),
         _overlap(question,title),_overlap(question,text),float(bool(qkey and qkey==tkey)),
         source_weight(cfg,str(row.get("source") or "")),math.log1p(len(text)),
