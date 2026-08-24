@@ -83,9 +83,10 @@ def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str
     return None
 
 
-def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaphore = None):
+def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaphore = None, rate_limiter: SharedRateLimiter | None = None, max_outer_failures: int = 3):
     session = requests.Session()
     cont = None
+    failures = 0
 
     while True:
         params = {
@@ -100,10 +101,17 @@ def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaph
 
         data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10, request_semaphore=request_semaphore)
         if not data:
-            log.warning("[WIKI] allpages failed; sleeping and retrying !")
-            time.sleep(10)
+            failures ++ 1
+            if failures >= max_outer_failures:
+                raise RuntimeError(f"[WIKI] Allpages discovery failed {failures} consecutive times")
+
+            delay = min(15 * failures, 60)
+            log.warning("[WIKI] allpages failed outer=%d/%d; sleeping %ds and retrying !", failures, max_outer_failures, delay)
+            time.sleep(delay)
             continue
 
+        failures = 0
+        
         pages = data.get("query", {}).get("allpages", [])
         for p in pages:
             t = p.get("title")
@@ -146,18 +154,18 @@ def load_fandom_docs(source_cfg: dict, rate_limit_s: float=1.0, max_pages: int |
     crawl_started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     last_run=state_path.read_text(encoding="utf-8").strip() or None if state_path.exists() else None
     incremental=bool(last_run)
+    workers=max(1,int(workers))
+    rate_limiter=SharedRateLimiter(rate_limit_s)
 
     if incremental:
         changes=list(iter_recently_changed_titles(api, discovery_session, start_iso=last_run, namespace=ns, request_semaphore=request_semaphore))
         log.info("[WIKI] incremental crawl since %s changed_titles=%d", last_run, len(changes))
     else:
-        changes=[(title,None) for title in list_allpages(api, namespace=ns, request_semaphore=request_semaphore)]
+        changes=[(title,None) for title in list_allpages(api, namespace=ns, request_semaphore=request_semaphore, rate_limiter=rate_limiter)]
         log.info("[WIKI] full crawl (no state_file) titles=%d", len(changes))
 
     partial=max_pages is not None and len(changes)>max_pages
     targets=changes[:max_pages] if max_pages is not None else changes
-    workers=max(1,int(workers))
-    rate_limiter=SharedRateLimiter(rate_limit_s)
     thread_local=threading.local()
     failed=0
 
