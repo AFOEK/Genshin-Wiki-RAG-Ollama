@@ -10,7 +10,7 @@ from qna.generators import generate
 
 log = logging.getLogger(__name__)
 
-ALLOWED_ENTITY_TYPES={
+ALLOWED_ENTITY_TYPES = {
     "character",
     "deity",
     "faction",
@@ -18,33 +18,95 @@ ALLOWED_ENTITY_TYPES={
     "region",
     "location",
     "organization",
+    "affiliation",
     "species",
     "item",
     "weapon",
     "artifact",
+    "material",
+    "food",
+    "currency",
     "quest",
     "event",
+    "domain",
+    "dungeon",
+    "element",
+    "ability",
+    "talent",
+    "constellation",
+    "enemy",
+    "boss",
+    "book",
+    "document",
+    "title",
     "concept",
+    "historical_event",
     "unknown",
 }
 
-ALLOWED_RELATION_TYPES={
+ALLOWED_RELATION_TYPES = {
+    # -------------------------------------------------------------------------
+    # Family and kinship
+    # -------------------------------------------------------------------------
     "PARENT_OF",
     "CHILD_OF",
     "SIBLING_OF",
     "SPOUSE_OF",
     "ANCESTOR_OF",
+    "DESCENDANT_OF",
+    "RELATIVE_OF",
+    "ADOPTED_BY",
+    "GUARDIAN_OF",
+    "WARD_OF",
 
+    # -------------------------------------------------------------------------
+    # Friendship, alliance, rivalry, and companionship
+    # -------------------------------------------------------------------------
     "FRIEND_OF",
     "ALLY_OF",
     "ENEMY_OF",
     "RIVAL_OF",
     "COMPANION_OF",
 
+    # -------------------------------------------------------------------------
+    # Teaching, mentorship, service, and master-dependent relationships
+    # -------------------------------------------------------------------------
     "MENTOR_OF",
+    "TEACHER_OF",
     "STUDENT_OF",
     "DISCIPLE_OF",
+    "ENVOY_OF",
+    "MASTER_OF",
+    "SLAVE_OF",
 
+    # -------------------------------------------------------------------------
+    # Personal and interpersonal relationships
+    # -------------------------------------------------------------------------
+    "ACQUAINTANCE_OF",
+    "PARTNER_OF",
+    "LOVER_OF",
+    "BETRAYED",
+    "TRUSTS",
+    "DISLIKES",
+    "RESPECTS",
+    "FEARS",
+
+    # -------------------------------------------------------------------------
+    # Command, hierarchy, governance, and representation
+    # -------------------------------------------------------------------------
+    "COMMANDS",
+    "COMMANDED_BY",
+    "SUBORDINATE_OF",
+    "SUPERVISES",
+    "GOVERNS",
+    "GOVERNED_BY",
+    "REPRESENTS",
+    "REPRESENTED_BY",
+    "APPOINTED_BY",
+
+    # -------------------------------------------------------------------------
+    # Organization membership and institutional affiliation
+    # -------------------------------------------------------------------------
     "MEMBER_OF",
     "LEADER_OF",
     "FOUNDER_OF",
@@ -52,6 +114,9 @@ ALLOWED_RELATION_TYPES={
     "SERVES",
     "WORKS_FOR",
 
+    # -------------------------------------------------------------------------
+    # Creation, ownership, and weapon possession
+    # -------------------------------------------------------------------------
     "CREATED",
     "CREATED_BY",
     "OWNS",
@@ -59,31 +124,178 @@ ALLOWED_RELATION_TYPES={
     "WIELDS",
     "WIELDED_BY",
 
+    # -------------------------------------------------------------------------
+    # Geography, residence, travel, origin, and territorial relationships
+    # -------------------------------------------------------------------------
     "LOCATED_IN",
     "RESIDES_IN",
+    "LIVES_IN",
     "ORIGINATES_FROM",
+    "PART_OF",
+    "CONTAINS",
+    "NEAR",
+    "BORDERS",
+    "CONNECTED_TO",
+    "TRAVELS_TO",
+    "BORN_IN",
+    "DIED_IN",
+    "VISITED",
     "RULES",
     "PROTECTS",
 
+    # -------------------------------------------------------------------------
+    # Employment, occupation, and formal positions
+    # -------------------------------------------------------------------------
+    "EMPLOYED_BY",
+    "EMPLOYS",
+    "HOLDS_POSITION",
+    "SUCCEEDED_BY",
+
+    # -------------------------------------------------------------------------
+    # Conflict and combat
+    # -------------------------------------------------------------------------
     "FOUGHT",
     "DEFEATED",
     "KILLED",
     "OPPOSES",
 
+    # -------------------------------------------------------------------------
+    # Religion and worship
+    # -------------------------------------------------------------------------
     "WORSHIPS",
     "WORSHIPPED_BY",
 
+    # -------------------------------------------------------------------------
+    # Succession and predecessor relationships
+    # -------------------------------------------------------------------------
     "SUCCESSOR_OF",
     "PREDECESSOR_OF",
 
+    # -------------------------------------------------------------------------
+    # Participation and involvement
+    # -------------------------------------------------------------------------
     "PARTICIPATED_IN",
     "INVOLVED_IN",
 
+    # -------------------------------------------------------------------------
+    # Generic semantic fallback relationships
+    # -------------------------------------------------------------------------
     "ASSOCIATED_WITH",
     "RELATED_TO",
+
+    # -------------------------------------------------------------------------
+    # Elemental abilities and elemental associations
+    # -------------------------------------------------------------------------
+    "USES_ELEMENT",
+    "ASSOCIATED_WITH_ELEMENT",
+    "GRANTS_ELEMENT",
+    "RESONATES_WITH",
+
+    # -------------------------------------------------------------------------
+    # Genshin-specific supernatural objects / powers
+    # -------------------------------------------------------------------------
+    "HAS_VISION",
+    "HAS_DELUSION",
+    "HAS_GNOSIS",
+
+    # -------------------------------------------------------------------------
+    # Combat actions, protection, imprisonment, sealing, and destruction
+    # -------------------------------------------------------------------------
+    "ATTACKED",
+    "DEFENDED",
+    "SAVED",
+    "CAPTURED",
+    "IMPRISONED",
+    "ESCAPED_FROM",
+    "SEALED",
+    "SEALED_BY",
+    "DESTROYED",
+    "DESTROYED_BY",
+
+    # -------------------------------------------------------------------------
+    # Discovery, invention, construction, usage, and possession
+    # -------------------------------------------------------------------------
+    "DISCOVERED",
+    "DISCOVERED_BY",
+    "INVENTED",
+    "INVENTED_BY",
+    "FORGED",
+    "FORGED_BY",
+    "BUILT",
+    "BUILT_BY",
+    "USES",
+    "USED_BY",
+    "CARRIES",
+    "CARRIED_BY",
+
+    # -------------------------------------------------------------------------
+    # Quest, event, reward, trigger, and appearance relationships
+    # -------------------------------------------------------------------------
+    "STARTS_QUEST",
+    "APPEARS_IN",
+    "FEATURED_IN",
+    "REQUIRED_FOR",
+    "REWARDS",
+    "REWARDED_BY",
+    "UNLOCKS",
+    "UNLOCKED_BY",
+    "TRIGGERS",
+    "TRIGGERED_BY",
+    "TAKES_PLACE_IN",
+    "OCCURRED_IN",
+    "OCCURRED_DURING",
+
+    # -------------------------------------------------------------------------
+    # Chronology, causality, and historical relationships
+    # -------------------------------------------------------------------------
+    "PRECEDES",
+    "FOLLOWS",
+    "CONTEMPORARY_OF",
+    "CAUSES",
+    "CAUSED_BY",
+    "RESULTED_IN",
+
+    # -------------------------------------------------------------------------
+    # Materials, crafting, acquisition, drops, shops, and usage
+    # -------------------------------------------------------------------------
+    "MATERIAL_FOR",
+    "CRAFTED_FROM",
+    "CRAFTS_INTO",
+    "OBTAINED_FROM",
+    "DROPPED_BY",
+    "PURCHASED_FROM",
+    "SOLD_BY",
+    "REQUIRED_BY",
+    "USED_FOR",
+
+    # -------------------------------------------------------------------------
+    # Character progression and gameplay mechanics
+    # -------------------------------------------------------------------------
+    "ASCENDS",
+    "USED_TO_ASCEND",
+    "UPGRADES_TALENT",
+    "HAS_TALENT",
+    "HAS_CONSTELLATION",
+    "USES_WEAPON_TYPE",
+
+    # -------------------------------------------------------------------------
+    # Identity, aliases, titles, forms, incarnations, and origin
+    # -------------------------------------------------------------------------
+    "IDENTITY_OF",
+    "KNOWN_AS",
+    "HAS_TITLE",
+    "FORM_OF",
+    "INCARNATION_OF",
+    "CREATION_OF",
 }
 
+ALLOWED_ENTITY_TYPE_SET = set(ALLOWED_ENTITY_TYPES)
+ALLOWED_RELATION_TYPE_SET = set(ALLOWED_RELATION_TYPES)
+
 def build_extraction_prompt(title: str, text: str) -> str:
+    entity_types = "|".join(ALLOWED_ENTITY_TYPE_SET)
+    relation_types = ", ".join(ALLOWED_RELATION_TYPE_SET)
+
     return f"""
 You extract a factual knowledge graph from Genshin Impact wiki text.
 
@@ -98,7 +310,7 @@ Return JSON only with this exact structure:
   "entities": [
     {{
       "name": "canonical entity name",
-      "type": "character|deity|faction|nation|region|location|affiliations|organization|species|item|weapon|artifact|quest|event|concept|unknown",
+      "type": "{entity_types}",
       "aliases": []
     }}
   ],
@@ -115,13 +327,70 @@ Return JSON only with this exact structure:
 Rules:
 - Extract only facts explicitly supported by the supplied text.
 - Do not use outside Genshin knowledge.
-- Do not invent relationships.
+- Do not infer a relationship merely because it seems plausible.
 - Both source and target must appear in the entities list.
 - Use canonical entity names when possible.
-- Relationship types should be short uppercase forms such as FRIEND_OF, MEMBER_OF, SERVES, CREATED_BY, LOCATED_IN, ASSOCIATED_WITH, ENEMY_OF, SIBLING_OF, PARENT_OF, ENVOY_OF.
-- Confidence must be between 0.0 and 1.0.
-- If there are no supported relationships, return an empty relationships list.
-- Do not include Markdown fences.
+- Do not create new relationship types.
+- The relationship "type" MUST be exactly one of the allowed relation types.
+- Allowed relationship types: {relation_types}
+- Prefer the most specific supported relationship type instead of ASSOCIATED_WITH or RELATED_TO.
+- Use ASSOCIATED_WITH or RELATED_TO only when no more specific allowed type accurately represents the explicit relationship.
+- Do not output duplicate relationships between the same source, target, and type.
+- Do not output both a relation and its inverse unless explicitly necessary.
+- Confidence must be between 0.0 and 1.0 and should reflect how directly the supplied text supports the relationship.
+- Relationship direction is significant: source TYPE target must read naturally.
+- When inverse relation types exist, emit only the direction most directly expressed by the text.
+- Do not emit both A CREATED B and B CREATED_BY A for the same fact.
+
+Semantic disambiguation:
+- PRECEDES and FOLLOWS are chronological relations only. FOLLOWS means occurs after, not "is a follower of".
+- MENTOR_OF, STUDENT_OF, and DISCIPLE_OF describe teaching relationships.
+- MASTER_OF and SLAVE_OF describe explicit master/slave or master/servant relationships, not teaching relationships.
+- PARTNER_OF means an explicitly stated partnership. Do not use it automatically for friendship or romance.
+- LOVER_OF means an explicitly stated romantic relationship.
+- MEMBER_OF means formal membership in a faction or organization.
+- WORKS_FOR and EMPLOYED_BY mean employment or work relationships.
+- SERVES means explicit service or allegiance and does not automatically imply employment.
+- AFFILIATED_WITH is weaker than MEMBER_OF and should be used only when formal membership is not stated.
+- SUBORDINATE_OF describes an explicit hierarchical command relationship.
+- LOCATED_IN means one entity is geographically situated inside another location.
+- PART_OF means structural, administrative, organizational, or compositional inclusion.
+- CONTAINS is the inverse structural relation of PART_OF.
+- RESIDES_IN and LIVES_IN describe residence, not birthplace or origin.
+- ORIGINATES_FROM describes provenance or origin and should not be used merely because an entity currently lives somewhere.
+- BORN_IN and DIED_IN apply only when birth or death location is explicitly stated.
+- CREATED/CREATED_BY describe general creation.
+- INVENTED/INVENTED_BY describe invention.
+- FORGED/FORGED_BY describe forging.
+- BUILT/BUILT_BY describe construction.
+- Do not substitute these creation relations for one another when the text provides a more specific description.
+- OWNS/OWNED_BY describe ownership.
+- WIELDS/WIELDED_BY describe active weapon use.
+- CARRIES/CARRIED_BY describe possession or carrying without necessarily implying ownership or weapon use.
+- USES/USED_BY describe explicit functional use.
+- HAS_VISION, HAS_DELUSION, and HAS_GNOSIS apply only when possession is explicitly supported.
+- USES_ELEMENT means an entity actively uses an element.
+- ASSOCIATED_WITH_ELEMENT is for an explicit elemental association that is not necessarily active use.
+- RULES means governing authority over a place or people.
+- GOVERNS/GOVERNED_BY describes formal governance.
+- PROTECTS means explicit protection or guardianship, not simply being friendly or allied.
+- FOUGHT means participation in combat against another entity.
+- DEFEATED means explicit victory.
+- KILLED requires explicit causation of death.
+- OPPOSES describes explicit opposition and does not necessarily imply combat.
+- APPEARS_IN and FEATURED_IN describe presence in a quest, event, work, or story.
+- PARTICIPATED_IN and INVOLVED_IN require actual involvement, not merely being mentioned.
+- TAKES_PLACE_IN and OCCURRED_IN describe event or quest location.
+- OCCURRED_DURING describes temporal containment within another event or period.
+- CAUSES and CAUSED_BY require an explicitly supported causal relationship, not mere temporal sequence.
+- RESULTED_IN requires the text to describe the result as a consequence.
+- KNOWN_AS is for a stated alternate name or title only when representing it as a relationship is useful; ordinary alternate names should preferably go in aliases.
+- IDENTITY_OF means two named entities are explicitly revealed or stated to be the same identity.
+- FORM_OF means one entity is a distinct form or manifestation of another.
+- INCARNATION_OF requires an explicit incarnation or embodiment relationship.
+- If there are no supported relationships, return an empty "relationships" list.
+- If there are no supported entities, return empty "entities" and "relationships" lists.
+- Do not include Markdown fences or explanatory text.
 """.strip()
 
 def parse_extraction_json(raw: str) -> dict[str, Any]:
@@ -143,7 +412,7 @@ def parse_extraction_json(raw: str) -> dict[str, Any]:
         raise ValueError("Extractor output must be a JSON object")
     return data
 
-def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
+def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> dict[str, Any]:
     entities = []
     relationships = []
 
@@ -197,11 +466,14 @@ def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
             continue
 
         try:
-            confidence = float(row.get("confidence",0.0))
+            confidence = float(row.get("confidence", 0.0))
         except (TypeError, ValueError):
             confidence = 0.0
 
         confidence = max(0.0, min(1.0, confidence))
+        if confidence < min_confidence:
+            log.info("[GRAPH] rejected low-confidence relation source=%r type=%s target=%r confidence=%.3f threshold=%.3f", source, relation_type, target, confidence, min_confidence,)
+            continue
 
         relationships.append({
             "source": source,
@@ -221,6 +493,7 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
     num_ctx = int(ncfg.get("extraction_num_ctx",4096))
     model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
     temperature = float(ncfg.get("extraction_temperature", 0.0))
+    min_confidence = float(ncfg.get("min_relation_confidence", 0.85))
     prompt = build_extraction_prompt(title, text)
     raw = generate(cfg, prompt, model_override=model, options_override={
         "temperature": temperature,
@@ -246,4 +519,4 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
         "num_predict":retry_predict})
 
         data=parse_extraction_json(raw)
-    return normalize_extraction(data)
+    return normalize_extraction(data, min_confidence)

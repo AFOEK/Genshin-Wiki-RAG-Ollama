@@ -55,18 +55,18 @@ neo4j:
   incremental: true
   sync_batch_size: 500
   prune_stale: true
-
   # Graph creation
   source: "genshin_wiki"
-
   # Retrieval
   candidate_k: 200
   max_hops: 2
-  rrf_weight: 0.70
+  rrf_weight: 0.75
   exact_entity_boost: 2.0
+  min_relation_confidence: 0.90
+  # Extractions
   extraction_model: "qwen3.8:27b"
   extraction_temperature: 0.0
-  extraction_num_ctx: 4096
+  extraction_num_ctx: 8192
   extraction_num_predict: 2048
 
 turbovec:

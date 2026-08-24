@@ -46,338 +46,342 @@ def merge_regex(global_pat: str | None, source_pat: str | None) -> str | None:
     return None
 
 def main():
-    project_root = Path(__file__).resolve().parent.parent
-    load_dotenv(project_root / ".env")
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        load_dotenv(project_root / ".env")
 
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--DB_CRAWL", default="True")
-    ap.add_argument("--DB_AUDIT", default="True")
-    ap.add_argument("--FAISS_MIGRATE", default="False")
-    ap.add_argument("--FAISS_AUDIT", default="False")
-    ap.add_argument("--FAISS_OVERWRITE", default="False")
-    ap.add_argument("--TURBOVEC_MIGRATE", default="False")
-    ap.add_argument("--TURBOVEC_AUDIT", default="False")
-    ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
-    ap.add_argument("--SPLADE_MIGRATE", default="False",)
-    ap.add_argument("--SPLADE_OVERWRITE", default="False")
-    ap.add_argument("--SPLADE_LIMIT", type=int, default=None)
-    ap.add_argument("--DB_REPAIR", default="False")
-    ap.add_argument("--FTS_SYNC", default="False")
-    ap.add_argument("--FTS_INIT", default="False")
-    ap.add_argument("--FTS_REBUILD", default="False")
-    ap.add_argument("--PARENT_REBUILD", default="False")
-    ap.add_argument("--PARENT_SYNC", default="False")
-    ap.add_argument("--PARENT_INIT", default="False")
-    ap.add_argument("--GRAPH_SYNC", default="False")
-    ap.add_argument("--GRAPH_FORCE", default="False")
-    ap.add_argument("--GRAPH_PRUNE", default="True")
-    ap.add_argument("--GRAPH_LIMIT", type=int, default=None)
-    ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
-    args = ap.parse_args()
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--DB_CRAWL", default="True")
+        ap.add_argument("--DB_AUDIT", default="True")
+        ap.add_argument("--FAISS_MIGRATE", default="False")
+        ap.add_argument("--FAISS_AUDIT", default="False")
+        ap.add_argument("--FAISS_OVERWRITE", default="False")
+        ap.add_argument("--TURBOVEC_MIGRATE", default="False")
+        ap.add_argument("--TURBOVEC_AUDIT", default="False")
+        ap.add_argument("--TURBOVEC_OVERWRITE", default="False")
+        ap.add_argument("--SPLADE_MIGRATE", default="False",)
+        ap.add_argument("--SPLADE_OVERWRITE", default="False")
+        ap.add_argument("--SPLADE_LIMIT", type=int, default=None)
+        ap.add_argument("--DB_REPAIR", default="False")
+        ap.add_argument("--FTS_SYNC", default="False")
+        ap.add_argument("--FTS_INIT", default="False")
+        ap.add_argument("--FTS_REBUILD", default="False")
+        ap.add_argument("--PARENT_REBUILD", default="False")
+        ap.add_argument("--PARENT_SYNC", default="False")
+        ap.add_argument("--PARENT_INIT", default="False")
+        ap.add_argument("--GRAPH_SYNC", default="False")
+        ap.add_argument("--GRAPH_FORCE", default="False")
+        ap.add_argument("--GRAPH_PRUNE", default="True")
+        ap.add_argument("--GRAPH_LIMIT", type=int, default=None)
+        ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
+        args = ap.parse_args()
 
-    do_crawl = parse_bool(args.DB_CRAWL)
-    do_db_audit = parse_bool(args.DB_AUDIT)
-    do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
-    do_faiss_audit = parse_bool(args.FAISS_AUDIT)
-    do_turbovec_migrate = parse_bool(args.TURBOVEC_MIGRATE)
-    turbovec_overwrite = parse_bool(args.TURBOVEC_OVERWRITE)
-    do_turbovec_audit = parse_bool(args.TURBOVEC_AUDIT)
-    do_db_repair = parse_bool(args.DB_REPAIR)
-    faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
-    do_fts_sync = parse_bool(args.FTS_SYNC)
-    do_fts_init = parse_bool(args.FTS_INIT)
-    do_fts_rebuild = parse_bool(args.FTS_REBUILD)
-    do_parent_sync = parse_bool(args.PARENT_SYNC)
-    do_parent_init = parse_bool(args.PARENT_INIT)
-    do_parent_rebuild = parse_bool(args.PARENT_REBUILD)
-    do_splade_migrate = parse_bool(args.SPLADE_MIGRATE)
-    splade_overwrite = parse_bool(args.SPLADE_OVERWRITE)
-    do_graph_sync = parse_bool(args.GRAPH_SYNC)
-    graph_force = parse_bool(args.GRAPH_FORCE)
-    graph_prune = parse_bool(args.GRAPH_PRUNE)
+        do_crawl = parse_bool(args.DB_CRAWL)
+        do_db_audit = parse_bool(args.DB_AUDIT)
+        do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
+        do_faiss_audit = parse_bool(args.FAISS_AUDIT)
+        do_turbovec_migrate = parse_bool(args.TURBOVEC_MIGRATE)
+        turbovec_overwrite = parse_bool(args.TURBOVEC_OVERWRITE)
+        do_turbovec_audit = parse_bool(args.TURBOVEC_AUDIT)
+        do_db_repair = parse_bool(args.DB_REPAIR)
+        faiss_overwrite = parse_bool(args.FAISS_OVERWRITE)
+        do_fts_sync = parse_bool(args.FTS_SYNC)
+        do_fts_init = parse_bool(args.FTS_INIT)
+        do_fts_rebuild = parse_bool(args.FTS_REBUILD)
+        do_parent_sync = parse_bool(args.PARENT_SYNC)
+        do_parent_init = parse_bool(args.PARENT_INIT)
+        do_parent_rebuild = parse_bool(args.PARENT_REBUILD)
+        do_splade_migrate = parse_bool(args.SPLADE_MIGRATE)
+        splade_overwrite = parse_bool(args.SPLADE_OVERWRITE)
+        do_graph_sync = parse_bool(args.GRAPH_SYNC)
+        graph_force = parse_bool(args.GRAPH_FORCE)
+        graph_prune = parse_bool(args.GRAPH_PRUNE)
 
-    with open("rag/config.yaml") as f:
-        cfg = yaml.safe_load(f)
+        with open("rag/config.yaml") as f:
+            cfg = yaml.safe_load(f)
 
-    setup_logging(
-        cfg.get("logging", {}).get("file"),
-        cfg.get("logging", {}).get("level", "INFO")
-    )
-    log = logging.getLogger(__name__)
-    log.info("[INFO] Logging initialized")
-    db_path = resolve_db_path(cfg)
-    ensure_db(str(db_path))
-    log.info("[INFO] Database init at %s", db_path)
+        setup_logging(
+            cfg.get("logging", {}).get("file"),
+            cfg.get("logging", {}).get("level", "INFO")
+        )
+        log = logging.getLogger(__name__)
+        log.info("[INFO] Logging initialized")
+        db_path = resolve_db_path(cfg)
+        ensure_db(str(db_path))
+        log.info("[INFO] Database init at %s", db_path)
 
-    def embed_fn(text_or_texts, mode: str = "passage", title=None):
-        return embed(cfg, text_or_texts, backend=args.BACKEND, mode=mode, title=title)
-    
-    def make_source_filters(s: dict) -> Filters:
-        merged_deny_url = merge_regex(cfg.get("filters", {}).get("deny_url_regex"), s.get("deny_url_regex"))
-        merged_deny_text = merge_regex(cfg.get("filters", {}).get("deny_text_regex"), s.get("deny_text_regex"))
-        allow_url = s.get("allow_url_regex")
-        return Filters(deny_url_regex=merged_deny_url, deny_text_regex=merged_deny_text, allow_url_regex=allow_url)
-    
-    filters = Filters(cfg.get("filters", {}).get("deny_url_regex"), cfg.get("filters", {}).get("deny_text_regex"))
-    threading_cfg = cfg.get("threading", {})
-    embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
-    embed_workers = int(threading_cfg.get("embed_workers", 2))
-    embed_batch_size = int(threading_cfg.get("embed_batch_size", 32))
-    embed_batch_wait_ms = int(threading_cfg.get("embed_batch_wait_ms", 250))
-    document_queue_size = int(threading_cfg.get("document_queue_size", 200))
-    crawler_cfg=cfg.get("crawler", {}) or {}
-    crawler_default_workers=max(1, int(crawler_cfg.get("default_workers", 2)))
-    crawler_max_concurrent=max(1, int(crawler_cfg.get("max_concurrent_requests", 8)))
-    crawl_semaphore=threading.BoundedSemaphore(crawler_max_concurrent)
-    fts_cfg = cfg.get("fts5", {})
-    fts_batch_size = int(fts_cfg.get("batch_size", 1500))
+        def embed_fn(text_or_texts, mode: str = "passage", title=None):
+            return embed(cfg, text_or_texts, backend=args.BACKEND, mode=mode, title=title)
+        
+        def make_source_filters(s: dict) -> Filters:
+            merged_deny_url = merge_regex(cfg.get("filters", {}).get("deny_url_regex"), s.get("deny_url_regex"))
+            merged_deny_text = merge_regex(cfg.get("filters", {}).get("deny_text_regex"), s.get("deny_text_regex"))
+            allow_url = s.get("allow_url_regex")
+            return Filters(deny_url_regex=merged_deny_url, deny_text_regex=merged_deny_text, allow_url_regex=allow_url)
+        
+        filters = Filters(cfg.get("filters", {}).get("deny_url_regex"), cfg.get("filters", {}).get("deny_text_regex"))
+        threading_cfg = cfg.get("threading", {})
+        embed_queue_size = int(threading_cfg.get("embed_queue_size", 200))
+        embed_workers = int(threading_cfg.get("embed_workers", 2))
+        embed_batch_size = int(threading_cfg.get("embed_batch_size", 32))
+        embed_batch_wait_ms = int(threading_cfg.get("embed_batch_wait_ms", 250))
+        document_queue_size = int(threading_cfg.get("document_queue_size", 200))
+        crawler_cfg=cfg.get("crawler", {}) or {}
+        crawler_default_workers=max(1, int(crawler_cfg.get("default_workers", 2)))
+        crawler_max_concurrent=max(1, int(crawler_cfg.get("max_concurrent_requests", 8)))
+        crawl_semaphore=threading.BoundedSemaphore(crawler_max_concurrent)
+        fts_cfg = cfg.get("fts5", {})
+        fts_batch_size = int(fts_cfg.get("batch_size", 1500))
 
-    log.info("[INFO] Threading embed_queue=%d document_queue=%d embed_workers=%d embed_batch=%d batch_wait_ms=%d",embed_queue_size, document_queue_size, embed_workers, embed_batch_size, embed_batch_wait_ms)
-    log.info("[INFO] Crawler default_workers=%d max_concurrent_requests=%d", crawler_default_workers, crawler_max_concurrent)
-    log.info("[INFO] runtime embedding_provider=%s qa_provider=%s accelerator=%s", cfg.get("runtime", {}).get("embedding_provider", "ollama"), cfg.get("runtime", {}).get("qa_provider", "ollama"), cfg.get("runtime", {}).get("accelerator", "auto"))
-    
-    if do_crawl:
-        q = queue.Queue(maxsize=document_queue_size)
+        log.info("[INFO] Threading embed_queue=%d document_queue=%d embed_workers=%d embed_batch=%d batch_wait_ms=%d",embed_queue_size, document_queue_size, embed_workers, embed_batch_size, embed_batch_wait_ms)
+        log.info("[INFO] Crawler default_workers=%d max_concurrent_requests=%d", crawler_default_workers, crawler_max_concurrent)
+        log.info("[INFO] runtime embedding_provider=%s qa_provider=%s accelerator=%s", cfg.get("runtime", {}).get("embedding_provider", "ollama"), cfg.get("runtime", {}).get("qa_provider", "ollama"), cfg.get("runtime", {}).get("accelerator", "auto"))
+        
+        if do_crawl:
+            q = queue.Queue(maxsize=document_queue_size)
 
-        producers = []
-        tier_map = {}
-        weight_map = {}
+            producers = []
+            tier_map = {}
+            weight_map = {}
 
-        for s in cfg["sources"]:
-            if not s.get("enabled", True):
-                continue
-
-            docs_iter = None
-            source_filters = make_source_filters(s)
-            name = s["name"]
-            kind = s["kind"]
-            tier_map[name] = s.get("tier", "primary")
-            weight_map[name] = s.get("weight", 1.0)
-            crawl_workers = max(1, int(s.get("crawl_workers", crawler_default_workers)))
-
-            if kind == "github":
-                docs_iter = load_kqm_tcl_docs(s)
-
-            elif kind == "fandom_api":
-                raw_max = s.get("max_pages", 200)
-                max_pages = int(raw_max) if raw_max is not None else None
-                rate = float(s.get("rate_limit_s", 1.0))
-                s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
-                docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages, workers=crawl_workers, request_semaphore=crawl_semaphore)
-            
-            elif kind in {"honey_html", "game8_html", "genshingg_html"}:
-                seeds = s.get("seeds", [])
-                if not seeds:
-                    log.warning(f"[WARN] No seed for {name}, skipping")
+            for s in cfg["sources"]:
+                if not s.get("enabled", True):
                     continue
 
-                base_url = s["base_url"]
-                rate = float(s.get("rate_limit_s", 1.0))
-                raw_max = s.get("max_pages", 200)
-                max_pages = int(raw_max) if raw_max is not None else None
+                docs_iter = None
                 source_filters = make_source_filters(s)
-                for seed in seeds:
-                    if not source_filters.url_allowed(seed):
-                        raise RuntimeError(f"[CRAWLER_CONFIG] source={name} seed rejected by its own filters: {seed}")
-                docs_iter=crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN", workers=crawl_workers, request_semaphore=crawl_semaphore)
-            else:
-                log.warning(f"[WARN] Not implemented kind={kind}, skipping")
+                name = s["name"]
+                kind = s["kind"]
+                tier_map[name] = s.get("tier", "primary")
+                weight_map[name] = s.get("weight", 1.0)
+                crawl_workers = max(1, int(s.get("crawl_workers", crawler_default_workers)))
 
-            if docs_iter is None:
-                continue
+                if kind == "github":
+                    docs_iter = load_kqm_tcl_docs(s)
 
-            log.info("[CRAWLER] source=%s kind=%s workers=%d rate_limit_s=%s", name, kind, 1 if kind=="github" else crawl_workers, s.get("rate_limit_s","n/a"))
-            t = threading.Thread(target=producer, args=(name, docs_iter, q, source_filters))
-            producers.append(t)
+                elif kind == "fandom_api":
+                    raw_max = s.get("max_pages", 200)
+                    max_pages = int(raw_max) if raw_max is not None else None
+                    rate = float(s.get("rate_limit_s", 1.0))
+                    s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
+                    docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages, workers=crawl_workers, request_semaphore=crawl_semaphore)
+                
+                elif kind in {"honey_html", "game8_html", "genshingg_html"}:
+                    seeds = s.get("seeds", [])
+                    if not seeds:
+                        log.warning(f"[WARN] No seed for {name}, skipping")
+                        continue
 
-        t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map, embed_workers, embed_queue_size))
-        t_ingest.start()
-        for t in producers:
-            t.start()
+                    base_url = s["base_url"]
+                    rate = float(s.get("rate_limit_s", 1.0))
+                    raw_max = s.get("max_pages", 200)
+                    max_pages = int(raw_max) if raw_max is not None else None
+                    source_filters = make_source_filters(s)
+                    for seed in seeds:
+                        if not source_filters.url_allowed(seed):
+                            raise RuntimeError(f"[CRAWLER_CONFIG] source={name} seed rejected by its own filters: {seed}")
+                    docs_iter=crawl_site(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, allowed_langs="EN", workers=crawl_workers, request_semaphore=crawl_semaphore)
+                else:
+                    log.warning(f"[WARN] Not implemented kind={kind}, skipping")
 
-        for t in producers:
-            t.join()
-        q.join()
-        t_ingest.join()
+                if docs_iter is None:
+                    continue
 
-    if do_db_repair:
-        conn = connect(str(db_path))
-        log.info("[INFO] DB repair starting")
-        try:
-            rep = repair_database(conn, embed_fn, cfg)
-            log.info("[REPAIR] docs_no_active_chunks: found=%d repaired=%d | missing_embeddings: found=%d repaired=%d", rep["docs_no_active_chunks_found"], rep["docs_no_active_chunks_repaired"], rep["chunks_missing_embeddings_found"], rep["chunks_missing_embeddings_repaired"])
-        except Exception:
-            log.exception("[REPAIR] Database repair failed")
-        finally:
+                log.info("[CRAWLER] source=%s kind=%s workers=%d rate_limit_s=%s", name, kind, 1 if kind=="github" else crawl_workers, s.get("rate_limit_s","n/a"))
+                t = threading.Thread(target=producer, args=(name, docs_iter, q, source_filters))
+                producers.append(t)
+
+            t_ingest = threading.Thread(target=ingest_consumer, args=(len(producers), q, str(db_path), embed_fn, cfg, filters, tier_map, weight_map, embed_workers, embed_queue_size))
+            t_ingest.start()
+            for t in producers:
+                t.start()
+
+            for t in producers:
+                t.join()
+            q.join()
+            t_ingest.join()
+
+        if do_db_repair:
+            conn = connect(str(db_path))
+            log.info("[INFO] DB repair starting")
             try:
-                conn.close()
+                rep = repair_database(conn, embed_fn, cfg)
+                log.info("[REPAIR] docs_no_active_chunks: found=%d repaired=%d | missing_embeddings: found=%d repaired=%d", rep["docs_no_active_chunks_found"], rep["docs_no_active_chunks_repaired"], rep["chunks_missing_embeddings_found"], rep["chunks_missing_embeddings_repaired"])
             except Exception:
-                pass
+                log.exception("[REPAIR] Database repair failed")
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-    if do_fts_rebuild:
-        conn = connect(str(db_path))
-        try:
-            log.info("[FTS5] full rebuild starting")
-            rep = rebuild_chunks_fts(conn)
-            log.info("[FTS5] full rebuild done rows=%d", rep["fts_rows_inserted"])
-        finally:
-            conn.close()
+        if do_fts_rebuild:
+            conn = connect(str(db_path))
+            try:
+                log.info("[FTS5] full rebuild starting")
+                rep = rebuild_chunks_fts(conn)
+                log.info("[FTS5] full rebuild done rows=%d", rep["fts_rows_inserted"])
+            finally:
+                conn.close()
 
-    elif do_fts_init or do_fts_sync or do_crawl or do_db_repair:
-        conn = connect(str(db_path))
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
-            dirty_before = int(cur.fetchone()[0] or 0)
-            cur.execute("SELECT COUNT(*) FROM chunks_fts")
-            fts_before = int(cur.fetchone()[0] or 0)
-            log.info("[FTS5] before sync dirty_docs=%d fts_rows=%d batch_size=%d", dirty_before, fts_before, fts_batch_size)
+        elif do_fts_init or do_fts_sync or do_crawl or do_db_repair:
+            conn = connect(str(db_path))
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
+                dirty_before = int(cur.fetchone()[0] or 0)
+                cur.execute("SELECT COUNT(*) FROM chunks_fts")
+                fts_before = int(cur.fetchone()[0] or 0)
+                log.info("[FTS5] before sync dirty_docs=%d fts_rows=%d batch_size=%d", dirty_before, fts_before, fts_batch_size)
 
-            if do_fts_init:
-                n = mark_all_active_docs_dirty(conn, reason="initial")
-                log.info("[FTS5] marked active docs dirty count=%d", n)
+                if do_fts_init:
+                    n = mark_all_active_docs_dirty(conn, reason="initial")
+                    log.info("[FTS5] marked active docs dirty count=%d", n)
 
-            log.info("[FTS5] Start to syncing dirty chunks")
-            rep = sync_dirty_chunks_fts(conn, batch_size=fts_batch_size)
+                log.info("[FTS5] Start to syncing dirty chunks")
+                rep = sync_dirty_chunks_fts(conn, batch_size=fts_batch_size)
 
-            cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
-            dirty_after = int(cur.fetchone()[0] or 0)
+                cur.execute("SELECT COUNT(*) FROM fts_dirty_docs")
+                dirty_after = int(cur.fetchone()[0] or 0)
 
-            cur.execute("SELECT COUNT(*) FROM chunks_fts")
-            fts_after = int(cur.fetchone()[0] or 0)
+                cur.execute("SELECT COUNT(*) FROM chunks_fts")
+                fts_after = int(cur.fetchone()[0] or 0)
 
-            log.info("[FTS5] sync done dirty_docs_synced=%d inserted_rows=%d dirty_after=%d fts_rows_after=%d", rep["dirty_docs_synced"], rep["fts_rows_inserted"], dirty_after, fts_after)
-        finally:
-            conn.close()
+                log.info("[FTS5] sync done dirty_docs_synced=%d inserted_rows=%d dirty_after=%d fts_rows_after=%d", rep["dirty_docs_synced"], rep["fts_rows_inserted"], dirty_after, fts_after)
+            finally:
+                conn.close()
 
-    if do_db_audit:
-        conn = connect(str(db_path))
-        log.info("[INFO] Audit starting")
+        if do_db_audit:
+            conn = connect(str(db_path))
+            log.info("[INFO] Audit starting")
 
-        try:
-            report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures=2500, max_missing_embedding_failures=2500)
+            try:
+                report = audit_integrity(conn, sample_chunks=1000, sample_docs=1500, max_orphan_failures=2500, max_missing_embedding_failures=2500)
 
-            if report.failures:
-                log.error("[AUDIT] Audit failed with %d problems", len(report.failures))
+                if report.failures:
+                    log.error("[AUDIT] Audit failed with %d problems", len(report.failures))
 
+                    by_reason = {}
+                    for f in report.failures:
+                        by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
+
+                    for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                        log.error("  %s: %d", reason, n)
+
+                    for f in report.failures[:10]:
+                        log.error("[AUDIT] Example failure: %s", f)
+
+                    raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
+                log.info("[AUDIT] SQLite integrity OK, all requested stages completed successfully")
+            except Exception:
+                log.exception("[AUDIT] terminated due to audit/migrate failures")
+                raise
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        if do_parent_rebuild:
+            conn = connect(str(db_path))
+            try:
+                parent_cfg = cfg.get("parent_child", {}) or {}
+                children_per_parent = int(parent_cfg.get("children_per_parent", 4))
+                rep = rebuild_parent_map(conn, children_per_parent=children_per_parent)
+                log.info("[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d", rep["parents"], rep["mapped_chunks"], rep["children_per_parent"])
+            finally:
+                conn.close()
+        elif do_parent_init or do_parent_sync or do_crawl or do_db_repair:
+            conn = connect(str(db_path))
+            try:
+                parent_cfg = cfg.get("parent_child", {}) or {}
+                if do_parent_init:
+                    n = mark_all_active_docs_parent_dirty(conn, reason="initial_parent_build")
+
+                rep = sync_dirty_parent_docs(conn, children_per_parent=int(parent_cfg.get("children_per_parent", 4)), batch_size=int(parent_cfg.get("batch_size", 500)))
+                log.info("[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",rep["dirty_docs_synced"], rep["parents_inserted"], rep["mapped_chunks"])
+            finally:
+                conn.close()
+        
+        if do_faiss_migrate:
+            log.info("[MIGRATE] FAISS migrate from SQLite3 starting")
+            build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
+
+        if do_turbovec_migrate:
+            log.info("[TURBOVEC] migrate from SQLite3 starting")
+            meta = build_turbovec_from_sqlite(cfg, overwrite=turbovec_overwrite, backend=args.BACKEND)
+            log.info("[TURBOVEC] migrate done count=%d dims=%d bit_width=%d model=%s", meta["count"], meta["dims"], meta["bit_width"], meta["embedding_model"])
+
+        if do_splade_migrate:
+            log.info("[SPLADE] migrate from SQLite starting")
+            meta = build_splade_from_sqlite(cfg, overwrite=splade_overwrite, limit=args.SPLADE_LIMIT)
+            log.info("[SPLADE] migrate done chunks=%d shards=%d completed=%s", meta["chunk_count"], meta["shard_count"], meta["completed"],)
+
+        if do_faiss_audit:
+            log.info("[FAISS_AUDIT] FAISS audit starting")
+            frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
+            if frep.failures:
+                log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
                 by_reason = {}
-                for f in report.failures:
-                    by_reason[f.reason] = by_reason.get(f.reason, 0) + 1
+                for msg in frep.failures:
+                    reason = msg.split(":", 1)[0].strip()
+                    by_reason[reason] = by_reason.get(reason, 0) + 1
 
                 for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
                     log.error("  %s: %d", reason, n)
 
-                for f in report.failures[:10]:
-                    log.error("[AUDIT] Example failure: %s", f)
+                for msg in frep.failures[:20]:
+                    log.error("[FAISS_AUDIT] Example failure: %s", msg)
 
-                raise RuntimeError(f"[AUDIT] Audit failed: {len(report.failures)} problems")
-            log.info("[AUDIT] SQLite integrity OK, all requested stages completed successfully")
-        except Exception:
-            log.exception("[AUDIT] terminated due to audit/migrate failures")
-            raise
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+                raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
+            log.info("[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d", frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims)
 
-    if do_parent_rebuild:
-        conn = connect(str(db_path))
-        try:
-            parent_cfg = cfg.get("parent_child", {}) or {}
-            children_per_parent = int(parent_cfg.get("children_per_parent", 4))
-            rep = rebuild_parent_map(conn, children_per_parent=children_per_parent)
-            log.info("[PARENT] rebuild done parents=%d mapped_chunks=%d children_per_parent=%d", rep["parents"], rep["mapped_chunks"], rep["children_per_parent"])
-        finally:
-            conn.close()
-    elif do_parent_init or do_parent_sync or do_crawl or do_db_repair:
-        conn = connect(str(db_path))
-        try:
-            parent_cfg = cfg.get("parent_child", {}) or {}
-            if do_parent_init:
-                n = mark_all_active_docs_parent_dirty(conn, reason="initial_parent_build")
+        if do_turbovec_audit:
+            log.info("[TURBOVEC_AUDIT] TurboVec audit starting")
+            trep = audit_turbovec_against_sqlite(cfg, sample_self_test=200, backend=args.BACKEND)
+            if trep.failures:
+                log.error("[TURBOVEC_AUDIT] failed with %d problems", len(trep.failures))
 
-            rep = sync_dirty_parent_docs(conn, children_per_parent=int(parent_cfg.get("children_per_parent", 4)), batch_size=int(parent_cfg.get("batch_size", 500)))
-            log.info("[PARENT] sync done dirty_docs=%d parents=%d mapped_chunks=%d",rep["dirty_docs_synced"], rep["parents_inserted"], rep["mapped_chunks"])
-        finally:
-            conn.close()
-    
-    if do_faiss_migrate:
-        log.info("[MIGRATE] FAISS migrate from SQLite3 starting")
-        build_faiss_from_sqlite(cfg, overwrite=faiss_overwrite)
+                by_reason = {}
+                for msg in trep.failures:
+                    reason = msg.split(":", 1)[0].strip()
+                    by_reason[reason] = by_reason.get(reason, 0) + 1
 
-    if do_turbovec_migrate:
-        log.info("[TURBOVEC] migrate from SQLite3 starting")
-        meta = build_turbovec_from_sqlite(cfg, overwrite=turbovec_overwrite, backend=args.BACKEND)
-        log.info("[TURBOVEC] migrate done count=%d dims=%d bit_width=%d model=%s", meta["count"], meta["dims"], meta["bit_width"], meta["embedding_model"])
+                for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
+                    log.error("  %s: %d", reason, n)
 
-    if do_splade_migrate:
-        log.info("[SPLADE] migrate from SQLite starting")
-        meta = build_splade_from_sqlite(cfg, overwrite=splade_overwrite, limit=args.SPLADE_LIMIT)
-        log.info("[SPLADE] migrate done chunks=%d shards=%d completed=%s", meta["chunk_count"], meta["shard_count"], meta["completed"],)
+                for msg in trep.failures[:20]:
+                    log.error("[TURBOVEC_AUDIT] Example failure: %s", msg)
 
-    if do_faiss_audit:
-        log.info("[FAISS_AUDIT] FAISS audit starting")
-        frep = audit_faiss_against_sqlite(cfg, sample_self_test=200)
-        if frep.failures:
-            log.error("[FAISS_AUDIT] failed with %d problems", len(frep.failures))
-            by_reason = {}
-            for msg in frep.failures:
-                reason = msg.split(":", 1)[0].strip()
-                by_reason[reason] = by_reason.get(reason, 0) + 1
+                raise RuntimeError(f"[TURBOVEC_AUDIT] failed: {len(trep.failures)} problems")
+            log.info("[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
 
-            for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
-                log.error("  %s: %d", reason, n)
+        if do_graph_sync:
+            graph_cfg=cfg.get("neo4j",{}) or {}
+            if not parse_bool(graph_cfg.get("enabled",False)):
+                log.warning("[GRAPH] GRAPH_SYNC requested but neo4j.enabled=False; skipping")
+            else:
+                log.info("[GRAPH] incremental Neo4j synchronization starting force=%s prune=%s limit=%s", graph_force, graph_prune, args.GRAPH_LIMIT)
+                conn = connect(str(db_path))
+                client = None
+                try:
+                    client = Neo4jClient(cfg)
+                    ensure_schema(client)
+                    build_graph(cfg, conn, client, limit=args.GRAPH_LIMIT, force=graph_force, prune=graph_prune)
+                    log.info("[GRAPH] incremental Neo4j synchronization completed")
+                except Exception:
+                    log.exception("[GRAPH] Neo4j synchronization failed")
+                    raise
+                finally:
+                    conn.close()
+                    if client is not None:
+                        client.close()
 
-            for msg in frep.failures[:20]:
-                log.error("[FAISS_AUDIT] Example failure: %s", msg)
-
-            raise RuntimeError(f"[FAISS_AUDIT] failed: {len(frep.failures)} problems")
-        log.info("[FAISS_AUDIT] FAISS integrity OK, index_total=%d ids_total=%d sqlite_active=%d dims=%d", frep.index_total, frep.ids_total, frep.sqlite_active_embeds, frep.dims)
-
-    if do_turbovec_audit:
-        log.info("[TURBOVEC_AUDIT] TurboVec audit starting")
-        trep = audit_turbovec_against_sqlite(cfg, sample_self_test=200, backend=args.BACKEND)
-        if trep.failures:
-            log.error("[TURBOVEC_AUDIT] failed with %d problems", len(trep.failures))
-
-            by_reason = {}
-            for msg in trep.failures:
-                reason = msg.split(":", 1)[0].strip()
-                by_reason[reason] = by_reason.get(reason, 0) + 1
-
-            for reason, n in sorted(by_reason.items(), key=lambda kv: kv[1], reverse=True):
-                log.error("  %s: %d", reason, n)
-
-            for msg in trep.failures[:20]:
-                log.error("[TURBOVEC_AUDIT] Example failure: %s", msg)
-
-            raise RuntimeError(f"[TURBOVEC_AUDIT] failed: {len(trep.failures)} problems")
-        log.info("[TURBOVEC_AUDIT] TurboVec integrity OK, index_total=%d sqlite_active=%d dims=%d", trep.index_total, trep.sqlite_active_embeds, trep.dims)
-
-    if do_graph_sync:
-        graph_cfg=cfg.get("neo4j",{}) or {}
-        if not parse_bool(graph_cfg.get("enabled",False)):
-            log.warning("[GRAPH] GRAPH_SYNC requested but neo4j.enabled=False; skipping")
-        else:
-            log.info("[GRAPH] incremental Neo4j synchronization starting force=%s prune=%s limit=%s", graph_force, graph_prune, args.GRAPH_LIMIT)
-            conn = connect(str(db_path))
-            client = None
-            try:
-                client = Neo4jClient(cfg)
-                ensure_schema(client)
-                build_graph(cfg, conn, client, limit=args.GRAPH_LIMIT, force=graph_force, prune=graph_prune)
-                log.info("[GRAPH] incremental Neo4j synchronization completed")
-            except Exception:
-                log.exception("[GRAPH] Neo4j synchronization failed")
-                raise
-            finally:
-                conn.close()
-                if client is not None:
-                    client.close()
-
-      
-    log.info("[ALL] DONE!")
+        
+        log.info("[ALL] DONE!")
+    except KeyboardInterrupt:
+        log.error("[ALL] Ctrl+C received, shutting down...", flush=True)
+        raise SystemExit(-1)
 
 if __name__ == "__main__":
     main()
