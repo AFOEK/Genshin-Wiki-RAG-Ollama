@@ -64,10 +64,10 @@ neo4j:
   max_hops: 2
   rrf_weight: 0.70
   exact_entity_boost: 2.0
-  extraction_model: "qwen3.6:27b"
+  extraction_model: "qwen3.8:27b"
   extraction_temperature: 0.0
   extraction_num_ctx: 4096
-  extraction_num_predict: 1024
+  extraction_num_predict: 2048
 
 turbovec:
   path: data/turbovec

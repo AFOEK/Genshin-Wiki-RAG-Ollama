@@ -217,13 +217,16 @@ def normalize_extraction(data: dict[str, Any]) -> dict[str, Any]:
 
 def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> dict[str, Any]:
     ncfg = cfg.get("neo4j", {}) or {}
+    num_predict = int(ncfg.get("extraction_num_predict", 2048))
+    num_ctx = int(ncfg.get("extraction_num_ctx",4096))
     model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
+    temperature = float(ncfg.get("extraction_temperature", 0.0))
     prompt = build_extraction_prompt(title, text)
     raw = generate(cfg, prompt, model_override=model, options_override={
-        "temperature": float(ncfg.get("extraction_temperature", 0.0)),
-        "num_ctx":int(ncfg.get("extraction_num_ctx",4096)),
-        "num_predict":int(ncfg.get("extraction_num_predict",1024)),
-    }, think_override=False).strip()
+        "temperature": temperature,
+        "num_ctx": num_ctx,
+        "num_predict": num_predict}, 
+    think_override=False).strip()
 
     if not raw:
         return {
@@ -231,5 +234,16 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
             "relationships": []
         }
 
-    data = parse_extraction_json(raw)
+    try:
+        data=parse_extraction_json(raw)
+    except json.JSONDecodeError:
+        log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, num_predict,)
+        retry_predict=min(num_predict * 2,4096)
+        retry_ctx=max(num_ctx,retry_predict + 2048)
+        raw=generate(cfg, prompt, model_override=model, options_override={
+        "temperature":temperature,
+        "num_ctx":retry_ctx,
+        "num_predict":retry_predict})
+
+        data=parse_extraction_json(raw)
     return normalize_extraction(data)
