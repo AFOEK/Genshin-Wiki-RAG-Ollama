@@ -25,3 +25,7 @@ external/searxng/__pycache__/
 external/searxng/**/*.log
 external/searxng/**/__pycache__/
 external/searxng/**/*.pyc
+# Generated Hugging Face dataset outputs
+combined/
+fine_tune/data/combined/
+fine_tune/data/hf_cache/
