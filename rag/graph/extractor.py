@@ -11,37 +11,284 @@ from qna.generators import generate
 log = logging.getLogger(__name__)
 
 ALLOWED_ENTITY_TYPES = {
+    # -------------------------------------------------------------------------
+    # People / sentient beings
+    # -------------------------------------------------------------------------
     "character",
+    "playable_character",
+    "npc",
     "deity",
-    "faction",
-    "nation",
-    "region",
-    "location",
-    "organization",
-    "affiliation",
+    "archon",
+    "adeptus",
+    "spirit",
+    "human",
     "species",
-    "item",
-    "weapon",
-    "artifact",
-    "material",
-    "food",
-    "currency",
-    "quest",
-    "event",
-    "domain",
-    "dungeon",
-    "element",
-    "ability",
-    "talent",
-    "constellation",
+    "creature",
+    "animal",
+    "monster",
     "enemy",
     "boss",
+    "construct",
+    "dragon",
+
+    # -------------------------------------------------------------------------
+    # Political / social / institutional
+    # -------------------------------------------------------------------------
+    "faction",
+    "organization",
+    "affiliation",
+    "nation",
+    "government",
+    "military",
+    "clan",
+    "family",
+    "tribe",
+    "guild",
+    "company",
+    "academy",
+    "religion",
+    "cult",
+
+    # -------------------------------------------------------------------------
+    # Geography / world structure
+    # -------------------------------------------------------------------------
+    "world",
+    "realm",
+    "nation",
+    "region",
+    "subregion",
+    "area",
+    "location",
+    "city",
+    "village",
+    "settlement",
+    "landmark",
+    "point_of_interest",
+    "domain",
+    "dungeon",
+    "ruin",
+    "temple",
+    "palace",
+    "building",
+    "island",
+    "mountain",
+    "forest",
+    "river",
+    "lake",
+    "sea",
+
+    # -------------------------------------------------------------------------
+    # Equipment / inventory objects
+    # -------------------------------------------------------------------------
+    "item",
+    "weapon",
+    "weapon_type",
+    "artifact",
+    "artifact_set",
+    "artifact_piece",
+    "gadget",
+    "tool",
+    "equipment",
+
+    # -------------------------------------------------------------------------
+    # Materials / resources
+    # -------------------------------------------------------------------------
+    "material",
+    "resource",
+    "ore",
+    "plant",
+    "ingredient",
+    "local_specialty",
+    "enemy_drop",
+    "character_ascension_material",
+    "weapon_ascension_material",
+    "talent_material",
+
+    # -------------------------------------------------------------------------
+    # Food / cooking
+    # -------------------------------------------------------------------------
+    "food",
+    "dish",
+    "recipe",
+    "special_dish",
+    "ingredient",
+
+    # -------------------------------------------------------------------------
+    # Economy
+    # -------------------------------------------------------------------------
+    "currency",
+    "shop",
+    "merchant",
+    "reward",
+
+    # -------------------------------------------------------------------------
+    # Character progression / mechanics
+    # -------------------------------------------------------------------------
+    "talent",
+    "skill",
+    "ability",
+    "constellation",
+    "ascension",
+    "level",
+    "stat",
+    "buff",
+    "debuff",
+
+    # -------------------------------------------------------------------------
+    # Elemental / supernatural systems
+    # -------------------------------------------------------------------------
+    "element",
+    "elemental_reaction",
+    "vision",
+    "delusion",
+    "gnosis",
+    "energy",
+    "power",
+    "curse",
+    "blessing",
+
+    # -------------------------------------------------------------------------
+    # Quests / commissions / story content
+    # -------------------------------------------------------------------------
+    "quest",
+    "archon_quest",
+    "story_quest",
+    "world_quest",
+    "commission",
+    "hangout_event",
+    "quest_series",
+    "quest_chapter",
+    "story_chapter",
+
+    # -------------------------------------------------------------------------
+    # Events / activities
+    # -------------------------------------------------------------------------
+    "event",
+    "event_series",
+    "activity",
+    "challenge",
+    "trial",
+    "game_mode",
+
+    # -------------------------------------------------------------------------
+    # Achievements
+    # -------------------------------------------------------------------------
+    "achievement",
+    "achievement_series",
+    "achievement_category",
+
+    # -------------------------------------------------------------------------
+    # Combat
+    # -------------------------------------------------------------------------
+    "enemy",
+    "boss",
+    "enemy_group",
+    "combat_encounter",
+    "attack",
+    "status_effect",
+
+    # -------------------------------------------------------------------------
+    # Furnishings / Serenitea Pot
+    # -------------------------------------------------------------------------
+    "furnishing",
+    "furnishing_set",
+    "building",
+    "decoration",
+
+    # -------------------------------------------------------------------------
+    # Collectibles / exploration
+    # -------------------------------------------------------------------------
+    "collectible",
+    "oculus",
+    "chest",
+    "key_item",
+    "sigil",
+    "token",
+
+    # -------------------------------------------------------------------------
+    # Books / documents / textual media
+    # -------------------------------------------------------------------------
     "book",
+    "book_series",
     "document",
-    "title",
-    "concept",
+    "letter",
+    "note",
+    "diary",
+    "record",
+    "inscription",
+    "text",
+
+    # -------------------------------------------------------------------------
+    # Other media
+    # -------------------------------------------------------------------------
+    "soundtrack",
+    "song",
+    "album",
+    "cutscene",
+    "trailer",
+    "voice_line",
+
+    # -------------------------------------------------------------------------
+    # Character cosmetics
+    # -------------------------------------------------------------------------
+    "outfit",
+    "namecard",
+
+    # -------------------------------------------------------------------------
+    # History / lore
+    # -------------------------------------------------------------------------
     "historical_event",
+    "war",
+    "battle",
+    "incident",
+    "era",
+    "period",
+    "dynasty",
+    "civilization",
+    "culture",
+    "tradition",
+    "ritual",
+    "festival",
+    "legend",
+    "myth",
+    "prophecy",
+
+    # -------------------------------------------------------------------------
+    # Identity / roles / abstract lore
+    # -------------------------------------------------------------------------
+    "title",
+    "role",
+    "occupation",
+    "rank",
+    "concept",
+    "ideology",
+    "law",
+    "language",
+    "script",
+
+    # -------------------------------------------------------------------------
+    # Fallback
+    # -------------------------------------------------------------------------
     "unknown",
+}
+
+ENTITY_TYPE_ALIASES = {
+    "achievements": "achievement",
+    "achievement set": "achievement_series",
+    "achievement_set": "achievement_series",
+    "artifact set": "artifact_set",
+    "artifactset": "artifact_set",
+    "weapon type": "weapon_type",
+    "world quest": "world_quest",
+    "worldquest": "world_quest",
+    "story quest": "story_quest",
+    "archon quest": "archon_quest",
+    "non_playable_character": "npc",
+    "non-playable character": "npc",
+    "playable character": "playable_character",
+    "elemental reaction": "elemental_reaction",
+    "local specialty": "local_specialty",
+    "historical event": "historical_event",
 }
 
 ALLOWED_RELATION_TYPES = {
@@ -422,6 +669,7 @@ def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> 
 
         name = str(row.get("name") or "").strip()
         entity_type = str(row.get("type") or "unknown").strip().lower()
+        entity_type = ENTITY_TYPE_ALIASES.get(entity_type, entity_type)
 
         if not name:
             continue
