@@ -274,21 +274,10 @@ ALLOWED_ENTITY_TYPES = {
 
 ENTITY_TYPE_ALIASES = {
     "achievements": "achievement",
-    "achievement set": "achievement_series",
     "achievement_set": "achievement_series",
-    "artifact set": "artifact_set",
     "artifactset": "artifact_set",
-    "weapon type": "weapon_type",
-    "world quest": "world_quest",
     "worldquest": "world_quest",
-    "story quest": "story_quest",
-    "archon quest": "archon_quest",
     "non_playable_character": "npc",
-    "non-playable character": "npc",
-    "playable character": "playable_character",
-    "elemental reaction": "elemental_reaction",
-    "local specialty": "local_specialty",
-    "historical event": "historical_event",
 }
 
 ALLOWED_RELATION_TYPES = {
@@ -539,10 +528,10 @@ ALLOWED_RELATION_TYPES = {
 ALLOWED_ENTITY_TYPE_SET = set(ALLOWED_ENTITY_TYPES)
 ALLOWED_RELATION_TYPE_SET = set(ALLOWED_RELATION_TYPES)
 
-def build_extraction_prompt(title: str, text: str) -> str:
-    entity_types = "|".join(ALLOWED_ENTITY_TYPE_SET)
-    relation_types = ", ".join(ALLOWED_RELATION_TYPE_SET)
+entity_types = "|".join(sorted(ALLOWED_ENTITY_TYPE_SET))
+relation_types = ", ".join(sorted(ALLOWED_RELATION_TYPE_SET))
 
+def build_extraction_prompt(title: str, text: str) -> str:
     return f"""
 You extract a factual knowledge graph from Genshin Impact wiki text.
 
@@ -668,12 +657,14 @@ def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> 
             continue
 
         name = str(row.get("name") or "").strip()
-        entity_type = str(row.get("type") or "unknown").strip().lower()
-        entity_type = ENTITY_TYPE_ALIASES.get(entity_type, entity_type)
+        entity_type=str(row.get("type") or "unknown").strip().lower()
+        entity_type=re.sub(r"[\s\-]+","_",entity_type)
+        entity_type=ENTITY_TYPE_ALIASES.get(entity_type,entity_type)
 
         if not name:
             continue
-        if entity_type not in ALLOWED_ENTITY_TYPES:
+        
+        if entity_type not in ALLOWED_ENTITY_TYPE_SET:
             entity_type = "unknown"
 
         aliases = row.get("aliases", [])
@@ -695,9 +686,10 @@ def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> 
 
         source = str(row.get("source") or "").strip()
         target = str(row.get("target") or "").strip()
-        relation_type=str(row.get("type") or "RELATED_TO").strip().upper().replace(" ","_")
+        relation_type=str(row.get("type") or "").strip().upper().replace(" ","_")
         if relation_type not in ALLOWED_RELATION_TYPES:
-            relation_type="RELATED_TO"
+            log.info("[GRAPH] rejected unsupported relation type=%r source=%r target=%r", relation_type, source, target)
+            continue
 
         if not source or not target or not relation_type:
             continue
@@ -746,7 +738,8 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
     raw = generate(cfg, prompt, model_override=model, options_override={
         "temperature": temperature,
         "num_ctx": num_ctx,
-        "num_predict": num_predict}, 
+        "num_predict": num_predict
+    }, 
     think_override=False).strip()
 
     if not raw:
@@ -757,14 +750,14 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
 
     try:
         data=parse_extraction_json(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, num_predict,)
-        retry_predict=min(num_predict * 2,4096)
-        retry_ctx=max(num_ctx,retry_predict + 2048)
+        retry_predict=min(num_predict * 2, 4096)
+        retry_ctx=max(num_ctx, retry_predict + 2048)
         raw=generate(cfg, prompt, model_override=model, options_override={
-        "temperature":temperature,
-        "num_ctx":retry_ctx,
-        "num_predict":retry_predict})
-
+            "temperature":temperature,
+            "num_ctx":retry_ctx,
+            "num_predict":retry_predict
+        }, think_override=False).strip()
         data=parse_extraction_json(raw)
     return normalize_extraction(data, min_confidence)
