@@ -16,6 +16,7 @@ dependencies:
   - six
   - tqdm
   - typing_extensions
+  - dotenv
 
   - requests
   - urllib3
@@ -54,3 +55,5 @@ dependencies:
       - pennylane
       - pennylane-lightning
       - lightgbm
+      - neo4j
+      - fastapi[standard]

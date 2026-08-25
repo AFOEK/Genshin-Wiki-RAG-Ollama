@@ -67,21 +67,24 @@ def apply_embedding_prompt(cfg: dict, text_or_texts: str | list[str] | tuple[str
     if not prefix:
         return text_or_texts
 
-    def one(x: str) -> str:
+    def one(x: str, item_title: str = "") -> str:
         x = x or ""
+        item_title = item_title or ""
         if x.startswith(prefix):
             return x
         
         if "{text}" in prefix:
-            return prefix.replace("{title}", title or "").replace("{text}", x)
+            return prefix.replace("{title}", item_title or "").replace("{text}", x)
         return prefix + x
     
-    if isinstance(text_or_texts,(list,tuple)):
-        if isinstance(title,(list,tuple)):
+    if isinstance(text_or_texts, (list, tuple)):
+        if isinstance(title ,(list, tuple)):
             titles = list(title)
+            if len(titles) != len(text_or_texts):
+                raise ValueError(f"[EMBED] Embedding title count mismatch: texts={len(text_or_texts)} titles={len(titles)}")
         else:
             titles = [title] * len(text_or_texts)
-        return [one(str(x), str(titles[i] or "") if i < len(titles) else "") for i, x in enumerate(text_or_texts)]
+        return [one(str(x), str(t or "")) for x, t in zip(text_or_texts, titles)]
 
     single_title = title[0] if isinstance(title, (list, tuple)) and title else title
     return one(str(text_or_texts) ,str(single_title or ""))

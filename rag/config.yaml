@@ -8,7 +8,7 @@ faiss_path: data/faiss
 ollama: 
   base_url: http://localhost:11434
   embedding_model: snowflake-arctic-embed2:568m #snowflake-arctic-embed:xs | all-minilm:latest | snowflake-arctic-embed2:568m
-  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma4:12b | deepseek-r1:14b | qwen3.6:27b | qwen3.5:9b | gemma3:12b
+  qa_model: llama3.2:3b #llama3.2:3b | qwen3:8b | gemma4:12b | deepseek-r1:14b | qwen3.8:latest | qwen3.8:latest | gemma3:12b
   qa_timeout: 900
   timeout: 900
   connect_timeout: 15
@@ -46,6 +46,29 @@ faiss:
   hnsw_ef_construction: 200
   hnsw_ef_search: 64
 
+neo4j:
+  enabled: true
+  uri: "neo4j://localhost:7687"
+  user: "neo4j"
+  password_env: "NEO4J_PASSWORD"
+  database: "neo4j"
+  incremental: true
+  sync_batch_size: 500
+  prune_stale: true
+  # Graph creation
+  source: "genshin_wiki"
+  # Retrieval
+  candidate_k: 200
+  max_hops: 2
+  rrf_weight: 0.75
+  exact_entity_boost: 2.0
+  min_relation_confidence: 0.90
+  # Extractions
+  extraction_model: "qwen3.8:27b"
+  extraction_temperature: 0.0
+  extraction_num_ctx: 8192
+  extraction_num_predict: 2048
+
 turbovec:
   path: data/turbovec
   bit_width: 4  #2 | 4
@@ -60,7 +83,7 @@ splade:
   enabled: true
   path: data/splade
   cache_folder: data/models
-  model: naver/splade-cocondenser-ensembledistil #naver/splade-v3 | naver/splade-cocondenser-ensembledistil
+  model: naver/splade-v3 #naver/splade-v3 | naver/splade-cocondenser-ensembledistil
   device: auto    # auto | cpu | cuda
   batch_size: 64  # 32-64, 64 for GPU
   max_length: 256 # 512 | 256
@@ -136,8 +159,8 @@ unsupported_claim_detection:
   enabled: true
   action: repair
   fail_closed: true
-  model: qwen3.6:27b
-  repair_model: qwen3.6:27b
+  model: qwen3.8:latest
+  repair_model: qwen3.8:latest
 
   min_confidence: 0.85
   temperature: 0.0
@@ -154,7 +177,7 @@ unsupported_claim_detection:
 multi_hop:
   enabled: true
   mode: auto
-  model: qwen3.6:27b
+  model: qwen3.8:latest
   think: false
   timeout: 120
   min_words: 7
@@ -316,8 +339,8 @@ dataset_creation:
   rejected_out: genshin_rejected.jsonl
 
   ollama_url: http://localhost:11434
-  draft_model: qwen3.5:9b  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
-  answer_model: qwen3.6:27b  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.6:27b
+  draft_model: qwen3.8:latest  #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.8:latest
+  answer_model: qwen3.8:latest  #llama3.2:3b | qwen3:8b | gemma3:12b | deepseek-r1:14b | qwen3.8:latest
   draft_think: false
   answer_think: true
   validator_think: false
@@ -349,7 +372,7 @@ dataset_creation:
   negative_text_chars: 1400
 
   validate_negatives: true
-  validator_model: qwen3.6:27b #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.6:27b
+  validator_model: qwen3.8:latest #llama3.2:3b | qwen3:8b | gemma3:12b | qwen3.8:latest
   negative_validation_confidence: 0.85
   negative_sft_per_positive: 5
 
@@ -403,7 +426,7 @@ internet_validation:
   enabled: True
   searxng_url: "http://localhost:8888"
   ollama_url: "http://localhost:11434"
-  ollama_model: "qwen3.6:27b"
+  ollama_model: "qwen3.8:latest"
 
   source_workers: 6
   results_per_source: 3
@@ -636,10 +659,15 @@ pipeline:
   min_embed_chars: 100
   archive_raw: true
 
+crawler:
+  default_workers: 2
+  max_concurrent_requests: 8
+
 threading:
   embed_queue_size: 200
   embed_workers: 1
   embed_batch_size: 32
+  embed_batch_wait_ms: 500
   document_queue_size: 120
 
 embedding_prompts:
@@ -732,6 +760,7 @@ sources:
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - genshin-impact.fandom.com
@@ -748,6 +777,7 @@ sources:
       - "https://gensh.honeyhunterworld.com/?lang=EN"
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - gensh.honeyhunterworld.com
@@ -766,6 +796,7 @@ sources:
     deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
     chunk_deny_text_regex: '(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)'
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - game8.co
@@ -792,6 +823,7 @@ sources:
     allow_url_regex: '^https://genshin\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|teams?|farming|elements?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$'
     max_pages: null
     rate_limit_s: 2.0
+    crawl_workers: 2
     validation:
       search_domains:
         - genshin.gg

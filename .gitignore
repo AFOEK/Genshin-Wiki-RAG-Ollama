@@ -29,3 +29,5 @@ external/searxng/**/*.pyc
 combined/
 fine_tune/data/combined/
 fine_tune/data/hf_cache/
+
+.env

@@ -34,3 +34,6 @@ zstandard==0.25.0
 sentence-transformers==5.4.1
 turbovec
 scipy
+fastapi[standard]
+neo4j
+dotenv

@@ -8,7 +8,7 @@ from core.embed import embed
 from core.paths import resolve_db_path, resolve_faiss_dir, resolve_storage_root, resolve_splade_dir
 from core.hyde import generate_hyde_document
 from .utils import normalize_query_vec, is_broad_question, chunk_batch, rerank_chunks, dedupe_chunks, detect_intent, filter_by_intent_source, as_bool, get_kqm_news_fetch_version_baseline, prefer_entity_seed_chunks, expected_model_from_cfg, make_intent_fts5_query, get_bm25_weights, detect_build_subtypes, extract_lookup_entity, make_retrieval_cache_key, retrieval_result_from_cache, retrieval_result_to_cache, build_weighted_rrf_signal, build_grounded_answer_prompt, merge_context_preserving_seeds, trim_chunks_to_context_budget, normalized_phrase, extract_lookup_target, normalize_model_name, resolve_lookup_entity_from_chunks, normalize_title_key, extract_build_entity, extract_entity_terms, is_build_recommendation_question
-from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever
+from .retrievers import FaissRetriever, SqliteEmbeddingRetriever, BM25Retriever, TurboVecRetriever, SpladeRetriever, Neo4jGraphRetriever
 from .retrieval_cache import RetrievalCache
 from .resources import RESOURCES, path_signature
 from .db_fetch import fetch_chunks
@@ -35,7 +35,10 @@ HYBRID_FUSION_SPECS = {
     "hybrid_hyde_turbovec": {"faiss", "turbovec", "bm25", "hyde"},
     "hybrid_splade_turbovec": {"faiss", "turbovec", "bm25", "splade"},
     "hybrid_hyde_splade_turbovec": {"faiss", "turbovec", "bm25", "splade", "hyde"},
-    "hybrid_all": {"faiss", "turbovec", "bm25", "splade", "hyde"}
+    "hybrid_graph": {"faiss", "bm25", "graph"},
+    "hybrid_hyde_graph": {"faiss", "bm25", "hyde", "graph"},
+    "hybrid_hyde_turbovec_graph": {"faiss", "bm25", "turbovec", "hyde", "graph"},
+    "hybrid_all": {"faiss", "turbovec", "bm25", "splade", "hyde", "graph"}
 }
 
 def get_retrieval_cache(cfg: dict) -> RetrievalCache | None:
@@ -71,6 +74,9 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     tv_cfg = cfg.get("turbovec", {}) or {}
     tv_raw = Path(str(tv_cfg.get("path", "data/turbovec")))
     turbovec_dir = tv_raw if tv_raw.is_absolute() else db_path.parent.parent / tv_raw
+    neo4j_cfg = cfg.get("neo4j",{}) or {}
+    graph_enabled = as_bool(neo4j_cfg.get("enabled",False))
+    graph_unavailable = False
     runtime = cfg.get("runtime", {})
     provider = runtime.get("qa_provider", "ollama").strip().lower()
     log.info("[QNA] Use provider: %s", provider)
@@ -190,6 +196,7 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 expected_model=expected_faiss_model,
                 mismatch_policy=faiss_mismatch_policy,
             ))
+
     def get_lambdamart_ranker():
         lcfg=cfg.get("lambdamart",{}) or {}
         raw=Path(str(lcfg.get("model_path","data/models/lambdamart.txt")))
@@ -266,6 +273,23 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
                 cache_folder=cache_folder,
                 precision=precision))
 
+    def get_graph_ret():
+        uri = str(neo4j_cfg.get("uri","neo4j://localhost:7687"))
+        database = str(neo4j_cfg.get("database", "neo4j"))
+        signature = (
+            uri,
+            str(neo4j_cfg.get("user","neo4j")),
+            database,
+            str(neo4j_cfg.get("password_env","NEO4J_PASSWORD")),
+            int(neo4j_cfg.get("max_hops",2)),
+            float(neo4j_cfg.get("exact_entity_boost",2.0)),
+        )
+
+        return RESOURCES.get(
+            ("neo4j_graph", uri, database),
+            signature,
+            lambda :Neo4jGraphRetriever(cfg))
+
     def merge_ranked_results(primary: list[tuple[int, float]], fallback: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
         merged = []
         seen = set()
@@ -331,6 +355,22 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
     
     def search_splade(k: int, query_text: str | None = None) -> list[tuple[int, float]]:
         return get_splade_ret().search((query_text or question).strip(), k)
+
+    def search_graph(k:int, query_text: str | None = None) -> list[tuple[int, float]]:
+        nonlocal graph_unavailable
+
+        if not graph_enabled or graph_unavailable:
+            return []
+
+        effective_query=(query_text or question).strip()
+        graph_k=min(k, int(neo4j_cfg.get("candidate_k", 200)))
+
+        try:
+            return get_graph_ret().search(effective_query, graph_k)
+        except Exception as exc:
+            graph_unavailable=True
+            log.warning("[GRAPH] retrieval unavailable; continuing without Neo4j err=%s: %s", type(exc).__name__, exc)
+            return []
     
     def search_hybrid_fusion_decomposed(name: str, k: int, *, force_hyde: bool = False, force_reason: str | None = None):
         decomp_cfg = cfg.get("query_decomposition", {}) or {}
@@ -443,6 +483,12 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
             channels["splade"] = search_splade(splade_k, effective_query)
             weights["splade"] = float(splade_cfg.get("rrf_weight", 0.75))
 
+        if "graph" in spec:
+            graph_k=min(k, int(neo4j_cfg.get("candidate_k", 200)))
+            graph_results = search_graph(graph_k, effective_query)
+            channels["graph"] = graph_results
+            weights["graph"] = float(neo4j_cfg.get("rrf_weight", 0.70))
+
         if "hyde" in spec and effective_query == question:
             if faiss_ret is None:
                 raise RuntimeError("HyDE fusion requires FAISS")
@@ -520,6 +566,11 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         retriever = get_turbovec_ret()
         raw_results = search_embedding_retriever(retriever, candidate_k)
         results, retrieval_signals = build_single_channel_results(raw_results, "semantic")
+    elif retriever_name == "graph":
+        log.info("[QNA] using Neo4j graph retriever")
+        raw_results=search_graph(candidate_k)
+        retrieval_signals=build_weighted_rrf_signal({"graph":raw_results}, weights={"graph":1.0}, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale",10.0)),)
+        results=sorted(((cid,signal["rrf_score"]) for cid,signal in retrieval_signals.items()), key=lambda item:item[1], reverse=True)
     elif retriever_name in HYBRID_FUSION_SPECS:
         channels = "+".join(sorted(HYBRID_FUSION_SPECS[retriever_name]))
         log.info("[QNA] using %s channels=%s", retriever_name, channels)
@@ -552,6 +603,10 @@ def retrieve_question_context_uncached(cfg: dict, question: str, *, retriever_na
         elif retriever_name == "turbovec":
             raw_deep_results = search_embedding_retriever(retriever, deep_k)
             deep_results, retrieval_signals = build_single_channel_results(raw_deep_results, "semantic")
+        elif retriever_name == "graph":
+            raw_deep_results=search_graph(deep_k)
+            retrieval_signals=build_weighted_rrf_signal({"graph":raw_deep_results}, weights={"graph":1.0}, rrf_k=rrf_k, rrf_scale=float(retrieval_cfg.get("rrf_scale",10.0)),)
+            deep_results=sorted(((cid,signal["rrf_score"]) for cid,signal in retrieval_signals.items()),  key=lambda item:item[1],  reverse=True,)
         elif retriever_name in HYBRID_FUSION_SPECS:
             force_hyde = "hyde" in HYBRID_FUSION_SPECS[retriever_name]
             deep_results, retrieval_signals = search_hybrid_fusion_decomposed(retriever_name, deep_k, force_hyde=force_hyde, force_reason=f"intent_filter_too_few: count={len(filtered_ids)}")

@@ -2,13 +2,18 @@ import requests
 import time
 import random
 import logging
+import threading
+
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from urllib.parse import quote
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import RequestException, Timeout, ConnectionError
+
+from utils.crawl import SharedRateLimiter, limited_get
 
 log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
@@ -18,7 +23,7 @@ def sleep_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> None:
     delay *= (0.75 + random.random() * 0.6)
     time.sleep(delay)
 
-def iter_recently_changed_titles(api: str, session: requests.Session, *, start_iso: str, namespace: int = 0, limit: int = 200):
+def iter_recently_changed_titles(api: str, session: requests.Session, *, start_iso: str, namespace: int = 0, limit: int = 200, request_semaphore=None):
     cont = None
     while True:
         params = {
@@ -35,7 +40,7 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
         if cont:
             params.update(cont)
 
-        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
+        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10, request_semaphore=None)
         if not data:
             break
 
@@ -50,42 +55,38 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
         if not cont:
             break
 
-def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str, Any], timeout: float = 60.0, max_retries: int = 10) -> Optional[dict[str, Any]]:
+def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str, Any], timeout: float = 60.0, max_retries: int = 10, rate_limiter: SharedRateLimiter | None = None, request_semaphore=None) -> Optional[dict[str, Any]]:
     for attempt in range(max_retries):
         try:
-            r = session.get(url, params=params, timeout=timeout)
+            r=limited_get(session, url, params=params, timeout=timeout, semaphore=request_semaphore, rate_limiter=rate_limiter)
             if r.status_code in _RETRY_STATUSES:
-                ra = r.headers.get("Retry-After")
+                ra=r.headers.get("Retry-After")
                 if ra and ra.isdigit():
-                    time.sleep(min(int(ra), 120))
+                    time.sleep(min(int(ra),120))
                 else:
                     sleep_backoff(attempt)
                 continue
-
-            if r.status_code >= 400:
+            if r.status_code>=400:
                 log.warning("[WIKI] HTTP %s for %s params=%s", r.status_code, url, params)
                 return None
-
             return r.json()
-
-        except (Timeout, ConnectionError) as e:
+        except (Timeout,ConnectionError) as e:
             log.warning("[WIKI] Network error (%s) url=%s attempt=%d/%d", type(e).__name__, url, attempt+1, max_retries)
             sleep_backoff(attempt)
-            continue
         except RequestException as e:
             log.warning("[WIKI] RequestException url=%s attempt=%d/%d err=%s", url, attempt+1, max_retries, e)
             sleep_backoff(attempt)
-            continue
         except ValueError as e:
             log.warning("[WIKI] Bad JSON url=%s err=%s", url, e)
             return None
-
     log.error("[WIKI] Giving up after %d retries url=%s", max_retries, url)
     return None
 
-def list_allpages(api: str, limit: int = 100, namespace: int = 0):
+
+def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaphore = None, rate_limiter: SharedRateLimiter | None = None, max_outer_failures: int = 3):
     session = requests.Session()
     cont = None
+    failures = 0
 
     while True:
         params = {
@@ -98,12 +99,19 @@ def list_allpages(api: str, limit: int = 100, namespace: int = 0):
         if cont:
             params.update(cont)
 
-        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
+        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10, request_semaphore=request_semaphore)
         if not data:
-            log.warning("[WIKI] allpages failed; sleeping and retrying !")
-            time.sleep(10)
+            failures ++ 1
+            if failures >= max_outer_failures:
+                raise RuntimeError(f"[WIKI] Allpages discovery failed {failures} consecutive times")
+
+            delay = min(15 * failures, 60)
+            log.warning("[WIKI] allpages failed outer=%d/%d; sleeping %ds and retrying !", failures, max_outer_failures, delay)
+            time.sleep(delay)
             continue
 
+        failures = 0
+        
         pages = data.get("query", {}).get("allpages", [])
         for p in pages:
             t = p.get("title")
@@ -121,70 +129,82 @@ def fandom_html_to_text(html: str) -> str:
     main = soup.select_one(".mw-parser-output") or soup
     return md(str(main))
 
-def fetch_page_html(session: requests.Session, api: str, title: str) -> str | None:
-    params = {
-        "action": "parse",
-        "format": "json",
-        "page": title,
-        "prop": "text",
-        "disabletoc": "1",
-        "disablelimitreport": "1",
-        "redirects": "1",
+def fetch_page_html(session: requests.Session, api: str, title: str, *, rate_limiter: SharedRateLimiter | None=None, request_semaphore=None) -> str | None:
+    params={
+        "action":"parse",
+        "format":"json",
+        "page":title,
+        "prop":"text",
+        "disabletoc":"1",
+        "disablelimitreport":"1",
+        "redirects":"1",
     }
-    data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10)
+    data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=10, rate_limiter=rate_limiter, request_semaphore=request_semaphore)
     if not data:
         return None
-
     html = data.get("parse", {}).get("text", {}).get("*")
     return html or None
 
-def load_fandom_docs(source_cfg: dict, rate_limit_s: float = 1.0, max_pages: int | None = None):
-    api = source_cfg["api"]
-    ns = int(source_cfg.get("namespace", 0))
-    session = requests.Session()
-
-    state_path = Path(source_cfg.get("state_file", "data/fandom_last_run.txt"))
+def load_fandom_docs(source_cfg: dict, rate_limit_s: float=1.0, max_pages: int | None=None, workers: int=4, request_semaphore=None):
+    api=source_cfg["api"]
+    ns=int(source_cfg.get("namespace",0))
+    discovery_session=requests.Session()
+    state_path=Path(source_cfg.get("state_file", "data/fandom_last_run.txt"))
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    crawl_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    last_run = None
-    if state_path.exists():
-        last_run = state_path.read_text(encoding="utf-8").strip() or None
-
-    incremental = bool(last_run)
+    crawl_started_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    last_run=state_path.read_text(encoding="utf-8").strip() or None if state_path.exists() else None
+    incremental=bool(last_run)
+    workers=max(1,int(workers))
+    rate_limiter=SharedRateLimiter(rate_limit_s)
 
     if incremental:
-        changes = list(iter_recently_changed_titles(api, session, start_iso=last_run, namespace=ns))
+        changes=list(iter_recently_changed_titles(api, discovery_session, start_iso=last_run, namespace=ns, request_semaphore=request_semaphore))
         log.info("[WIKI] incremental crawl since %s changed_titles=%d", last_run, len(changes))
     else:
-        changes = [(title, None) for title in list_allpages(api, namespace=ns)]
-        log.info("[WIKI] full crawl (no state_file)")
+        changes=[(title,None) for title in list_allpages(api, namespace=ns, request_semaphore=request_semaphore, rate_limiter=rate_limiter)]
+        log.info("[WIKI] full crawl (no state_file) titles=%d", len(changes))
 
-    count = 0
-    failed = 0
-    partial = False
+    partial=max_pages is not None and len(changes)>max_pages
+    targets=changes[:max_pages] if max_pages is not None else changes
+    thread_local=threading.local()
+    failed=0
 
-    for title, change_ts in changes:
-        html = fetch_page_html(session, api, title)
-        if html:
-            text = fandom_html_to_text(html) or ""
-            url = f"{api}?title={quote(title)}"
-            yield url, title, text, None, None
-        else:
-            failed += 1
-            log.warning("[WIKI] Skipping page (fetch failed) title=%s", title)
+    def get_session() -> requests.Session:
+        session=getattr(thread_local, "session", None)
+        if session is None:
+            session=requests.Session()
+            thread_local.session=session
+        return session
 
-        count += 1
-        if max_pages is not None and count >= max_pages:
-            partial = True
-            log.warning("[WIKI] Stopped early due to max_pages=%d", max_pages)
-            break
-        time.sleep(rate_limit_s)
+    def fetch_one(title: str, change_ts: str | None):
+        html=fetch_page_html(get_session(), api, title, rate_limiter=rate_limiter, request_semaphore=request_semaphore)
+        if not html:
+            return None
+        text=fandom_html_to_text(html) or ""
+        url=f"{api}?title={quote(title)}"
+        return url,title,text,None,None
 
+    log.info("[WIKI] fetch workers=%d rate_limit_s=%.2f pages=%d", workers, rate_limit_s, len(targets))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fandom") as pool:
+        futures={pool.submit(fetch_one,title,change_ts):title for title, change_ts in targets}
+        for future in as_completed(futures):
+            title=futures[future]
+            try:
+                item=future.result()
+            except Exception:
+                failed+=1
+                log.exception("[WIKI] worker failed title=%s", title)
+                continue
+            if item is None:
+                failed+=1
+                log.warning("[WIKI] Skipping page (fetch failed) title=%s", title)
+                continue
+            yield item
+
+    count=len(targets)
     if not partial and failed==0:
         state_path.write_text(crawl_started_at, encoding="utf-8")
         log.info("[WIKI] crawl state advanced to %s", crawl_started_at)
     else:
-        log.warning("[WIKI] state NOT advanced partial=%s failed=%d count=%d", partial, failed, count)
-    
-    log.info("[WIKI] done incremental=%s processed=%d failed=%d partial=%s", incremental, count, failed, partial)
+        log.warning("[WIKI] state NOT advanced partial=%s failed=%d count=%d", partial, failed,count)
+    log.info("[WIKI] done incremental=%s processed=%d failed=%d partial=%s workers=%d", incremental, count, failed, partial, workers)
