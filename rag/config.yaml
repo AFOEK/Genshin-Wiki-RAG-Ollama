@@ -778,6 +778,10 @@ sources:
     max_pages: null
     rate_limit_s: 2.0
     crawl_workers: 2
+    browser_fallback:
+      enabled: true
+      port: 9334
+      user_data_path: "data/browser/honey"
     validation:
       search_domains:
         - gensh.honeyhunterworld.com

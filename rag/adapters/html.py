@@ -313,8 +313,8 @@ def game8_response_problem(response:requests.Response,html:str) -> str | None:
 
 def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_limit_s: float=1.0, max_pages: int | None=2000, allowed_langs: str="EN",workers: int=5, request_semaphore=None, browser_fallback: BrowserFallback | None=None):
     frontier=deque(normalize_url(url) for url in seeds)
-    known:set[str]=set(frontier)
-    seen:set[str]=set()
+    known: set[str]=set(frontier)
+    seen: set[str]=set()
     workers=max(1, int(workers))
     game8_source=is_game8_url(base_url)
     request_delay_s=max(rate_limit_s, 1.5) if game8_source else max(0.0, rate_limit_s)
@@ -569,3 +569,10 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
             submit_available(pool,pending)
 
     log.info("[HTML] crawl done base=%s submitted=%d seen=%d remaining=%d workers=%d",base_url,submitted,len(seen),len(frontier),workers)
+
+def crawl_with_browser(*args, browser_fallback=None, **kwargs):
+    try:
+        yield from crawl_site(*args, browser_fallback=browser_fallback, **kwargs)
+    finally:
+        if browser_fallback is not None:
+            browser_fallback.close()

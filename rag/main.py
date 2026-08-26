@@ -25,10 +25,11 @@ from utils.audit import audit_integrity, audit_faiss_against_sqlite, audit_turbo
 from utils.logging_setup import setup_logging
 from utils.thread import producer, ingest_consumer
 from utils.repair import repair_database
+from utils.browser_fallback import BrowserFallback
 
 from adapters.kqm import load_kqm_tcl_docs
 from adapters.wiki import load_fandom_docs
-from adapters.html import crawl_site
+from adapters.html import crawl_site, crawl_with_browser
 
 def parse_bool(x: str) -> bool:
     return str(x).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -166,7 +167,25 @@ def main():
                     s_resolved = {**s, "state_file": str(db_path.parent / "fandom_last_run.txt")}
                     docs_iter = load_fandom_docs(s_resolved, rate_limit_s=rate, max_pages=max_pages, workers=crawl_workers, request_semaphore=crawl_semaphore)
                 
-                elif kind in {"honey_html", "game8_html", "genshingg_html"}:
+                elif kind == "honey_html":
+                    seeds=s.get("seeds", [])
+                    if not seeds:
+                        log.warning("[WARN] No seed for %s, skipping", name)
+                        continue
+
+                    base_url=s["base_url"]
+                    rate=float(s.get("rate_limit_s",1.0))
+                    raw_max=s.get("max_pages",200)
+                    max_pages=int(raw_max) if raw_max is not None else None
+                    workers=int(s.get("crawl_workers",2))
+                    browser_cfg=s.get("browser_fallback",{}) or {}
+                    honey_browser=None
+
+                    if browser_cfg.get("enabled",False):
+                        honey_browser=BrowserFallback(browser_path=browser_cfg.get("browser_path"), user_data_path=str(browser_cfg.get("user_data_path", "data/browser/honey",)), port=int(browser_cfg.get("port",9334)))
+                    docs_iter=crawl_with_browser(base_url, seeds, source_filters.deny_url, source_filters.allow_url, rate_limit_s=rate, max_pages=max_pages, workers=workers, request_semaphore=crawl_semaphore, browser_fallback=honey_browser)
+
+                elif kind in {"game8_html", "genshingg_html"}:
                     seeds = s.get("seeds", [])
                     if not seeds:
                         log.warning(f"[WARN] No seed for {name}, skipping")
