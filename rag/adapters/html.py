@@ -13,6 +13,7 @@ from markdownify import markdownify as md
 from requests.exceptions import RequestException, Timeout, ConnectionError
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from utils.crawl import SharedRateLimiter, limited_get
+from utils.browser_fallback import BrowserFallback
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,24 @@ GAME8_DISCOVERY_PATHS={
     "/games/Genshin-Impact",
     "/games/Genshin-Impact/archives",
 }
+
+class CloudflareChallengeError(RuntimeError):
+    pass
+
+def is_cloudflare_challenge(response) -> bool:
+    cf_mitigated=(response.headers.get("cf-mitigated") or "").lower()
+
+    if cf_mitigated=="challenge":
+        return True
+
+    content_type=(response.headers.get("content-type") or "").lower()
+    server=(response.headers.get("server") or "").lower()
+
+    if "text/html" not in content_type:
+        return False
+
+    body=(response.text or "")[:20000].lower()
+    return ("cloudflare" in server and "just a moment" in body and "challenges.cloudflare.com" in body)
 
 def is_game8_discovery_url(url:str) -> bool:
     path = urlparse(url).path.rstrip("/")
@@ -292,7 +311,7 @@ def game8_response_problem(response:requests.Response,html:str) -> str | None:
         return f"blocking or challenge page: {marker!r}"
     return None
 
-def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_limit_s: float=1.0, max_pages: int | None=2000, allowed_langs: str="EN",workers: int=5, request_semaphore=None):
+def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_limit_s: float=1.0, max_pages: int | None=2000, allowed_langs: str="EN",workers: int=5, request_semaphore=None, browser_fallback: BrowserFallback | None=None):
     frontier=deque(normalize_url(url) for url in seeds)
     known:set[str]=set(frontier)
     seen:set[str]=set()
@@ -302,6 +321,8 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
     max_retries=4 if game8_source else 10
     rate_limiter=SharedRateLimiter(request_delay_s)
     thread_local=threading.local()
+    browser_mode=threading.Event()
+    browser_switch_lock=threading.Lock()
     submitted=0
 
     def get_session() -> requests.Session:
@@ -320,42 +341,78 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
 
     def fetch_one(requested_url: str):
         session=get_session()
+        if browser_mode.is_set():
+            if browser_fallback is None:
+                return None, "browser mode enabled without BrowserFallback"
+
+            try:
+                response=browser_fallback.get_response(requested_url)
+                return response,None
+            except Exception as exc:
+                return None, f"BrowserFallback: {type(exc).__name__}: {exc}"
+            
         for attempt in range(max_retries+1):
             try:
                 if game8_source:
                     time.sleep(random.uniform(0.05,0.25))
                 response=limited_get(session,requested_url,timeout=(15,60),allow_redirects=True,semaphore=request_semaphore,rate_limiter=rate_limiter)
-            except (Timeout,ConnectionError,RequestException) as exc:
-                if attempt>=max_retries:
-                    return None,f"{type(exc).__name__}: {exc}"
+            except (Timeout, ConnectionError, RequestException) as exc:
+                if attempt >= max_retries:
+                    return None, f"{type(exc).__name__}: {exc}"
                 log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=%s",requested_url,attempt+1,max_retries,exc)
-                sleep_backoff(attempt,base=2.0,cap=90.0)
+                sleep_backoff(attempt, base=2.0, cap=90.0)
                 continue
+
+            if is_cloudflare_challenge(response):
+                log.warning("[HTML] Cloudflare challenge status=%d url=%s cf_ray=%s", response.status_code, requested_url, response.headers.get("cf-ray"))
+
+                if browser_fallback is None:
+                    return None, (f"Cloudflare challenge HTTP {response.status_code}; browser fallback unavailable")
+
+                with browser_switch_lock:
+                    if not browser_mode.is_set():
+                        cleared=browser_fallback.wait_for_manual_clearance(requested_url)
+                        if not cleared:
+                            return None,"Cloudflare challenge was not cleared"
+
+                        browser_mode.set()
+                        log.warning("[HTML] source switched to browser mode base=%s", base_url,)
+
+                try:
+                    response=browser_fallback.get_response(requested_url)
+                    return response,None
+                except Exception as exc:
+                    return None, (f"BrowserFallback: {type(exc).__name__}: {exc}")
 
             if game8_source and response.status_code==403:
                 return response,"HTTP 403 blocked"
 
             if response.status_code in _RETRY_STATUSES:
                 if attempt>=max_retries:
-                    return None,f"HTTP {response.status_code} after {max_retries} retries"
+                    return None, (f"HTTP {response.status_code} after {max_retries} retries")
+
                 retry_after=response.headers.get("Retry-After")
-                log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=HTTP %d",requested_url,attempt+1,max_retries,response.status_code)
+                log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=HTTP %d", requested_url, attempt+1, max_retries, response.status_code)
+
                 if retry_after and retry_after.isdigit():
                     time.sleep(min(int(retry_after),120))
                 else:
                     sleep_backoff(attempt,base=2.0,cap=90.0)
+
                 continue
 
             if game8_source and response.status_code<400:
-                problem=game8_response_problem(response,response.text)
+                problem=game8_response_problem(response, response.text)
                 if problem:
                     if attempt>=max_retries:
-                        return None,f"{problem} after {max_retries} retries"
-                    log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=%s",requested_url,attempt+1,max_retries,problem)
+                        return None, (f"{problem} after {max_retries} retries")
+
+                    log.warning("[HTML] Retrying url=%s attempt=%d/%d reason=%s", requested_url, attempt+1, max_retries, problem)
                     sleep_backoff(attempt,base=2.0,cap=90.0)
                     continue
 
             return response,None
+
         return None,"retry loop exhausted"
 
     def enqueue(link: str) -> bool:
@@ -417,61 +474,61 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
         submit_available(pool,pending)
 
         while pending:
-            done,_=wait(tuple(pending),return_when=FIRST_COMPLETED)
+            done, _=wait(tuple(pending), return_when=FIRST_COMPLETED)
 
             for future in done:
                 requested_url=pending.pop(future)
                 try:
-                    response,fetch_error=future.result()
+                    response, fetch_error=future.result()
                 except Exception as exc:
-                    response,fetch_error=None,f"{type(exc).__name__}: {exc}"
+                    response, fetch_error=None,f"{type(exc).__name__}: {exc}"
 
                 if response is None:
-                    log.warning("[HTML] Giving up url=%s reason=%s",requested_url,fetch_error)
+                    log.warning("[HTML] Giving up url=%s reason=%s", requested_url, fetch_error)
                     seen.add(requested_url)
                     continue
 
                 final_url=normalize_url(response.url)
 
                 if game8_source and response.status_code==403:
-                    log.warning("[GAME8] HTTP 403 blocked url=%s",requested_url)
+                    log.warning("[GAME8] HTTP 403 blocked url=%s", requested_url)
                     seen.add(requested_url)
                     continue
 
                 if response.status_code>=400:
-                    log.warning("[HTML] HTTP %d requested=%s final=%s",response.status_code,requested_url,final_url)
+                    log.warning("[HTML] HTTP %d requested=%s final=%s", response.status_code, requested_url,final_url)
                     seen.add(requested_url)
                     continue
 
                 if not same_site(final_url,base_url):
-                    log.warning("[HTML] Redirect outside approved site requested=%s final=%s",requested_url,final_url)
+                    log.warning("[HTML] Redirect outside approved site requested=%s final=%s", requested_url, final_url)
                     seen.add(requested_url)
                     continue
 
                 if allow_url and not allow_url.search(final_url):
                     if not (game8_source and is_game8_discovery_url(final_url)):
-                        log.warning("[HTML] Redirect outside allow list requested=%s final=%s",requested_url,final_url)
+                        log.warning("[HTML] Redirect outside allow list requested=%s final=%s", requested_url, final_url)
                         seen.add(requested_url)
                         continue
 
                 content_type=(response.headers.get("Content-Type") or "").lower()
                 if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                    log.info("[HTML] Skip non-HTML content-type=%s url=%s",content_type,final_url)
+                    log.info("[HTML] Skip non-HTML content-type=%s url=%s", content_type, final_url)
                     seen.add(requested_url)
                     continue
 
                 html=response.text
 
                 if game8_source and is_game8_discovery_url(final_url):
-                    added=enqueue_game8_articles(html,final_url)
+                    added=enqueue_game8_articles(html, final_url)
                     seen.add(requested_url)
                     seen.add(final_url)
                     known.add(final_url)
-                    log.info("[GAME8] discovery processed url=%s article_links_added=%d",final_url,added)
+                    log.info("[GAME8] discovery processed url=%s article_links_added=%d", final_url, added)
                     continue
 
                 if game8_source and not is_game8_article(final_url):
-                    log.info("[GAME8] skipping non-article url=%s",final_url)
+                    log.info("[GAME8] skipping non-article url=%s", final_url)
                     seen.add(requested_url)
                     seen.add(final_url)
                     known.add(final_url)
@@ -479,7 +536,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
 
                 text=html_to_text(html,final_url)
                 if not text.strip():
-                    log.warning("[HTML] Skipping empty extraction url=%s",final_url)
+                    log.warning("[HTML] Skipping empty extraction url=%s", final_url)
                     seen.add(requested_url)
                     seen.add(final_url)
                     known.add(final_url)
@@ -491,7 +548,7 @@ def crawl_site(base_url: str, seeds: list[str], deny_url, allow_url=None, rate_l
                     if soup.title and soup.title.string:
                         title=soup.title.string.strip()
                 except Exception:
-                    log.exception("[HTML] Failed to extract title url=%s",final_url)
+                    log.exception("[HTML] Failed to extract title url=%s", final_url)
 
                 seen.add(requested_url)
                 seen.add(final_url)
