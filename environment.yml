@@ -57,3 +57,4 @@ dependencies:
       - lightgbm
       - neo4j
       - fastapi[standard]
+      - DrissionPage
