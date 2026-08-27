@@ -12,29 +12,44 @@ def expand_path(value: str | Path) -> Path:
     raw = os.path.expandvars(raw)
     return Path(raw).expanduser()
 
-def is_usable_dir(p: Path) -> bool:
+def is_usable_dir(p: Path, *, create: bool=False) -> bool:
     try:
-        p.mkdir(parents=True, exist_ok=True)
-        test = p / ".write_test"
-        test.write_text("ok", encoding="utf-8")
+        if create:
+            p.mkdir(parents=True, exist_ok=True)
+        elif not p.is_dir():
+            return False
+
+        test=p/".write_test"
+        test.write_text("ok",encoding="utf-8")
         test.unlink()
         return True
     except Exception:
         return False
-    
+
 def resolve_storage_root(cfg: dict) -> Path:
-    storage = cfg.get("storage", {}) or {}
-    primary = expand_path(Path(storage.get("primary_root", "")))
-    secondary = expand_path(Path(storage.get("secondary_root", "")))
-    if primary and is_usable_dir(primary):
-        log.info("[STORAGE] Storage root: PRIMARY %s", primary)
-        return primary
-    
-    if secondary and is_usable_dir(secondary):
-        log.info("[STORAGE] Storage root: SECONDARY %s", secondary)
-        return secondary
-    
-    raise RuntimeError(f"No usable storage root. primary={primary} secondary={secondary}")
+    storage=cfg.get("storage",{}) or {}
+    primary_raw=storage.get("primary_root")
+    secondary_raw=storage.get("secondary_root")
+    primary_mount_raw=storage.get("primary_mount")
+
+    if primary_raw:
+        primary=expand_path(Path(primary_raw))
+        mount_ok=True
+        if primary_mount_raw:
+            primary_mount=expand_path(Path(primary_mount_raw))
+            mount_ok=primary_mount.is_mount()
+
+        if mount_ok and is_usable_dir(primary,create=False):
+            log.info("[PATH] Storage root: PRIMARY %s", primary)
+            return primary
+
+    if secondary_raw:
+        secondary=expand_path(Path(secondary_raw))
+        if is_usable_dir(secondary,create=True):
+            log.info("[PATH] Storage root: SECONDARY %s", secondary)
+            return secondary
+
+    raise RuntimeError(f"[PATH] No usable storage root. Primary={primary_raw} secondary={secondary_raw}")
     
 def resolve_db_path(cfg: dict) -> Path:
     root = resolve_storage_root(cfg)

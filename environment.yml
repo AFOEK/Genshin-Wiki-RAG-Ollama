@@ -1,4 +1,5 @@
 name: rag
+
 channels:
   - conda-forge
 
@@ -6,8 +7,22 @@ dependencies:
   - python=3.12
   - pip
 
+  # Core scientific stack
   - numpy
   - scipy
+  - pandas
+  - scikit-learn
+
+  # PyTorch / ML
+  - pytorch=2.10
+  - transformers
+  - datasets
+  - accelerate
+  - sentence-transformers
+  - faiss-cpu
+  - lightgbm
+
+  # General utilities
   - certifi
   - setuptools
   - wheel
@@ -16,8 +31,9 @@ dependencies:
   - six
   - tqdm
   - typing_extensions
-  - dotenv
+  - python-dotenv
 
+  # HTTP / Web
   - requests
   - urllib3
   - idna
@@ -26,35 +42,41 @@ dependencies:
   - soupsieve
   - lxml
 
+  # Data / serialization
   - pyyaml
   - regex
   - zstandard
   - pymysql
   - protobuf
 
+  # Git
   - gitpython
   - gitdb
   - smmap
 
+  # Text processing
   - bleach
   - markdownify
   - webencodings
   - text-unidecode
   - python-slugify
 
+  # Kaggle
+  - kaggle
+  - kagglesdk
+
+  # Neo4j
+  - neo4j-python-driver
+
+  # FastAPI
+  - fastapi
+  - fastapi-cli
+  - uvicorn-standard
+  - python-multipart
+
+  # Keep only packages better installed from PyPI
   - pip:
       - turbovec
-      - torch==2.10
-      - faiss-cpu==1.14.2
-      - transformers
-      - datasets
-      - accelerate
-      - sentence-transformers
-      - kaggle
-      - kagglesdk
       - pennylane
       - pennylane-lightning
-      - lightgbm
-      - neo4j
-      - fastapi[standard]
       - DrissionPage

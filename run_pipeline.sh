@@ -8,11 +8,44 @@ MODE="${1:-run}"
 
 NUKE_CONFIRM="${NUKE_CONFIRM:-0}"
 
-DATA_ROOT="/mnt/ssd/genshin_rag/data"
-EXPORT_ROOT="/mnt/ssd/genshin_rag/exports"
+PRIMARY_ROOT="${PRIMARY_ROOT:-/mnt/ssd/genshin_rag}"
+PRIMARY_MOUNT="${PRIMARY_MOUNT:-/mnt/ssd}"
+SECONDARY_ROOT="${SECONDARY_ROOT:-$HOME/Documents/Genshin-Wiki-RAG-Ollama/rag}"
+
+resolve_storage_root() {
+    if command -v mountpoint >/dev/null 2>&1; then
+        if mountpoint -q "$PRIMARY_MOUNT" && [ -d "$PRIMARY_ROOT" ] && [ -w "$PRIMARY_ROOT" ]; then
+            echo "[STORAGE] Using PRIMARY: $PRIMARY_ROOT" >&2
+            printf '%s\n' "$PRIMARY_ROOT"
+            return 0
+        fi
+    elif [ -d "$PRIMARY_ROOT" ] && [ -w "$PRIMARY_ROOT" ]; then
+        echo "[STORAGE] Using PRIMARY: $PRIMARY_ROOT" >&2
+        printf '%s\n' "$PRIMARY_ROOT"
+        return 0
+    fi
+
+    echo "[STORAGE] Primary unavailable, falling back to: $SECONDARY_ROOT" >&2
+    mkdir -p "$SECONDARY_ROOT"
+
+    if [ -d "$SECONDARY_ROOT" ] && [ -w "$SECONDARY_ROOT" ]; then
+        printf '%s\n' "$SECONDARY_ROOT"
+        return 0
+    fi
+
+    echo "[STORAGE] ERROR: Neither storage root is usable" >&2
+    exit 1
+}
+
+STORAGE_ROOT="$(resolve_storage_root)"
+DATA_ROOT="$STORAGE_ROOT/data"
+EXPORT_ROOT="$STORAGE_ROOT/exports"
+
 LOG_ROOT="rag/logs"
 KAGGLE_CHUNKS_ROOT="rag/chunks_kaggle"
 LOCAL_RAG_DATA_ROOT="rag/data"
+
+mkdir -p "$DATA_ROOT" "$EXPORT_ROOT"
 
 safe_rm_rf() {
     local target="$1"
@@ -111,8 +144,8 @@ log() {
 }
 
 compress_db_snapshot() {
-    local DB="/mnt/ssd/genshin_rag/data/genshin_rag.db"
-    local EXPORT_DIR="/mnt/ssd/genshin_rag/exports"
+    local DB="$DATA_ROOT/genshin_rag.db"
+    local EXPORT_DIR="$EXPORT_ROOT"
     local TS
     TS="$(date '+%Y%m%d_%H%M%S')"
 
@@ -176,6 +209,116 @@ compress_db_snapshot() {
     log "[EXPORT] Removed temporary snapshot: $SNAPSHOT"
 }
 
+compress_neo4j_snapshot() {
+    local DB_NAME="${NEO4J_DATABASE:-neo4j}"
+    local EXPORT_DIR="$EXPORT_ROOT/neo4j"
+    local TS
+    TS="$(date '+%Y%m%d_%H%M%S')"
+
+    local DUMP_DIR="$EXPORT_DIR/.dump_${TS}"
+    local DUMP_FILE="$DUMP_DIR/${DB_NAME}.dump"
+
+    local ARCHIVE_7Z="$EXPORT_DIR/genshin_neo4j_${TS}.dump.7z"
+    local ARCHIVE_ZST="$EXPORT_DIR/genshin_neo4j_${TS}.dump.zst"
+    local ARCHIVE_GZ="$EXPORT_DIR/genshin_neo4j_${TS}.dump.gz"
+
+    local neo4j_admin="${NEO4J_ADMIN_BIN:-}"
+    local neo4j_bin="${NEO4J_BIN:-}"
+    local was_running=0
+
+    [ -n "$neo4j_admin" ] || neo4j_admin="$(command -v neo4j-admin || true)"
+    [ -n "$neo4j_bin" ] || neo4j_bin="$(command -v neo4j || true)"
+
+    if [ -z "$neo4j_admin" ]; then
+        log "[NEO4J-EXPORT] neo4j-admin not found"
+        return 1
+    fi
+
+    mkdir -p "$EXPORT_DIR"
+    rm -rf "$DUMP_DIR"
+    mkdir -p "$DUMP_DIR"
+
+    if [ -n "$neo4j_bin" ] && "$neo4j_bin" status >/dev/null 2>&1; then
+        was_running=1
+        log "[NEO4J-EXPORT] Stopping Neo4j for offline dump"
+
+        if ! "$neo4j_bin" stop; then
+            log "[NEO4J-EXPORT] Failed to stop Neo4j"
+            rm -rf "$DUMP_DIR"
+            return 1
+        fi
+    fi
+
+    log "[NEO4J-EXPORT] Dumping database=$DB_NAME"
+
+    if ! "$neo4j_admin" database dump "$DB_NAME" \
+        --to-path="$DUMP_DIR" \
+        --overwrite-destination=true; then
+
+        log "[NEO4J-EXPORT] Database dump failed"
+
+        if [ "$was_running" -eq 1 ]; then
+            "$neo4j_bin" start || true
+        fi
+
+        rm -rf "$DUMP_DIR"
+        return 1
+    fi
+
+    if [ "$was_running" -eq 1 ]; then
+        log "[NEO4J-EXPORT] Restarting Neo4j"
+
+        if ! "$neo4j_bin" start; then
+            log "[NEO4J-EXPORT] WARNING: Neo4j failed to restart"
+        fi
+    fi
+
+    if [ ! -f "$DUMP_FILE" ]; then
+        log "[NEO4J-EXPORT] Expected dump not found: $DUMP_FILE"
+        return 1
+    fi
+
+    if command -v 7z >/dev/null 2>&1; then
+        log "[NEO4J-EXPORT] Compressing with 7z: $ARCHIVE_7Z"
+
+        if ! nice -n 10 ionice -c2 -n7 \
+            7z a -t7z -mx=9 -mmt=on "$ARCHIVE_7Z" "$DUMP_FILE"; then
+            log "[NEO4J-EXPORT] 7z compression failed"
+            return 1
+        fi
+
+        log "[NEO4J-EXPORT] Done: $ARCHIVE_7Z"
+        ls -lh "$ARCHIVE_7Z" | tee -a "$LOG"
+
+    elif command -v zstd >/dev/null 2>&1; then
+        log "[NEO4J-EXPORT] Compressing with zstd: $ARCHIVE_ZST"
+
+        if ! nice -n 10 ionice -c2 -n7 \
+            zstd -19 -T0 -f "$DUMP_FILE" -o "$ARCHIVE_ZST"; then
+            log "[NEO4J-EXPORT] zstd compression failed"
+            return 1
+        fi
+
+        log "[NEO4J-EXPORT] Done: $ARCHIVE_ZST"
+        ls -lh "$ARCHIVE_ZST" | tee -a "$LOG"
+
+    else
+        log "[NEO4J-EXPORT] Compressing with gzip: $ARCHIVE_GZ"
+
+        if ! nice -n 10 ionice -c2 -n7 \
+            gzip -9 -c "$DUMP_FILE" > "$ARCHIVE_GZ"; then
+            log "[NEO4J-EXPORT] gzip compression failed"
+            return 1
+        fi
+
+        log "[NEO4J-EXPORT] Done: $ARCHIVE_GZ"
+        ls -lh "$ARCHIVE_GZ" | tee -a "$LOG"
+    fi
+
+    rm -rf "$DUMP_DIR"
+    log "[NEO4J-EXPORT] Removed temporary Neo4j dump"
+}
+
 log "Pipeline starting (cron=${CRON_MODE:-0})"
 
 #rm -rf /mnt/ssd/genshin_rag/data/* &&  rm -rf rag/logs/* && rm -rf rag/chunks_kaggle && rm -rf rag/data/*
@@ -190,9 +333,21 @@ if ! python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAIS
 fi
 log "Crawling, repair, audit, FAISS, FTS5, and parent-child records builds. Done"
 
+#log "Creating Neo4j records"
+#python3 rag/main.py --DB_CRAWL=False --GRAPH_SYNC=True --GRAPH_FORCE=True --GRAPH_PRUNE=True
+#log "Neo4j graph records finished"
+
 log "Compressing compact SQLite DB snapshot"
 compress_db_snapshot || log "[EXPORT] DB compression failed — continuing"
 log "DB compression step finished"
+
+log "Compressing Neo4j graph snapshot"
+compress_neo4j_snapshot || log "[EXPORT] Neo4j compression failed — continuing"
+log "Neo4j compression step finished"
+
+#log "Creating SPLADE records"
+#python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --SPLADE_MIGRATE=True --SPLADE_OVERWRITE=False --BACKEND=ollama || log "[SPLADE] Error check run_pipeline.log for more info"
+#log "SPLADE records finished"
 
 log "Extracting chunks"
 python3 kaggle_tools/extract_chunks.py
@@ -201,14 +356,6 @@ log "Done extracting chunks"
 log "Uploading to Kaggle"
 python3 kaggle_tools/upload.py --dataset-slug "AFOEK88/genshin-rag-chunks" --dataset-title "Genshin RAG Chunks Data" || log "Failed upload to Kaggle, try again"
 log "Done upload"
-
-#log "Creating SPLADE records"
-#python3 rag/main.py --DB_CRAWL=False --DB_AUDIT=False --SPLADE_MIGRATE=True --SPLADE_OVERWRITE=False --BACKEND=ollama || log "[SPLADE] Error check run_pipeline.log for more info"
-#log "SPLADE records finished"
-
-#log "Creating Neo4j records"
-#python3 rag/main.py --DB_CRAWL=False --GRAPH_SYNC=True --GRAPH_FORCE=True --GRAPH_PRUNE=True
-#log "Neo4j graph records finished"
 
 log "Test first local embedding"
 python3 rag/test.py --question "What is Zhongli signature weapon?" --retriever hybrid --direct_top_k 20 --backend ollama || log "Test failed — continuing"
