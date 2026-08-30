@@ -342,8 +342,8 @@ def upsert_relationship(client, source: str, target: str, relation_type: str, ch
     confidence=float(confidence))
 
 
-def process_graph_chunk(cfg: dict, client, row: dict, *, content_hash: str, extractor_signature: str, filter_score: int=0) -> dict:
-    extraction=extract_graph_from_chunk(cfg, title=str(row["title"]), text=str(row["text"]), filter_score=filter_score,)
+def process_graph_chunk(cfg, client, row, *, content_hash, extractor_signature, filter_score=0, filter_groups):
+    extraction=extract_graph_from_chunk(cfg, title=str(row["title"]), text=str(row["text"]), filter_score=filter_score, filter_groups=filter_groups,)
     replace_graph_chunk(client, row, extraction, content_hash=content_hash, extractor_signature=extractor_signature,)
     return extraction
 
@@ -462,7 +462,7 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
                 continue
 
             try:
-                extraction=process_graph_chunk(cfg, client, row, content_hash=content_hash, extractor_signature=extractor_sig, filter_score=filter_result.score)
+                extraction=process_graph_chunk(cfg, client, row, content_hash=content_hash, extractor_signature=extractor_sig, filter_score=filter_result.score, filter_groups=filter_result.groups)
             except Exception:
                 failed+=1
                 log.exception("[GRAPH] failed chunk_id=%s title=%r", chunk_id, row["title"])
