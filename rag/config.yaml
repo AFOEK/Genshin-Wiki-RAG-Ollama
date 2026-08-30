@@ -68,6 +68,8 @@ neo4j:
   extraction_temperature: 0.0
   extraction_num_ctx: 8192
   extraction_num_predict: 2048
+  extraction_max_entities: 45
+  extraction_max_relationships: 35
 
 turbovec:
   path: data/turbovec

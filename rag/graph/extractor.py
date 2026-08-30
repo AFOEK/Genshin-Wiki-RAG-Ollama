@@ -814,9 +814,9 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
     try:
         data=parse_extraction_json(raw)
     except (json.JSONDecodeError, ValueError):
-        log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, num_predict,)
         retry_predict=min(num_predict * 2, 16384 * 2)
         retry_ctx=max(num_ctx, retry_predict + 2048)
+        log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, retry_predict,)
         raw=generate(cfg, prompt, model_override=model, options_override={
             "temperature":temperature,
             "num_ctx":retry_ctx,
