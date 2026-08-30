@@ -88,7 +88,7 @@ RELATION_SIGNAL_PATTERNS = {
 }
 
 
-_COMPILED = {group: tuple((score, re.compile(pattern, re.IGNORECASE)) for score, pattern in patterns) for group, patterns in RELATION_SIGNAL_PATTERNS.items}
+_COMPILED = {group: tuple((score, re.compile(pattern, re.IGNORECASE)) for score, pattern in patterns) for group, patterns in RELATION_SIGNAL_PATTERNS.items()}
 
 
 def cheap_graph_filter(text: str, *, title: str = "", min_score: int = 2) -> GraphFilterResult:
