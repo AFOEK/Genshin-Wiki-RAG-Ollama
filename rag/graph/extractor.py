@@ -578,6 +578,34 @@ Rules:
 - When inverse relation types exist, emit only the direction most directly expressed by the text.
 - Do not emit both A CREATED B and B CREATED_BY A for the same fact.
 
+Graph size and relevance constraints:
+- Return at most 45 entities.
+- Return at most 35 relationships.
+- These are strict maximums, not targets.
+- If more facts are supported, select the most important and retrieval-useful relationships.
+- Prioritize named entities and explicit relationships.
+- Omit incidental entities that do not contribute meaningful graph connectivity.
+- Include at most 3 aliases per entity.
+
+Gameplay and lore rules:
+- Distinguish gameplay mechanics from in-universe lore.
+- Do not infer lore relationships from gameplay mechanics unless the text explicitly presents them as lore.
+- Party compatibility, team recommendations, build recommendations, damage interactions, banner placement, and gameplay synergy do not imply friendship, alliance, membership, or other lore relationships.
+- A character using an element or weapon type as a gameplay property may support USES_ELEMENT or USES_WEAPON_TYPE, but does not by itself imply ownership of a specific weapon, Vision, Delusion, or Gnosis.
+- Item requirements, drops, crafting materials, rewards, and ascension relationships should use gameplay-specific relation types rather than generic ASSOCIATED_WITH.
+
+Confidence scoring:
+- 0.98-1.00: Directly and unambiguously stated.
+- 0.95-0.97: Explicitly supported with essentially no ambiguity.
+- 0.90-0.94: Clearly supported but expressed indirectly.
+- 0.85-0.89: Supported with minor ambiguity or simple interpretation.
+- Below 0.85: Too uncertain for extraction; omit the relationship.
+
+Important:
+- Do not lower confidence merely because the relationship is unusual.
+- If the text directly states the relationship, confidence should normally be at least 0.95.
+- Do not assign high confidence to relationships inferred from outside knowledge.
+
 Semantic disambiguation:
 - PRECEDES and FOLLOWS are chronological relations only. FOLLOWS means occurs after, not "is a follower of".
 - MENTOR_OF, STUDENT_OF, and DISCIPLE_OF describe teaching relationships.
@@ -627,6 +655,41 @@ Semantic disambiguation:
 - If there are no supported relationships, return an empty "relationships" list.
 - If there are no supported entities, return empty "entities" and "relationships" lists.
 - Do not include Markdown fences or explanatory text.
+
+Relationship quality rules:
+- Prefer one precise relationship over several weaker relationships expressing the same fact.
+- Do not emit RELATED_TO or ASSOCIATED_WITH in addition to a more specific relationship for the same source and target.
+- Do not emit a stronger relationship when only a weaker one is supported.
+- Do not upgrade AFFILIATED_WITH to MEMBER_OF without explicit evidence of membership.
+- Do not upgrade OPPOSES to FOUGHT without explicit evidence of combat.
+- Do not upgrade FOUGHT to DEFEATED or KILLED without explicit evidence of the outcome.
+- Do not upgrade CARRIES to OWNS or WIELDS without explicit evidence.
+- Do not upgrade APPEARS_IN to PARTICIPATED_IN merely because an entity is mentioned or shown.
+- Do not use RELATED_TO simply because two entities share a category, element, location, faction, quest, or event.
+- Never output self-relations where source and target refer to the same canonical entity.
+
+Evidence and interpretation rules:
+- Treat negation as authoritative. If the text states that A is not related to B in a particular way, do not emit that relationship.
+- Do not convert speculation, rumors, theories, possibilities, jokes, metaphors, or fan interpretations into factual relationships.
+- Statements containing words such as "may", "might", "possibly", "rumored", "believed", "suggested", "presumed", "apparently", or "unknown" require caution and should not receive high confidence unless the underlying relationship is independently stated as fact in the supplied text.
+- Do not infer a relationship solely because two entities occur in the same sentence, paragraph, quest, event, location, table, or list.
+- Mere co-occurrence is not sufficient for ASSOCIATED_WITH or RELATED_TO.
+- Do not infer friendship, alliance, hostility, romance, family, membership, employment, ownership, or allegiance from proximity or shared participation alone.
+- Do not infer family relationships from matching surnames, clan names, titles, species, or organizations.
+- Do not infer ownership from grammatical possession alone when the phrase describes association, origin, naming, or authorship rather than actual ownership.
+- Do not infer hierarchy merely because one entity has a higher title, rank, or status than another.
+- Do not infer causality from chronological order alone.
+- Do not infer location from where an entity is merely mentioned, encountered temporarily, or discussed.
+- Do not infer current residence from birthplace, origin, nationality, or temporary presence.
+
+Temporal rules:
+- Distinguish current relationships from historical relationships whenever the text makes the distinction explicit.
+- Words such as "former", "previously", "once", "used to", "during", "before", and "after" must not be ignored.
+- Do not represent a former membership, employment, title, residence, or allegiance as necessarily current.
+- Do not convert a temporary relationship into a permanent one.
+- PRECEDES and FOLLOWS describe chronology only.
+- CONTEMPORARY_OF requires explicit or clearly established temporal overlap.
+- SUCCESSOR_OF, PREDECESSOR_OF, and SUCCEEDED_BY describe succession, not merely chronological order.
 """.strip()
 
 def parse_extraction_json(raw: str) -> dict[str, Any]:
@@ -729,8 +792,8 @@ def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> 
 
 def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> dict[str, Any]:
     ncfg = cfg.get("neo4j", {}) or {}
-    num_predict = int(ncfg.get("extraction_num_predict", 2048))
-    num_ctx = int(ncfg.get("extraction_num_ctx",4096))
+    num_predict = int(ncfg.get("extraction_num_predict", 4096))
+    num_ctx = int(ncfg.get("extraction_num_ctx", 16384))
     model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
     temperature = float(ncfg.get("extraction_temperature", 0.0))
     min_confidence = float(ncfg.get("min_relation_confidence", 0.85))
@@ -752,7 +815,7 @@ def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> d
         data=parse_extraction_json(raw)
     except (json.JSONDecodeError, ValueError):
         log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, num_predict,)
-        retry_predict=min(num_predict * 2, 4096)
+        retry_predict=min(num_predict * 2, 16384 * 2)
         retry_ctx=max(num_ctx, retry_predict + 2048)
         raw=generate(cfg, prompt, model_override=model, options_override={
             "temperature":temperature,
