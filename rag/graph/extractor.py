@@ -579,13 +579,14 @@ Rules:
 - Do not emit both A CREATED B and B CREATED_BY A for the same fact.
 
 Graph size and relevance constraints:
-- Return at most 45 entities.
-- Return at most 35 relationships.
-- These are strict maximums, not targets.
-- If more facts are supported, select the most important and retrieval-useful relationships.
-- Prioritize named entities and explicit relationships.
+- Prefer at most 25 entities and 20 relationships.
+- These are preferred limits, not mandatory targets.
+- If additional directly supported relationships are important for understanding the article, they may be included.
+- Never exceed 40 entities or 30 relationships.
+- Prioritize high-confidence, retrieval-useful relationships.
 - Omit incidental entities that do not contribute meaningful graph connectivity.
-- Include at most 3 aliases per entity.
+- Omit incidental entities and redundant relationships first.
+- Include at most 5 aliases per entity.
 
 Gameplay and lore rules:
 - Distinguish gameplay mechanics from in-universe lore.
@@ -790,37 +791,55 @@ def normalize_extraction(data: dict[str, Any], min_confidence: float = 0.85) -> 
         "relationships": relationships,
     }
 
-def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str) -> dict[str, Any]:
+def run_graph_model(cfg: dict[str, Any], *, prompt: str, model: str, temperature: float, num_ctx: int, num_predict: int) -> str:
+    return generate(
+        cfg, prompt, model_override=model,
+        options_override={
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
+        },
+        think_override=False,
+    ).strip()
+
+
+def extract_graph_from_chunk(cfg: dict[str, Any], *, title: str, text: str, filter_score: int = 0) -> dict[str, Any]:
     ncfg = cfg.get("neo4j", {}) or {}
-    num_predict = int(ncfg.get("extraction_num_predict", 4096))
-    num_ctx = int(ncfg.get("extraction_num_ctx", 16384))
-    model = str(ncfg.get("extraction_model", "qwen3.6:27b"))
+    primary_model = str(ncfg.get("extraction_model", "qwen3.5:9b"))
+    fallback_model = str(ncfg.get("fallback_model", "qwen3.8:27b"))
     temperature = float(ncfg.get("extraction_temperature", 0.0))
     min_confidence = float(ncfg.get("min_relation_confidence", 0.85))
+    primary_ctx = int(ncfg.get("extraction_num_ctx", 8192))
+    primary_predict = int(ncfg.get("extraction_num_predict", 2048))
+    fallback_ctx = int(ncfg.get("fallback_num_ctx", 16384))
+    fallback_predict = int(ncfg.get("fallback_num_predict", 4096))
+    fallback_on_empty = bool(ncfg.get("fallback_on_empty", True))
+    fallback_min_score = int(ncfg.get("fallback_min_score", 3))
     prompt = build_extraction_prompt(title, text)
-    raw = generate(cfg, prompt, model_override=model, options_override={
-        "temperature": temperature,
-        "num_ctx": num_ctx,
-        "num_predict": num_predict
-    }, 
-    think_override=False).strip()
-
-    if not raw:
-        return {
-            "entities": [],
-            "relationships": []
-        }
 
     try:
-        data=parse_extraction_json(raw)
-    except (json.JSONDecodeError, ValueError):
-        retry_predict=min(num_predict * 2, 16384 * 2)
-        retry_ctx=max(num_ctx, retry_predict + 2048)
-        log.warning("[GRAPH] JSON parse failed; retrying with larger output budget title=%r old_num_predict=%d", title, retry_predict,)
-        raw=generate(cfg, prompt, model_override=model, options_override={
-            "temperature":temperature,
-            "num_ctx":retry_ctx,
-            "num_predict":retry_predict
-        }, think_override=False).strip()
-        data=parse_extraction_json(raw)
-    return normalize_extraction(data, min_confidence)
+        raw = run_graph_model(cfg, prompt=prompt, model=primary_model, temperature=temperature, num_ctx=primary_ctx, num_predict=primary_predict,)
+        if not raw:
+            raise ValueError("Primary extractor returned empty output")
+
+        extraction = normalize_extraction(parse_extraction_json(raw), min_confidence)
+
+    except (json.JSONDecodeError, ValueError) as exc:
+        log.warning("[GRAPH] primary extractor failed title=%r model=%s score=%d error=%s; using fallback=%s", title, primary_model, filter_score, exc, fallback_model,)
+        return run_fallback_graph_model(cfg, prompt=prompt, title=title, model=fallback_model, temperature=temperature, num_ctx=fallback_ctx, num_predict=fallback_predict, min_confidence=min_confidence,)
+
+    if (fallback_on_empty and not extraction["relationships"] and filter_score >= fallback_min_score):
+        log.info("[GRAPH] primary returned no accepted relations title=%r model=%s score=%d; fallback=%s", title, primary_model, filter_score, fallback_model,)
+        return run_fallback_graph_model(cfg, prompt=prompt, title=title, model=fallback_model, temperature=temperature, num_ctx=fallback_ctx, num_predict=fallback_predict, min_confidence=min_confidence,)
+
+    return extraction
+
+
+def run_fallback_graph_model(cfg: dict[str, Any], *, prompt: str, title: str, model: str, temperature: float, num_ctx: int, num_predict: int, min_confidence: float) -> dict[str, Any]:
+    raw = run_graph_model(cfg, prompt=prompt, model=model, temperature=temperature, num_ctx=num_ctx, num_predict=num_predict,)
+    if not raw:
+        raise ValueError(f"Fallback extractor returned empty output: {model}")
+
+    extraction = normalize_extraction(parse_extraction_json(raw), min_confidence)
+    log.info("[GRAPH] fallback completed title=%r model=%s entities=%d relationships=%d", title, model, len(extraction["entities"]), len(extraction["relationships"]),)
+    return extraction

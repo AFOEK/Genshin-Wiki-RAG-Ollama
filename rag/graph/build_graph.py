@@ -14,68 +14,11 @@ from .utils_graph import entity_key
 from .extractor import extract_graph_from_chunk
 from .neo4j_client import Neo4jClient
 from .schema import ensure_schema
+from .prefilter import cheap_graph_filter
 from core.paths import resolve_db_path
 from utils.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
-
-RELATION_MARKER_GROUPS={
-    "family":(
-        "father", "mother", "parent", "son", "daughter",
-        "child", "brother", "sister", "sibling", "husband",
-        "wife", "spouse", "ancestor", "descendant", "twin",
-    ),
-    "social":(
-        "friend", "friends", "companion", "ally", "allies",
-        "partner", "rival", "enemy", "enemies",
-    ),
-    "mentorship":(
-        "master", "mentor", "teacher", "student",
-        "disciple", "apprentice", "follower",
-    ),
-    "affiliation":(
-        "affiliation", "affiliated with", "member", "member of",
-        "belongs to", "joined", "leader", "founder", "founded",
-        "commander", "captain", "general", "chief", "director",
-        "boss"
-    ),
-    "service":(
-        "serves", "served", "serves under", "served under",
-        "works for", "worked for", "subordinate", "envoy",
-        "agent", "representative", "retainer",
-    ),
-    "creation":(
-        "created", "created by", "creator", "made by",
-        "forged by", "invented", "inventor", "owner",
-        "owned by", "wielder", "wielded by",
-    ),
-    "location":(
-        "located in", "located at", "resides in", "lives in",
-        "native of", "originated in", "rules", "ruled",
-        "governs", "governed", "protects", "guardian",
-    ),
-    "conflict":(
-        "fought", "fought against", "battle", "defeated",
-        "defeated by", "killed", "killed by", "opposed",
-        "opposes", "betrayed",
-    ),
-    "divine":(
-        "god", "goddess", "deity", "archon", "worship",
-        "worships", "worshipped", "divine", "celestia",
-    ),
-    "association":(
-        "associated with", "connected to", "related to",
-        "relationship", "successor", "predecessor",
-        "succeeded", "replaced",
-    ),
-    "event":(
-        "participated in", "involved in", "appeared in",
-        "takes part in", "during the",
-    ),
-}
-
-RELATION_MARKERS=tuple(marker for markers in RELATION_MARKER_GROUPS.values() for marker in markers)
-RELATION_PATTERN=re.compile(r"\b(?:" + "|".join(re.escape(marker) for marker in sorted(RELATION_MARKERS, key=len, reverse=True)) + r")\b", flags=re.IGNORECASE)
 
 def graph_source_hash(row:dict)->str:
     payload={
@@ -102,14 +45,17 @@ def graph_extractor_signature(cfg: dict) -> str:
 
     payload={
         "extractor_sha256":file_sha256(graph_dir/"extractor.py"),
+        "prefilter_sha256":file_sha256(graph_dir/"prefilter.py"),
         "utils_sha256":file_sha256(graph_dir/"utils_graph.py"),
         "schema_sha256":file_sha256(graph_dir/"schema.py"),
-        "prepare_extraction_sha256":hashlib.sha256(
-            inspect.getsource(prepare_graph_extraction).encode("utf-8")
-        ).hexdigest(),
-        "relation_markers":RELATION_MARKERS,
-        "model":str(ncfg.get("extraction_model", "qwen3.6:27b")),
+        "prepare_extraction_sha256":hashlib.sha256(inspect.getsource(prepare_graph_extraction).encode("utf-8")).hexdigest(),
+        "primary_model":str(ncfg.get("extraction_model","qwen3.5:9b")),
+        "fallback_model":str(ncfg.get("fallback_model","qwen3.8:27b")),
         "temperature":float(ncfg.get("extraction_temperature",0.0)),
+        "min_confidence":float(ncfg.get("min_relation_confidence",0.85)),
+        "prefilter":ncfg.get("prefilter",{}),
+        "fallback_on_empty":bool(ncfg.get("fallback_on_empty",True)),
+        "fallback_min_score":int(ncfg.get("fallback_min_score",3)),
         "source":str(ncfg.get("source", "genshin_wiki")),
     }
 
@@ -210,18 +156,6 @@ def prepare_graph_extraction(extraction: dict) -> tuple[list[dict], list[dict]]:
         })
 
     return list(entities_by_key.values()),relationships
-
-def relation_marker_hits(text: str) -> set[str]:
-    lowered=text.casefold()
-    hits=set()
-    for group,markers in RELATION_MARKER_GROUPS.items():
-        if any(re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in markers):
-            hits.add(group)
-
-    return hits
-
-def likely_graph_chunk(text: str) -> bool:
-    return bool(relation_marker_hits(text))
 
 def replace_graph_chunk(client, row:dict, extraction:dict, *, content_hash:str, extractor_signature:str) -> None:
     entities, relationships=prepare_graph_extraction(extraction)
@@ -408,10 +342,10 @@ def upsert_relationship(client, source: str, target: str, relation_type: str, ch
     confidence=float(confidence))
 
 
-def process_graph_chunk(cfg: dict, client, row: dict, *, content_hash: str, extractor_signature: str) -> dict:
-        extraction=extract_graph_from_chunk(cfg, title=str(row["title"]), text=str(row["text"]),)
-        replace_graph_chunk(client, row, extraction, content_hash=content_hash, extractor_signature=extractor_signature,)
-        return extraction
+def process_graph_chunk(cfg: dict, client, row: dict, *, content_hash: str, extractor_signature: str, filter_score: int=0) -> dict:
+    extraction=extract_graph_from_chunk(cfg, title=str(row["title"]), text=str(row["text"]), filter_score=filter_score,)
+    replace_graph_chunk(client, row, extraction, content_hash=content_hash, extractor_signature=extractor_signature,)
+    return extraction
 
 def delete_graph_chunks(client, chunk_ids:list[int]) -> None:
     if not chunk_ids:
@@ -473,7 +407,10 @@ def set_pipeline_meta(conn: sqlite3.Connection, namespace: str, key: str, value:
 def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool = False, prune: bool = True) -> None:
     ensure_pipeline_meta_table(conn)
     ncfg=cfg.get("neo4j",{}) or {}
-    batch_size=int(ncfg.get("sync_batch_size",500))
+    prefilter_cfg=ncfg.get("prefilter", {}) or {}
+    prefilter_enabled=bool(prefilter_cfg.get("enabled", True))
+    prefilter_min_score=int(prefilter_cfg.get("min_score", 2))
+    batch_size=int(ncfg.get("sync_batch_size", 500))
     extractor_sig=graph_extractor_signature(cfg)
     previous_sig=get_pipeline_meta(conn, "neo4j", "extractor_signature")
     if previous_sig is None:
@@ -502,14 +439,18 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
             text=str(row["text"])
             content_hash=graph_source_hash(row)
             state=existing_states.get(chunk_id)
-            hits=relation_marker_hits(text)
-            log.info("[GRAPH] chunk=%s relation_markers=%s", chunk_id, sorted(hits))
-            if not hits:
+            filter_result=cheap_graph_filter(text, title=str(row["title"]), min_score=prefilter_min_score)
+
+            if prefilter_enabled and not filter_result.eligible:
                 ineligible+=1
                 if state is not None:
-                    delete_graph_chunks(client, [chunk_id])
+                    delete_graph_chunks(client,[chunk_id])
                     removed_ineligible+=1
+
+                log.debug("[GRAPH] skipped chunk=%s score=%d groups=%s", chunk_id, filter_result.score, filter_result.groups,)
                 continue
+
+            log.debug("[GRAPH] eligible chunk=%s score=%d groups=%s hits=%s", chunk_id, filter_result.score, filter_result.groups, filter_result.hits,)
 
             if (
                 not force
@@ -521,7 +462,7 @@ def build_graph(cfg: dict, conn, client, limit: int | None = None, force: bool =
                 continue
 
             try:
-                extraction=process_graph_chunk(cfg, client, row, content_hash=content_hash, extractor_signature=extractor_sig)
+                extraction=process_graph_chunk(cfg, client, row, content_hash=content_hash, extractor_signature=extractor_sig, filter_score=filter_result.score)
             except Exception:
                 failed+=1
                 log.exception("[GRAPH] failed chunk_id=%s title=%r", chunk_id, row["title"])
