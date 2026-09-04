@@ -120,7 +120,7 @@ def make_no_evidence_result(bundle: dict) -> dict:
         "oracle": {
             "answerable": False,
             "answer": "",
-            "confidence": 1.0,
+            "confidence": 0.0,
             "evidence_judgements": [],
             "reason": "No independent internet evidence was retrieved.",
         },
@@ -130,7 +130,7 @@ def make_no_evidence_result(bundle: dict) -> dict:
             "assistant_has_unsupported_extras": False,
             "positive_context_supports_answer": False,
             "negative_results": [],
-            "confidence": 1.0,
+            "confidence": 0.0,
             "verdict": "not_found",
             "reason": "Dataset audit skipped because no independent internet evidence was retrieved.",
         },
@@ -183,7 +183,8 @@ def load_completed_ids(path: Path) -> set[str]:
                 continue
 
             record_id = str(record.get("record_id", "")).strip()
-            if record_id:
+            verdict = str((record.get("audit", {}) or {}).get("verdict", "")).strip()
+            if record_id and verdict != "not_found":
                 completed.add(record_id)
 
     return completed

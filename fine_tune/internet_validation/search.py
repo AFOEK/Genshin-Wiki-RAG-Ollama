@@ -39,6 +39,7 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
     session = requests.Session()
     candidates: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
+    rejected_urls = 0
 
     for domain in policy.search_domains:
         query = f"site:{domain} Genshin Impact {question}"
@@ -58,10 +59,15 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
         if "json" not in content_type:
             raise RuntimeError(f"[SearXNG] did not return JSON: status={response.status_code}, content_type={content_type!r}, body={response.text[:300]!r}")
         payload = response.json()
+        raw_results = payload.get("results", [])
+        log.info("[SEARCH_DEBUG] source=%s domain=%s raw=%d unresponsive=%s", policy.name, domain, len(raw_results), payload.get("unresponsive_engines", []),)
         for search_rank, result in enumerate(payload.get("results", []), start=1):
             url = str(result.get("url", "")).strip()
+            if not url or url in seen_urls:
+                continue
 
-            if not url or url in seen_urls or not is_allowed_url(url, policy):
+            if not is_allowed_url(url, policy):
+                rejected_urls += 1
                 continue
 
             seen_urls.add(url)
@@ -80,6 +86,7 @@ def search_one_source(*, question: str, policy: SourcePolicy, searxng_url: str, 
             if len(candidates) >= results_per_source:
                 break
 
+        log.info("[SEARCH_DEBUG] source=%s candidates=%d rejected=%d", policy.name, len(candidates), rejected_urls)
         if len(candidates) >= results_per_source:
             break
 
