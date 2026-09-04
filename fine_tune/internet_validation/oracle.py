@@ -133,5 +133,6 @@ def run_blind_oracle(cfg: dict, *, question: str, evidence: list[dict]) -> dict:
         schema=ORACLE_SCHEMA,
         timeout_s=float(validation_cfg.get("ollama_timeout_s", 240)),
         num_ctx=int(validation_cfg.get("ollama_num_ctx", 8192)),
-        num_predict=int(validation_cfg.get("oracle_num_predict", 512)),
+        num_predict=int(validation_cfg.get("oracle_num_predict", 768)),
+        num_thread=int(validation_cfg.get("ollama_num_thread", 32)),
     )

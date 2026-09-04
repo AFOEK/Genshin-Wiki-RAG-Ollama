@@ -14,7 +14,7 @@ from audit import run_dataset_audit
 from dataset_loader import iter_dataset_bundles
 from oracle import run_blind_oracle
 from policy_loader import load_source_policies
-from search import collect_parallel_evidence
+from search import collect_parallel_evidence, SearchUnavailableError
 from utils.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
@@ -216,6 +216,9 @@ def main() -> None:
                 continue
             try:
                 result = validate_bundle(cfg, bundle=bundle, policies=policies, executor=executor)
+            except SearchUnavailableError:
+                log.exception("[VALIDATOR] Search backend unavailabe; stopping run")
+                break
             except Exception:
                 log.exception("Validation failed ID=%s", bundle["record_id"])
                 continue
