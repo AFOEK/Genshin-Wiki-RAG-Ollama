@@ -5,6 +5,7 @@ import time
 import requests
 import threading
 
+from urllib.parse import urlparse, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from bs4 import BeautifulSoup
@@ -28,8 +29,41 @@ def extract_page_text(html: str, *, max_chars: int) -> str:
     text = " ".join(soup.get_text(separator=" ", strip=True).split())
     return text[:max_chars]
 
+def fetch_fandom_api(*, session: requests.Session, url: str, timeout_s: float, max_chars: int) -> tuple[str, str]:
+    parsed = urlparse(url)
+    if not parsed.path.startswith("/wiki/"):
+        raise ValueError(f"Unsupported Fandom URL: {url}")
+
+    page_title = unquote(parsed.path.removeprefix("/wiki/"))
+    api_url = f"{parsed.scheme}://{parsed.netloc}/api.php"
+    response = session.get(
+        api_url,
+        params={
+            "action": "parse",
+            "page": page_title,
+            "prop": "text",
+            "format": "json",
+            "formatversion": 2,
+        },
+        timeout=timeout_s,
+        headers={"User-Agent": "GenshinDatasetValidator/1.0"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    html = str((payload.get("parse", {}) or {}).get("text", ""))
+
+    if not html:
+        raise RuntimeError(f"Fandom API returned no page text for {page_title!r}")
+
+    return url, extract_page_text(html, max_chars=max_chars)
+
 def fetch_result_page(*, session: requests.Session, url: str, policy: SourcePolicy, timeout_s: float, max_chars: int) -> tuple[str, str]:
     response = session.get(url, timeout=timeout_s, allow_redirects=True, headers={"User-Agent": "GenshinDatasetValidator/1.0"})
+    if response.status_code == 403:
+        parsed = urlparse(url)
+        if (parsed.hostname or "").lower().endswith("fandom.com"):
+            return fetch_fandom_api(session=session, url=url, timeout_s=timeout_s, max_chars=max_chars)
+
     response.raise_for_status()
     final_url = response.url
     if not is_allowed_url(final_url, policy):
@@ -37,7 +71,6 @@ def fetch_result_page(*, session: requests.Session, url: str, policy: SourcePoli
 
     content_type = response.headers.get("content-type", "").lower()
     text = (extract_page_text(response.text, max_chars=max_chars) if "text/html" in content_type else response.text[:max_chars])
-
     return final_url, text
 
 def wait_for_search_slot(min_interval_s: float) -> None:
