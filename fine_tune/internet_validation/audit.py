@@ -217,4 +217,5 @@ def run_dataset_audit(cfg: dict, *, oracle_result: dict, bundle: dict) -> dict:
         timeout_s=float(validation_cfg.get("ollama_timeout_s", 240)),
         num_ctx=int(validation_cfg.get("ollama_num_ctx", 8192)),
         num_predict=int(validation_cfg.get("audit_num_predict", 1024)),
+        num_thread=int(validation_cfg.get("ollama_num_thread", 32)),
     )
