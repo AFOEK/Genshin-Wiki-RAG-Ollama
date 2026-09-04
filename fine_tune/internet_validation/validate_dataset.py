@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import yaml
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -140,9 +141,24 @@ def make_no_evidence_result(bundle: dict) -> dict:
         "validation_method": "searxng_ollama_blind_v1",
     }
 
+def collect_evidence_with_retry(*, executor, question, policies, validation_cfg):
+    attempts = int(validation_cfg.get("search_retry_attempts", 3))
+    base_delay = float(validation_cfg.get("search_retry_backoff_s", 60))
+    for attempt in range(attempts):
+        try:
+            return collect_parallel_evidence(executor=executor, question=question, policies=policies, validation_cfg=validation_cfg,)
+        except SearchUnavailableError:
+            if attempt + 1 >= attempts:
+                raise
+
+            delay = base_delay * (2 ** attempt)
+            log.warning("[VALIDATOR] Search unavailable; retrying in %.0fs (%d/%d)", delay, attempt + 1, attempts,)
+            time.sleep(delay)
+    raise SearchUnavailableError("Search retries exhausted")
+
 def validate_bundle(cfg: dict, *, bundle: dict, policies: list, executor: ThreadPoolExecutor) -> dict:
     validation_cfg = cfg["internet_validation"]
-    evidence = collect_parallel_evidence(executor=executor, question=bundle["question"], policies=policies, validation_cfg=validation_cfg)
+    evidence = collect_evidence_with_retry(executor=executor, question=bundle["question"], policies=policies, validation_cfg=validation_cfg)
     if not evidence:
         log.info("[DATASET_VALIDATION] No internet evidence ID=%s; skipping oracle/audit", bundle["record_id"])
         return make_no_evidence_result(bundle)
@@ -216,8 +232,8 @@ def main() -> None:
                 continue
             try:
                 result = validate_bundle(cfg, bundle=bundle, policies=policies, executor=executor)
-            except SearchUnavailableError:
-                log.exception("[VALIDATOR] Search backend unavailabe; stopping run")
+            except SearchUnavailableError as exc:
+                log.exception("[VALIDATOR] Search backend unavailable; stopping run: %s", exc)
                 break
             except Exception:
                 log.exception("Validation failed ID=%s", bundle["record_id"])
