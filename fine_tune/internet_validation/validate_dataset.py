@@ -96,16 +96,59 @@ def evaluate_validation(*, validation_cfg: dict, bundle: dict, evidence: list[di
     gates["passed"] = all(gates.values())
     return gates
 
+def make_no_evidence_result(bundle: dict) -> dict:
+    gates = {
+        "oracle_answerable": False,
+        "oracle_confident": False,
+        "internet_evidence_supported": False,
+        "internet_not_contradicted": True,
+        "audit_passed": False,
+        "audit_confident": False,
+        "reference_supported": False,
+        "assistant_supported": False,
+        "no_unsupported_extras": False,
+        "positive_supported": False,
+        "negatives_valid": False,
+        "passed": False,
+    }
+
+    return {
+        "record_id": bundle["record_id"],
+        "retrieval_record_id": bundle["retrieval_record_id"],
+        "question": bundle["question"],
+        "evidence": [],
+        "oracle": {
+            "answerable": False,
+            "answer": "",
+            "confidence": 1.0,
+            "evidence_judgements": [],
+            "reason": "No independent internet evidence was retrieved.",
+        },
+        "audit": {
+            "reference_answer_supported": False,
+            "assistant_answer_supported": False,
+            "assistant_has_unsupported_extras": False,
+            "positive_context_supports_answer": False,
+            "negative_results": [],
+            "confidence": 1.0,
+            "verdict": "not_found",
+            "reason": "Dataset audit skipped because no independent internet evidence was retrieved.",
+        },
+        "external_verified": False,
+        "validation_gates": gates,
+        "human_verified": False,
+        "validation_method": "searxng_ollama_blind_v1",
+    }
+
 def validate_bundle(cfg: dict, *, bundle: dict, policies: list, executor: ThreadPoolExecutor) -> dict:
     validation_cfg = cfg["internet_validation"]
-
-    evidence = collect_parallel_evidence(
-        executor=executor,
-        question=bundle["question"],
-        policies=policies,
-        validation_cfg=validation_cfg)
-
+    evidence = collect_parallel_evidence(executor=executor, question=bundle["question"], policies=policies, validation_cfg=validation_cfg)
+    if not evidence:
+        log.info("[DATASET_VALIDATION] No internet evidence ID=%s; skipping oracle/audit", bundle["record_id"])
+        return make_no_evidence_result(bundle)
     oracle_result = run_blind_oracle(cfg, question=bundle["question"], evidence=evidence)
+    # if not bool(oracle_result.get("answerable", False)):
+    #     return make_unanswerable_result(bundle, evidence, oracle_result)
     audit_result = run_dataset_audit(cfg, oracle_result=oracle_result, bundle=bundle,)
     validation_gates = evaluate_validation(validation_cfg=validation_cfg, bundle=bundle, evidence=evidence, oracle=oracle_result, audit=audit_result,)
 

@@ -71,7 +71,7 @@ SYSTEM_PROMPT=(
     "Do not infer unsupported details."
 )
 
-def ollama_structured(*, ollama_url: str, model: str, system: str, prompt: str, schema: dict, timeout_s: float = 600) -> dict:
+def ollama_structured(*, ollama_url: str, model: str, system: str, prompt: str, schema: dict, timeout_s: float=240, num_ctx: int=8192, num_predict: int=512) -> dict:
     response = requests.post(
         f"{ollama_url.rstrip('/')}/api/chat",
         json={
@@ -93,6 +93,8 @@ def ollama_structured(*, ollama_url: str, model: str, system: str, prompt: str, 
             "options": {
                 "temperature": 0.0,
                 "seed": 40151652,
+                "num_ctx": num_ctx,
+                "num_predict": num_predict,
             },
         },
         timeout=timeout_s,
@@ -128,4 +130,7 @@ def run_blind_oracle(cfg: dict, *, question: str, evidence: list[dict]) -> dict:
         system=SYSTEM_PROMPT,
         prompt=prompt,
         schema=ORACLE_SCHEMA,
+        timeout_s=float(validation_cfg.get("ollama_timeout_s", 240)),
+        num_ctx=int(validation_cfg.get("ollama_num_ctx", 8192)),
+        num_predict=int(validation_cfg.get("oracle_num_predict", 512)),
     )
