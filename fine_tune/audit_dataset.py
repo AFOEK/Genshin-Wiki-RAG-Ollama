@@ -61,6 +61,8 @@ def open_db(path: Path) -> sqlite3.Connection:
             source TEXT,
             question TEXT,
             normalized_question TEXT,
+            reference_answer TEXT,
+            assistant_answer TEXT,
             record_type TEXT,
             positive_chunk_id TEXT
         )
@@ -102,6 +104,12 @@ def progress(label: str, count: int, started: float) -> None:
     elapsed = max(time.monotonic() - started, 0.001)
     rate = count / elapsed
     print(f"\r{label}: {count:,} records ({rate:,.0f}/s)", end="", flush=True)
+
+def normalize_answer(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s]", "", text)
+    return text.strip()
 
 def scan_sft(path: Path, con: sqlite3.Connection, samples: dict[str, list], unavailable_sources: set[str]) -> dict:
     stats = Counter()
@@ -153,14 +161,16 @@ def scan_sft(path: Path, con: sqlite3.Connection, samples: dict[str, list], unav
             cur = con.execute(
                 """
                 INSERT OR IGNORE INTO sft
-                (id, source, question, normalized_question, record_type, positive_chunk_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (id, source, question, normalized_question, reference_answer, assistant_answer, record_type, positive_chunk_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rid,
                     source,
                     question,
                     normalize_question(question),
+                    reference,
+                    answer,
                     record_type,
                     positive_chunk_id,
                 ),
@@ -661,6 +671,54 @@ def main() -> None:
         if source != "<missing>"
     )
 
+    duplicate_groups = con.execute("""
+        SELECT normalized_question, COUNT(*)
+        FROM sft
+        WHERE normalized_question != ''
+        GROUP BY normalized_question
+        HAVING COUNT(*) > 1
+    """).fetchall()
+
+    duplicate_question_groups = len(duplicate_groups)
+    duplicate_question_records = sum(count for _, count in duplicate_groups)
+
+    exact_answer_conflict_groups = 0
+    same_answer_groups = 0
+    conflict_samples = []
+
+    for normalized_question, _count in duplicate_groups:
+        rows = con.execute(
+            """
+            SELECT id, source, question, reference_answer
+            FROM sft
+            WHERE normalized_question=?
+            """,
+            (normalized_question,),
+        ).fetchall()
+
+        normalized_answers = {
+            normalize_answer(str(row[3]))
+            for row in rows
+            if str(row[3]).strip()
+        }
+
+        if len(normalized_answers) <= 1:
+            same_answer_groups += 1
+            continue
+
+        exact_answer_conflict_groups += 1
+
+        if len(conflict_samples) < 20:
+            conflict_samples.append([
+                {
+                    "id": row[0],
+                    "source": row[1],
+                    "question": row[2],
+                    "reference_answer": row[3],
+                }
+                for row in rows
+            ])
+
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "project_root": str(ROOT),
@@ -706,6 +764,13 @@ def main() -> None:
             "unavailable_source_sft_records": unavailable_sft_count,
             "unavailable_source_sft_percent": round(unavailable_pct, 4),
             "unavailable_sources": sorted(unavailable_sources),
+        },
+        "duplicate_question_analysis": {
+            "groups": duplicate_question_groups,
+            "records_in_duplicate_groups": duplicate_question_records,
+            "same_normalized_answer_groups": same_answer_groups,
+            "different_normalized_answer_groups": exact_answer_conflict_groups,
+            "conflict_samples": conflict_samples,
         },
         "interpretation": {
             "sft_without_retrieval": "Warning only. dataset_creation.py may emit an SFT record without a retrieval pair when no validated hard/easy negatives were available.",
@@ -754,6 +819,13 @@ def main() -> None:
     print("Missing retrieval by source:")
     for source, count in missing_by_source.items():
         print(f"  {source:20s} {count:10,d}")
+
+    print()
+    print("Duplicate-question analysis:")
+    print(f"  Duplicate groups:          {duplicate_question_groups:,}")
+    print(f"  Records in groups:         {duplicate_question_records:,}")
+    print(f"  Same normalized answers:   {same_answer_groups:,}")
+    print(f"  Different answers:         {exact_answer_conflict_groups:,}")
 
     print()
     print(f"Report:  {report_path}")
