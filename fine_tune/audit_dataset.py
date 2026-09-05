@@ -22,7 +22,7 @@ DEFAULT_DATASET_SOURCES = [
     "game8",
 ]
 
-def normalie_question(text: str) -> str:
+def normalize_question(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
 
 def add_sample(samples: dict[str, list], category: str, value: dict, limit: int = 20) -> None:
