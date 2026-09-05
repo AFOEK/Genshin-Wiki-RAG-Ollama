@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent[1]
+ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_DATASET_SOURCES = [
     "genshin_wiki",
