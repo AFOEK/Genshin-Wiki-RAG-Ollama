@@ -435,18 +435,24 @@ internet_validation:
   enabled: True
   searxng_url: "http://localhost:8888"
   ollama_url: "http://localhost:11434"
-  ollama_model: "qwen3.8:latest"
+  ollama_model: "qwen3.8:27b"
+  ollama_timeout_s: 240
+  ollama_num_ctx: 8192
+  ollama_num_thread: 32
+  oracle_num_predict: 768
+  audit_num_predict: 1024
 
-  source_workers: 6
-  results_per_source: 3
-  fetched_pages_per_source: 2
+  source_workers: 1
+  results_per_source: 2
+  fetched_pages_per_source: 1
 
-  searxng_timeout_s: 30
+  searxng_timeout_s: 45
   fetch_timeout_s: 25
   searxng_health_timeout_s: 5.0
+  search_interval_s: 3.0
 
-  max_chars_per_page: 3000
-  max_total_evidence_chars: 24000
+  max_chars_per_page: 2500
+  max_total_evidence_chars: 12000
   max_negative_chars: 1500
 
   min_oracle_confidence: 0.90   #0.85 >= x <= 0.95

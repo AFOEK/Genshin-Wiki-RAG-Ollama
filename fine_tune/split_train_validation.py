@@ -167,13 +167,17 @@ def main() -> None:
 
     val_rows: list[dict] = []
     train_rows: list[dict] = []
+    val_group_count = 0
+    train_group_count = 0
 
     for key in group_keys:
         group_rows = groups[key]
         if len(val_rows) < n_val_target:
             val_rows.extend(group_rows)
+            val_group_count += 1
         else:
             train_rows.extend(group_rows)
+            train_group_count += 1
 
     if not train_rows:
         raise RuntimeError("Train split is empty. Increase dataset size or reduce val_ratio.")
@@ -181,8 +185,7 @@ def main() -> None:
     if not val_rows:
         raise RuntimeError("Validation split is empty. Increase dataset size or val_ratio.")
 
-    log.info("[SPLIT] groups=%d (train_groups=%d val_groups=%d)", len(group_keys), len(group_keys) - sum(1 for k in group_keys if k in [gk for gk in group_keys]), 0)
-
+    log.info("[SPLIT] groups=%d train_groups=%d val_groups=%d", len(group_keys), train_group_count, val_group_count)
     write_jsonl(train_out, train_rows)
     write_jsonl(val_out, val_rows)
 

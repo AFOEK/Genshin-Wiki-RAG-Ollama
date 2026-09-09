@@ -4,14 +4,17 @@ import argparse
 import json
 import sys
 import sqlite3
+import random
+import yaml
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "fine_tune"))
 sys.path.insert(0, str(ROOT / "fine_tune" / "internet_validation"))
 
-import yaml
 from internet_validation.oracle import ollama_structured
+from validation_common import assistant_answer, positive_context
 
 SCHEMA = {
     "type": "object",
@@ -58,7 +61,38 @@ def load_retrieval(path: Path) -> dict[str, dict]:
                 result[origin] = row
     return result
 
+def derive_actions(result: dict) -> list[str]:
+    if not bool(result.get("positive_context_answerable", False)):
+        return ["regenerate_positive_context"]
+
+    actions = []
+
+    if not bool(result.get("reference_supported", False)):
+        actions.append("repair_reference")
+
+    if not bool(result.get("assistant_supported", False)) or bool(result.get("assistant_has_unsupported_extras", False)):
+        actions.append("regenerate_assistant_answer")
+
+    if bool(result.get("negative_leakage", False)):
+        actions.append("regenerate_negatives")
+
+    verdict = str(result.get("verdict", "")).lower()
+    if verdict == "review":
+        actions.append("human_review")
+    elif verdict == "fail" and not actions:
+        actions.append("human_review")
+
+    return actions or ["keep"]
+
 def build_retrieval_index(path: Path, db_path: Path) -> sqlite3.Connection:
+    if db_path.exists() and db_path.stat().st_mtime >= path.stat().st_mtime:
+        con = sqlite3.connect(db_path)
+        table = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='retrieval'").fetchone()
+        if table:
+            print(f"Reusing retrieval index: {db_path}")
+            return con
+        con.close()
+
     if db_path.exists():
         db_path.unlink()
 
@@ -89,24 +123,6 @@ def build_retrieval_index(path: Path, db_path: Path) -> sqlite3.Connection:
     print()
     return con
 
-def assistant_answer(row: dict) -> str:
-    for message in reversed(row.get("messages", []) or []):
-        if message.get("role") == "assistant":
-            return str(message.get("content", "")).strip()
-    return ""
-
-def positive_context_from_messages(row: dict) -> str:
-    for message in row.get("messages", []) or []:
-        if message.get("role") != "user":
-            continue
-
-        text = str(message.get("content", ""))
-
-        if "Context:" in text:
-            return text.split("Context:", 1)[1].strip()
-
-    return ""
-
 def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
     metadata = row.get("metadata", {}) or {}
 
@@ -134,7 +150,7 @@ def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
                 "text": str(negative.get("text", ""))[:1800],
             })
     else:
-        positive_text = positive_context_from_messages(row)
+        positive_text = positive_context(row)
         negatives = []
 
     payload = {
@@ -176,43 +192,51 @@ def main() -> None:
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--risk", choices=["critical", "high", "medium", "low", "all"], default="high")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--shuffle", action="store_true")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir)
     manifest_path = data_dir / "audit" / "validation_manifest.jsonl"
     sft_path = data_dir / "genshin_rag_sft_candidates.jsonl"
     retrieval_path = data_dir / "genshin_retrieval_pairs.jsonl"
-    output_path = data_dir / "audit" / "semantic_validation.jsonl"
+    output_path = Path(args.out) if args.out else data_dir / "audit" / "semantic_validation_v2.jsonl"
 
     with (ROOT / "rag" / "config.yaml").open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    wanted = set()
-
-    with manifest_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            row = json.loads(line)
-
-            if args.risk == "all" or row["risk"] == args.risk:
-                wanted.add(row["record_id"])
-
-    print(f"Selected records: {len(wanted):,}")
-
-    db = build_retrieval_index(
-        retrieval_path,
-        data_dir / "audit" / "_semantic.sqlite3",
-    )
-
     completed = set()
-
     if output_path.exists():
         with output_path.open("r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     completed.add(str(json.loads(line).get("record_id", "")))
 
-    processed = 0
+    eligible = []
+    with manifest_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            manifest_row = json.loads(line)
+            if args.risk != "all" and manifest_row.get("risk") != args.risk:
+                continue
 
+            if manifest_row["record_id"] in completed:
+                continue
+
+            eligible.append(manifest_row)
+
+    if args.shuffle:
+        random.Random(args.seed).shuffle(eligible)
+
+    if args.limit:
+        eligible = eligible[:args.limit]
+
+    wanted = {row["record_id"]: row for row in eligible}
+    print(f"Selected records: {len(wanted):,}")
+    db = build_retrieval_index(retrieval_path, data_dir / "audit" / "_semantic.sqlite3",)
+    processed = 0
     with sft_path.open("r", encoding="utf-8") as src, output_path.open("a", encoding="utf-8") as dst:
         for line in src:
             if not line.strip():
@@ -220,17 +244,12 @@ def main() -> None:
 
             row = json.loads(line)
             rid = str(row.get("id", "")).strip()
-
             if rid not in wanted or rid in completed:
                 continue
 
-            db_row = db.execute(
-                "SELECT payload FROM retrieval WHERE origin_id=?",
-                (rid,),
-            ).fetchone()
-
+            manifest_row = wanted[rid]
+            db_row = db.execute("SELECT payload FROM retrieval WHERE origin_id=?", (rid,),).fetchone()
             retrieval = json.loads(db_row[0]) if db_row else None
-
             try:
                 result = validate_record(cfg, row, retrieval)
             except Exception as exc:
@@ -240,25 +259,17 @@ def main() -> None:
             output = {
                 "record_id": rid,
                 "source": str((row.get("metadata", {}) or {}).get("source", "")),
+                "risk": manifest_row.get("risk"),
+                "risk_flags": manifest_row.get("flags", []),
                 "has_retrieval_pair": retrieval is not None,
                 "semantic": result,
+                "recommended_actions": derive_actions(result),
             }
 
             dst.write(json.dumps(output, ensure_ascii=False) + "\n")
             dst.flush()
-
             processed += 1
-
-            print(
-                f"\rValidated: {processed:,} "
-                f"{rid} → {result['verdict']} "
-                f"{result['confidence']:.3f}",
-                end="",
-                flush=True,
-            )
-
-            if args.limit and processed >= args.limit:
-                break
+            print(f"\rValidated: {processed:,} {rid} → {result['verdict']} {result['confidence']:.3f}", end="", flush=True,)
 
     print()
     db.close()

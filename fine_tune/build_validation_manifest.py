@@ -2,32 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sqlite3
 from collections import Counter
 from pathlib import Path
 
-def norm(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[^\w\s]", "", text)
-    return text.strip()
-
-def assistant_answer(row: dict) -> str:
-    for message in reversed(row.get("messages", []) or []):
-        if message.get("role") == "assistant":
-            return str(message.get("content", "")).strip()
-    return ""
+from validation_common import assistant_answer, normalize_answer, normalize_question
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--out", default="fine_tune/data/audit/validation_manifest.jsonl")
+    ap.add_argument("--unavailable-source", action="append", default=[])
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir)
     sft_path = data_dir / "genshin_rag_sft_candidates.jsonl"
     retrieval_path = data_dir / "genshin_retrieval_pairs.jsonl"
+    unavailable_sources = set(args.unavailable_source)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +54,7 @@ def main() -> None:
             question = str(metadata.get("question", "")).strip()
             answer = str(metadata.get("reference_answer", "")).strip()
             if rid and question:
-                db.execute("INSERT OR IGNORE INTO questions VALUES (?,?,?)", (norm(question), rid, norm(answer)))
+                db.execute("INSERT OR IGNORE INTO questions VALUES (?,?,?)", (normalize_question(question), rid, normalize_answer(answer)))
             if i % 50000 == 0:
                 db.commit()
                 print(f"\rSFT index: {i:,}", end="", flush=True)
@@ -90,20 +81,20 @@ def main() -> None:
 
             duplicates = db.execute(
                 "SELECT id,answer FROM questions WHERE q=? AND id<>?",
-                (norm(question), rid),
+                (normalize_question(question), rid),
             ).fetchall()
 
             duplicate_answers = {answer for _other_id, answer in duplicates if answer}
-            duplicate_conflict = bool(duplicate_answers and any(answer != norm(reference) for answer in duplicate_answers))
+            duplicate_difference = bool(duplicate_answers and any(answer != normalize_answer(reference) for answer in duplicate_answers))
 
             flags = []
 
-            if source == "honey":
+            if source in unavailable_sources:
                 flags.append("source_unavailable")
             if not has_retrieval:
                 flags.append("missing_retrieval_pair")
-            if duplicate_conflict:
-                flags.append("duplicate_question_answer_conflict")
+            if duplicate_difference:
+                flags.append("duplicate_answer_difference")
             elif duplicates:
                 flags.append("duplicate_question")
             if not question:
@@ -113,12 +104,16 @@ def main() -> None:
             if not assistant:
                 flags.append("missing_assistant_answer")
 
-            if any(flag in flags for flag in ["missing_question", "missing_reference_answer", "missing_assistant_answer"]):
+            if any(flag in flags for flag in [
+                "missing_question",
+                "missing_reference_answer",
+                "missing_assistant_answer",
+            ]):
                 risk = "critical"
-            elif "duplicate_question_answer_conflict" in flags:
-                risk = "high"
             elif "source_unavailable" in flags:
                 risk = "high"
+            elif "duplicate_answer_difference" in flags:
+                risk = "medium"
             elif "missing_retrieval_pair" in flags:
                 risk = "medium"
             elif "duplicate_question" in flags:

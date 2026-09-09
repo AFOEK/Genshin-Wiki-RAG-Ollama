@@ -11,6 +11,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from validation_common import assistant_answer, normalize_answer, normalize_question
+
 ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_DATASET_SOURCES = [
@@ -22,19 +24,11 @@ DEFAULT_DATASET_SOURCES = [
     "game8",
 ]
 
-def normalize_question(text: str) -> str:
-    return re.sub(r"\s+", " ", text.lower()).strip()
 
 def add_sample(samples: dict[str, list], category: str, value: dict, limit: int = 20) -> None:
     bucket = samples[category]
     if len(bucket) < limit:
         bucket.append(value)
-
-def assistant_answer(record: dict) -> str:
-    for message in reversed(record.get("message", []) or []):
-        if message.get("role") == "assistant":
-            return str(message.get("content", "")).strip()
-    return ""
 
 def parse_sources(value) -> list[str]:
     if value is None:
@@ -104,12 +98,6 @@ def progress(label: str, count: int, started: float) -> None:
     elapsed = max(time.monotonic() - started, 0.001)
     rate = count / elapsed
     print(f"\r{label}: {count:,} records ({rate:,.0f}/s)", end="", flush=True)
-
-def normalize_answer(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[^\w\s]", "", text)
-    return text.strip()
 
 def scan_sft(path: Path, con: sqlite3.Connection, samples: dict[str, list], unavailable_sources: set[str]) -> dict:
     stats = Counter()
@@ -474,35 +462,31 @@ def scan_negative_sft(path: Path, con: sqlite3.Connection, samples: dict[str, li
             origin = str(metadata.get("origin_record_id", "")).strip()
             negative_type = str(metadata.get("negative_type", "")).strip()
             source = str(metadata.get("source", "")).strip()
-            confidence = float(metadata.get("negative_validation_confidence", 0.0) or 0.0)
-            validated = bool(metadata.get("negative_answerability_validated", False))
-
             types[negative_type or "<missing>"] += 1
             sources[source or "<missing>"] += 1
+            has_validation = metadata.get("negative_answerability_validated") is not None
+            has_confidence = metadata.get("negative_validation_confidence") is not None
 
-            if rid and not register_seen(con, "negative_sft_id", rid):
-                stats["duplicate_id"] += 1
+            if not has_validation:
+                stats["legacy_validation_unknown"] += 1
+            else:
+                validated = bool(metadata["negative_answerability_validated"])
+                if validated:
+                    stats["answerability_validated"] += 1
+                else:
+                    stats["answerability_validation_failed"] += 1
+                    add_sample(samples, "negative_sft_validation_failed", {
+                        "id": rid,
+                        "origin_record_id": origin,
+                        "source": source,
+                    })
 
-            if not origin or con.execute(
-                "SELECT 1 FROM sft WHERE id=?",
-                (origin,),
-            ).fetchone() is None:
-                stats["orphan_origin"] += 1
-                add_sample(samples, "negative_sft_orphan", {
-                    "id": rid,
-                    "origin_record_id": origin,
-                })
-
-            if not validated:
-                stats["not_validated"] += 1
-                add_sample(samples, "negative_sft_not_validated", {
-                    "id": rid,
-                    "origin_record_id": origin,
-                    "confidence": confidence,
-                })
-
-            if confidence < 0.85:
-                stats["confidence_below_085"] += 1
+            if not has_confidence:
+                stats["validation_confidence_missing"] += 1
+            else:
+                confidence = float(metadata["negative_validation_confidence"] or 0.0)
+                if confidence < 0.85:
+                    stats["validation_confidence_below_085"] += 1
 
             stats["valid_records"] += 1
 
@@ -682,7 +666,7 @@ def main() -> None:
     duplicate_question_groups = len(duplicate_groups)
     duplicate_question_records = sum(count for _, count in duplicate_groups)
 
-    exact_answer_conflict_groups = 0
+    lexically_different_answer_groups = 0
     same_answer_groups = 0
     conflict_samples = []
 
@@ -706,7 +690,7 @@ def main() -> None:
             same_answer_groups += 1
             continue
 
-        exact_answer_conflict_groups += 1
+        lexically_different_answer_groups += 1
 
         if len(conflict_samples) < 20:
             conflict_samples.append([
@@ -769,7 +753,7 @@ def main() -> None:
             "groups": duplicate_question_groups,
             "records_in_duplicate_groups": duplicate_question_records,
             "same_normalized_answer_groups": same_answer_groups,
-            "different_normalized_answer_groups": exact_answer_conflict_groups,
+            "lexically_different_answer_groups": lexically_different_answer_groups,
             "conflict_samples": conflict_samples,
         },
         "interpretation": {
@@ -807,6 +791,11 @@ def main() -> None:
     print(f"Orphan retrieval pairs:     {retrieval_stats.get('orphan_retrieval_pair', 0):,}")
     print(f"Source mismatches:          {retrieval_stats.get('positive_source_mismatch', 0):,}")
     print(f"Query mismatches:           {retrieval_stats.get('query_mismatch', 0):,}")
+    print(f"Negative validated:          {negative_sft_stats.get('answerability_validated', 0):,}")
+    print(f"Negative validation failed:  {negative_sft_stats.get('answerability_validation_failed', 0):,}")
+    print(f"Legacy validation unknown:   {negative_sft_stats.get('legacy_validation_unknown', 0):,}")
+    print(f"Confidence metadata missing: {negative_sft_stats.get('validation_confidence_missing', 0):,}")
+    print(f"Confidence below 0.85:       {negative_sft_stats.get('validation_confidence_below_085', 0):,}")
     print(f"Unavailable-source SFT:     {unavailable_sft_count:,} ({unavailable_pct:.2f}%)")
     print()
     print("SFT source distribution:")
@@ -825,7 +814,7 @@ def main() -> None:
     print(f"  Duplicate groups:          {duplicate_question_groups:,}")
     print(f"  Records in groups:         {duplicate_question_records:,}")
     print(f"  Same normalized answers:   {same_answer_groups:,}")
-    print(f"  Different answers:         {exact_answer_conflict_groups:,}")
+    print(f"  Lexically different:         {lexically_different_answer_groups:,}")
 
     print()
     print(f"Report:  {report_path}")
