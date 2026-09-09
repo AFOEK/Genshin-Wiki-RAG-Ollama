@@ -431,6 +431,36 @@ dataset_creation:
     - genshin_gg
     - game8
 
+dataset_validation:
+  data_dir: fine_tune/data
+  mode: calibrate
+
+  unavailable_sources:
+    - honey
+
+  duplicate:
+    enabled: true
+    seed: 42
+    calibrate_limit: 50
+
+  semantic:
+    enabled: true
+
+    seeds:
+      high: 42
+      medium: 43
+      low: 44
+
+    calibrate_limits:
+      high: 200
+      medium: 200
+      low: 500
+
+    full_limits:
+      high: 0
+      medium: 0
+      low: 0
+
 internet_validation:
   enabled: True
   searxng_url: "http://localhost:8888"
