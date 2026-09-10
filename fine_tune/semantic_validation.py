@@ -253,8 +253,16 @@ def main() -> None:
             try:
                 result = validate_record(cfg, row, retrieval)
             except Exception as exc:
-                print(f"\nERROR {rid}: {exc}")
-                continue
+                result = {
+                    "reference_supported": False,
+                    "assistant_supported": False,
+                    "assistant_has_unsupported_extras": False,
+                    "positive_context_answerable": False,
+                    "negative_leakage": False,
+                    "confidence": 0.0,
+                    "verdict": "review",
+                    "reason": f"validator_error: {type(exc).__name__}: {exc}",
+                }
 
             output = {
                 "record_id": rid,

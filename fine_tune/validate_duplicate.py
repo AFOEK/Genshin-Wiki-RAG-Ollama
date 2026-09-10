@@ -104,23 +104,32 @@ def main() -> None:
                 ],
             }
 
-            result = ollama_structured(
-                ollama_url=validation_cfg["ollama_url"],
-                model=validation_cfg["ollama_model"],
-                system=SYSTEM,
-                prompt=json.dumps(payload, ensure_ascii=False),
-                schema=SCHEMA,
-                timeout_s=float(validation_cfg.get("ollama_timeout_s", 360)),
-                num_ctx=int(validation_cfg.get("ollama_num_ctx", 8192)),
-                num_predict=512,
-                num_thread=int(validation_cfg.get("ollama_num_thread", 32)),
-            )
+            try:
+                result = ollama_structured(
+                    ollama_url=validation_cfg["ollama_url"],
+                    model=validation_cfg["ollama_model"],
+                    system=SYSTEM,
+                    prompt=json.dumps(payload, ensure_ascii=False),
+                    schema=SCHEMA,
+                    timeout_s=float(validation_cfg.get("ollama_timeout_s", 360)),
+                    num_ctx=int(validation_cfg.get("ollama_num_ctx", 8192)),
+                    num_predict=1024,
+                    num_thread=int(validation_cfg.get("ollama_num_thread", 32)),
+                )
+            except Exception as exc:
+                result = {
+                    "relation": "ambiguous",
+                    "preferred_record_id": "",
+                    "confidence": 0.0,
+                    "reason": f"validator_error: {type(exc).__name__}: {exc}",
+                }
 
             output = {
                 "group_id": gid,
                 "question": rows[0]["question"],
                 "record_ids": [row["record_id"] for row in rows],
                 "result": result,
+                "validator_error": result.get("reason", "").startswith("validator_error:"),
             }
 
             dst.write(json.dumps(output, ensure_ascii=False) + "\n")

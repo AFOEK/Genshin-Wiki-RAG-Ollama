@@ -1,6 +1,7 @@
 import json
 import requests
 import logging
+import time
 
 log = logging.getLogger(__name__)
 
@@ -71,38 +72,68 @@ SYSTEM_PROMPT=(
     "Do not infer unsupported details."
 )
 
-def ollama_structured(*, ollama_url: str, model: str, system: str, prompt: str, schema: dict, timeout_s: float=240, num_ctx: int=8192, num_predict: int=512, num_thread: int = 32) -> dict:
-    response = requests.post(
-        f"{ollama_url.rstrip('/')}/api/chat",
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system,
+def ollama_structured(*, ollama_url: str, model: str, system: str, prompt: str, schema: dict, timeout_s: float=240, num_ctx: int=8192, num_predict: int=512, num_thread: int=32, retries: int=3) -> dict:
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        response = requests.post(
+            f"{ollama_url.rstrip('/')}/api/chat",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "think": False,
+                "format": schema,
+                "keep_alive": -1,
+                "options": {
+                    "temperature": 0.0,
+                    "seed": 40151652 + attempt - 1,
+                    "num_ctx": num_ctx,
+                    "num_predict": num_predict,
+                    "num_thread": num_thread,
                 },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            "stream": False,
-            "think": False,
-            "format": schema,
-            "keep_alive": -1,
-            "options": {
-                "temperature": 0.0,
-                "seed": 40151652,
-                "num_ctx": num_ctx,
-                "num_predict": num_predict,
-                "num_thread": num_thread,
             },
-        },
-        timeout=timeout_s,
-    )
-    response.raise_for_status()
-    content = response.json()["message"]["content"]
-    return json.loads(content)
+            timeout=timeout_s,
+        )
+
+        response.raise_for_status()
+        payload = response.json()
+        content = str((payload.get("message") or {}).get("content", "")).strip()
+        done_reason = str(payload.get("done_reason", ""))
+
+        if done_reason == "length":
+            last_error = RuntimeError(
+                f"Ollama output truncated at num_predict={num_predict}"
+            )
+            log.warning(
+                "Structured output truncated attempt=%d/%d model=%s",
+                attempt,
+                retries,
+                model,
+            )
+        else:
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                log.warning(
+                    "Invalid structured JSON attempt=%d/%d model=%s error=%s content=%r",
+                    attempt,
+                    retries,
+                    model,
+                    exc,
+                    content[:300],
+                )
+
+        if attempt < retries:
+            time.sleep(min(2 ** (attempt - 1), 4))
+
+    raise RuntimeError(
+        f"Ollama failed to return valid structured JSON after {retries} attempts"
+    ) from last_error
 
 def run_blind_oracle(cfg: dict, *, question: str, evidence: list[dict]) -> dict:
     safe_evidence = [
