@@ -130,12 +130,10 @@ def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
     reference = str(metadata.get("reference_answer", "")).strip()
     assistant = assistant_answer(row)
 
+    positive_text = positive_context(row)
+    negatives = []
+
     if retrieval:
-        positive = retrieval.get("positive", {}) or {}
-        positive_text = str(positive.get("text", "")).strip()
-
-        negatives = []
-
         for negative in retrieval.get("hard_negatives", []) or []:
             negatives.append({
                 "type": "hard",
@@ -149,15 +147,16 @@ def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
                 "title": str(negative.get("title", "")),
                 "text": str(negative.get("text", ""))[:1800],
             })
-    else:
-        positive_text = positive_context(row)
-        negatives = []
+
+        if not positive_text:
+            positive = retrieval.get("positive", {}) or {}
+            positive_text = str(positive.get("text", "")).strip()
 
     payload = {
         "question": question,
         "reference_answer": reference,
         "assistant_answer": assistant,
-        "positive_context": positive_text[:5000],
+        "positive_context": positive_text[:125000],
         "negative_contexts": negatives,
     }
 
