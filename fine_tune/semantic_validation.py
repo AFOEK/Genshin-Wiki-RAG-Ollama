@@ -171,6 +171,10 @@ def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
         "4. The assistant must not add unsupported factual details.\n"
         "5. Negative contexts must not contain enough information to answer the question.\n"
         "6. If evidence is ambiguous, return review rather than pass.\n\n"
+        "7. Judge the reference answer and assistant answer independently against the positive context.\n"
+        "8. A wrong reference answer does NOT make a context-supported assistant answer wrong.\n"
+        "9. A wrong assistant answer does NOT make a context-supported reference answer wrong.\n"
+        "10. Negative-context leakage must be judged independently and must not change reference_supported or assistant_supported.\n"
         + json.dumps(payload, ensure_ascii=False)
     )
 
