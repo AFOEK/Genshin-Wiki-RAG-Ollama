@@ -69,7 +69,7 @@ def main() -> None:
     semantic_path = (
         Path(args.semantic)
         if args.semantic
-        else data_dir / "audit" / "semantic_validation_context_v3.jsonl"
+        else data_dir / "audit" / "semantic_validation_context.jsonl"
     )
 
     duplicate_path = (
@@ -465,7 +465,7 @@ def main() -> None:
             ),
         },
         "policy": {
-            "semantic_version": "context_v3",
+            "semantic_version": "context",
             "auto_repair_assistant": (
                 args.auto_repair_assistant
             ),
