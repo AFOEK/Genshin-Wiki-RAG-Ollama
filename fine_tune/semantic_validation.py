@@ -156,7 +156,7 @@ def validate_record(cfg: dict, row: dict, retrieval: dict | None) -> dict:
         "question": question,
         "reference_answer": reference,
         "assistant_answer": assistant,
-        "positive_context": positive_text[:125000],
+        "positive_context": positive_text[:12000],
         "negative_contexts": negatives,
     }
 
