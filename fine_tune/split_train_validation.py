@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import random
 import sys
 from pathlib import Path
@@ -17,13 +18,36 @@ from utils.logging_setup import setup_logging
 REPO_ROOT = Path(__file__).resolve().parents[1]
 log = logging.getLogger(__name__)
 
+class DSU:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> None:
+        ra = self.find(a)
+        rb = self.find(b)
+        if ra == rb:
+            return
+
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra
+
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
+
 
 def load_cfg(path: str | None) -> dict:
     if not path:
         return {}
 
     p = Path(path)
-
     if not p.is_absolute() and not p.exists():
         p = REPO_ROOT / path
 
@@ -47,18 +71,10 @@ def expand_path(value: str | Path) -> Path:
     return Path(raw).expanduser()
 
 
-def resolve_output_path(path_value: str | Path, cfg: dict) -> Path:
+def resolve_input_path(path_value: str | Path) -> Path:
     p = expand_path(path_value)
-
     if p.is_absolute():
         return p
-
-    storage = cfg.get("storage", {}) or {}
-    primary = storage.get("primary_root")
-
-    if primary:
-        return (expand_path(primary) / p).resolve()
-
     return (REPO_ROOT / p).resolve()
 
 
@@ -82,7 +98,6 @@ def cfg_int(x, default: int) -> int:
 
 def read_jsonl(path: Path) -> list[dict]:
     rows = []
-
     with path.open("r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
             line = line.strip()
@@ -95,10 +110,11 @@ def read_jsonl(path: Path) -> list[dict]:
 
     return rows
 
+def normalize_question(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text).lower()).strip()
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -131,9 +147,9 @@ def main() -> None:
         return
 
     mode = str(args.mode or split_cfg.get("mode") or cfg.get("peft", {}).get("mode", "lora")).strip().lower()
-    src = resolve_output_path(format_template_path(args.src or split_cfg.get("src", "data/training/genshin_sft_candidates.jsonl"), mode), cfg)
-    train_out = resolve_output_path(format_template_path(args.train_out or split_cfg.get("train_out", "data/training/genshin_{mode}_train.jsonl"), mode), cfg)
-    val_out = resolve_output_path(format_template_path(args.val_out or split_cfg.get("val_out", "data/training/genshin_{mode}_val.jsonl"), mode), cfg)
+    src = resolve_input_path(format_template_path(args.src or split_cfg.get("src", "fine_tune/data/training/genshin_sft_candidates.jsonl"), mode), cfg)
+    train_out = resolve_input_path(format_template_path(args.train_out or split_cfg.get("train_out", "fine_tune/data/training/genshin_{mode}_train.jsonl"), mode), cfg)
+    val_out = resolve_input_path(format_template_path(args.val_out or split_cfg.get("val_out", "fine_tune/data/training/genshin_{mode}_val.jsonl"), mode), cfg)
     val_ratio = cfg_float(args.val_ratio, cfg_float(split_cfg.get("val_ratio"), 0.05))
     seed = cfg_int(args.seed, cfg_int(split_cfg.get("seed"), 1337))
 
@@ -153,16 +169,33 @@ def main() -> None:
     if not rows:
         raise RuntimeError(f"Input JSONL is empty: {src}")
 
-    groups: dict[str, list[dict]] = {}
-    for row in rows:
+    dsu = DSU(len(rows))
+    first_by_doc: dict[str, int] = {}
+    first_by_question: dict[str, int] = {}
+    for i, row in enumerate(rows):
         metadata = row.get("metadata") or {}
         doc_id = metadata.get("positive_doc_id")
-        key = f"doc:{doc_id}" if doc_id is not None else f"id:{row.get('id')}"
-        groups.setdefault(key, []).append(row)
+        question = normalize_question(metadata.get("question", ""))
+        if doc_id is not None:
+            doc_key = str(doc_id)
+            if doc_key in first_by_doc:
+                dsu.union(i, first_by_doc[doc_key])
+            else:
+                first_by_doc[doc_key] = i
+
+        if question:
+            if question in first_by_question:
+                dsu.union(i, first_by_question[question])
+            else:
+                first_by_question[question] = i
+
+    groups: dict[int, list[dict]] = {}
+    for i, row in enumerate(rows):
+        root = dsu.find(i)
+        groups.setdefault(root, []).append(row)
 
     group_keys = list(groups.keys())
     random.Random(seed).shuffle(group_keys)
-
     n_val_target = max(1, int(len(rows) * val_ratio))
 
     val_rows: list[dict] = []
@@ -186,6 +219,46 @@ def main() -> None:
         raise RuntimeError("Validation split is empty. Increase dataset size or val_ratio.")
 
     log.info("[SPLIT] groups=%d train_groups=%d val_groups=%d", len(group_keys), train_group_count, val_group_count)
+
+    train_docs = set()
+    val_docs = set()
+
+    train_questions = set()
+    val_questions = set()
+
+    for row in train_rows:
+        m = row.get("metadata") or {}
+        if m.get("positive_doc_id") is not None:
+            train_docs.add(str(m["positive_doc_id"]))
+
+        q = normalize_question(m.get("question", ""))
+        if q:
+            train_questions.add(q)
+
+
+    for row in val_rows:
+        m = row.get("metadata") or {}
+        if m.get("positive_doc_id") is not None:
+            val_docs.add(str(m["positive_doc_id"]))
+
+        q = normalize_question(m.get("question", ""))
+        if q:
+            val_questions.add(q)
+
+
+    doc_overlap = train_docs & val_docs
+    question_overlap = train_questions & val_questions
+    if doc_overlap:
+        raise RuntimeError(f"Document leakage detected: {len(doc_overlap)} shared positive_doc_id values")
+
+    if question_overlap:
+        raise RuntimeError(f"Question leakage detected: {len(question_overlap)} shared normalized questions")
+
+    log.info("[SPLIT] leakage check passed docs=0 questions=0")
+
+    rng = random.Random(seed)
+    rng.shuffle(train_rows)
+    rng.shuffle(val_rows)
     write_jsonl(train_out, train_rows)
     write_jsonl(val_out, val_rows)
 
