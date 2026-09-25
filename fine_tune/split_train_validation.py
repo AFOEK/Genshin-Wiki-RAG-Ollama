@@ -147,9 +147,9 @@ def main() -> None:
         return
 
     mode = str(args.mode or split_cfg.get("mode") or cfg.get("peft", {}).get("mode", "lora")).strip().lower()
-    src = resolve_input_path(format_template_path(args.src or split_cfg.get("src", "fine_tune/data/training/genshin_sft_candidates.jsonl"), mode), cfg)
-    train_out = resolve_input_path(format_template_path(args.train_out or split_cfg.get("train_out", "fine_tune/data/training/genshin_{mode}_train.jsonl"), mode), cfg)
-    val_out = resolve_input_path(format_template_path(args.val_out or split_cfg.get("val_out", "fine_tune/data/training/genshin_{mode}_val.jsonl"), mode), cfg)
+    src = resolve_input_path(format_template_path(args.src or split_cfg.get("src", "fine_tune/data/training/genshin_sft_candidates.jsonl"), mode))
+    train_out = resolve_input_path(format_template_path(args.train_out or split_cfg.get("train_out", "fine_tune/data/training/genshin_{mode}_train.jsonl"), mode))
+    val_out = resolve_input_path(format_template_path(args.val_out or split_cfg.get("val_out", "fine_tune/data/training/genshin_{mode}_val.jsonl"), mode))
     val_ratio = cfg_float(args.val_ratio, cfg_float(split_cfg.get("val_ratio"), 0.05))
     seed = cfg_int(args.seed, cfg_int(split_cfg.get("seed"), 1337))
 
