@@ -2033,7 +2033,7 @@ def main() -> None:
 
     log.info(f"[LORA_DATASET] Done. written={written} skipped={skipped} out={out_path}")
     retrieval_metrics.print()
-    retrieval_metrics.save("rag/logs/retrieval_metrics", metadata = retrieval_metadata)
+    retrieval_metrics.save("rag/retrieval_metrics", metadata = retrieval_metadata)
 
 if __name__ == "__main__":
     main()
