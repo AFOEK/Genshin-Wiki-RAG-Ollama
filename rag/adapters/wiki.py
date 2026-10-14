@@ -3,24 +3,90 @@ import time
 import random
 import logging
 import threading
-import json
-import subprocess
+import pycurl
+import io
 
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import RequestException, Timeout, ConnectionError
+from requests.structures import CaseInsensitiveDict
 
 from utils.crawl import SharedRateLimiter, limited_get
 
 log = logging.getLogger(__name__)
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 _FANDOM_USER_AGENT = "GenshinWikiRAG/1.0 (academic research)"
-_CURL_FALLBACK_LOCK = threading.Lock()
+_TRANSPORT_LOCK = threading.Lock()
+_CURL_LOCAL = threading.local()
+_REQUEST_FAILURES = 0
+_USE_PYCURL = False
+
+def curl_mode_enabled() -> bool:
+    with _TRANSPORT_LOCK:
+        return _USE_PYCURL
+
+def record_requests_failure(reason: str) -> None:
+    global _REQUEST_FAILURES, _USE_PYCURL
+
+    with _TRANSPORT_LOCK:
+        if _USE_PYCURL:
+            return
+
+        _REQUEST_FAILURES += 1
+        log.warning("[WIKI] Global requests failures=%d/3 reason=%s", _REQUEST_FAILURES, reason)
+        if _REQUEST_FAILURES >= 3:
+            _USE_PYCURL = True
+            log.warning("[WIKI] Switching globally to PycURL")
+
+
+class PycurlSession:
+    def __init__(self):
+        self.curl = pycurl.Curl()
+
+    def get(self, url: str, params=None, timeout=60, **kwargs):
+        full_url = requests.Request("GET", url, params=params).prepare().url
+        body = io.BytesIO()
+        headers = CaseInsensitiveDict()
+        def read_header(chunk: bytes) -> int:
+            line = chunk.decode("iso-8859-1").strip()
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip()] = value.strip()
+            return len(chunk)
+
+        c = self.curl
+        c.reset()
+        c.setopt(pycurl.URL, full_url)
+        c.setopt(pycurl.FOLLOWLOCATION, 1)
+        c.setopt(pycurl.MAXREDIRS, 5)
+        c.setopt(pycurl.CONNECTTIMEOUT, 15)
+        c.setopt(pycurl.TIMEOUT_MS, int(timeout * 1000))
+        c.setopt(pycurl.USERAGENT, _FANDOM_USER_AGENT)
+        c.setopt(pycurl.HTTPHEADER, ["Accept: application/json"])
+        c.setopt(pycurl.ACCEPT_ENCODING, "")
+        c.setopt(pycurl.WRITEDATA, body)
+        c.setopt(pycurl.HEADERFUNCTION, read_header)
+        c.perform()
+
+        response = requests.Response()
+        response.status_code = c.getinfo(pycurl.RESPONSE_CODE)
+        response.url = c.getinfo(pycurl.EFFECTIVE_URL)
+        response.headers = headers
+        response._content = body.getvalue()
+        response.encoding = "utf-8"
+        return response
+
+def get_pycurl_session() -> PycurlSession:
+    session = getattr(_CURL_LOCAL, "session", None)
+    if session is None:
+        session = PycurlSession()
+        _CURL_LOCAL.session = session
+    return session
 
 def make_fandom_session() -> requests.Session:
     session=requests.Session()
@@ -54,9 +120,13 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
         if cont:
             params.update(cont)
 
-        data=get_json_with_retry(session, api, params=params, timeout=60, max_retries=3, rate_limiter=rate_limiter, request_semaphore=request_semaphore)
+        data = get_json_with_retry(session, api, params=params, timeout=60, max_retries=3, rate_limiter=rate_limiter, request_semaphore=request_semaphore)
         if not data:
-            break
+            raise RuntimeError("[WIKI] Recentchanges discovery failed; state not advanced")
+
+        rows = data.get("query", {}).get("recentchanges")
+        if not isinstance(rows, list):
+            raise RuntimeError(f"[WIKI] Invalid recentchanges response: {data.get('error', data)}")
 
         rows = data.get("query", {}).get("recentchanges", [])
         for r in rows:
@@ -69,121 +139,82 @@ def iter_recently_changed_titles(api: str, session: requests.Session, *, start_i
         if not cont:
             break
 
-def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str,Any], timeout: float=60.0, max_retries: int=3, rate_limiter: SharedRateLimiter | None=None, request_semaphore=None) -> Optional[dict[str,Any]]:
-    last_reason="unknown"
-    for attempt in range(max_retries):
-        try:
-            r=limited_get(session, url, params=params, timeout=timeout, semaphore=request_semaphore, rate_limiter=rate_limiter,)
-            if r.status_code<400:
-                try:
-                    data=r.json()
-                except ValueError as exc:
-                    last_reason=f"bad JSON: {exc}"
-                    log.warning("[WIKI] Bad JSON url=%s attempt=%d/%d", url,attempt+1,max_retries,)
-                else:
-                    if isinstance(data,dict):
-                        return data
+def get_json_with_retry(session: requests.Session, url: str, *, params: dict[str, Any], timeout: float = 60.0, max_retries: int = 3, rate_limiter: SharedRateLimiter | None = None, request_semaphore=None) -> Optional[dict[str, Any]]:
 
-                    last_reason="non-object JSON"
-                    log.warning("[WIKI] Non-object JSON url=%s attempt=%d/%d", url,attempt+1,max_retries,)
-            elif r.status_code==403:
-                last_reason="HTTP 403"
-                log.warning("[WIKI] HTTP 403 url=%s attempt=%d/%d", url,attempt+1,max_retries,)
-            elif r.status_code in _RETRY_STATUSES:
-                last_reason=f"HTTP {r.status_code}"
-                log.warning("[WIKI] HTTP %d url=%s attempt=%d/%d", r.status_code,url,attempt+1,max_retries,)
-                retry_after=r.headers.get("Retry-After")
-                if retry_after and retry_after.isdigit():
-                    time.sleep(min(int(retry_after),120))
+    def fetch_curl() -> Optional[dict[str, Any]]:
+        for attempt in range(3):
+            try:
+                r = limited_get(
+                    get_pycurl_session(),
+                    url,
+                    params=params,
+                    timeout=timeout,
+                    semaphore=request_semaphore,
+                    rate_limiter=rate_limiter,
+                )
+
+                if r.status_code in _RETRY_STATUSES:
+                    log.warning("[WIKI] PycURL HTTP %d attempt=%d/3", r.status_code, attempt+1)
+                    if attempt < 2:
+                        ra = r.headers.get("Retry-After")
+                        if ra and ra.isdigit():
+                            time.sleep(min(int(ra), 120))
+                        else:
+                            sleep_backoff(attempt)
                     continue
-            else:
-                log.warning("[WIKI] HTTP %d url=%s params=%s", r.status_code,url,params,)
+
+                if r.status_code >= 400:
+                    log.warning("[WIKI] PycURL HTTP %d url=%s", r.status_code, url)
+                    return None
+
+                data = r.json()
+                return data if isinstance(data, dict) else None
+
+            except (pycurl.error, ValueError) as exc:
+                log.warning("[WIKI] PycURL error attempt=%d/3 err=%s", attempt+1, exc)
+                if attempt < 2:
+                    sleep_backoff(attempt)
+
+        return None
+
+    for attempt in range(max_retries):
+        if curl_mode_enabled():
+            return fetch_curl()
+
+        try:
+            r = limited_get(session, url, params=params, timeout=timeout, semaphore=request_semaphore, rate_limiter=rate_limiter,)
+            if r.status_code == 403:
+                record_requests_failure("HTTP 403")
+            elif r.status_code in _RETRY_STATUSES:
+                log.warning("[WIKI] HTTP %d attempt=%d/%d url=%s", r.status_code, attempt + 1, max_retries, url,)
+                retry_after = r.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    time.sleep(min(int(retry_after), 120))
+                    continue
+            elif r.status_code >= 400:
+                log.warning("[WIKI] HTTP %d url=%s", r.status_code, url)
                 return None
-
-        except (Timeout,ConnectionError) as exc:
-            last_reason=f"{type(exc).__name__}: {exc}"
-
-            log.warning("[WIKI] Network error %s url=%s attempt=%d/%d", type(exc).__name__,url,attempt+1,max_retries,)
+            else:
+                try:
+                    data = r.json()
+                except ValueError:
+                    record_requests_failure("Invalid JSON")
+                else:
+                    if isinstance(data, dict):
+                        return data
+                    record_requests_failure("Non-object JSON")
 
         except RequestException as exc:
-            last_reason=f"RequestException: {exc}"
-            log.warning("[WIKI] RequestException url=%s attempt=%d/%d err=%s", url,attempt+1,max_retries,exc,)
+            record_requests_failure(type(exc).__name__)
+            log.warning("[WIKI] requests error url=%s err=%s", url, exc)
 
-        if attempt+1<max_retries:
+        if curl_mode_enabled():
+            return fetch_curl()
+
+        if attempt + 1 < max_retries:
             sleep_backoff(attempt)
 
-    log.warning("[WIKI] requests failed %d times url=%s reason=%s; falling back to curl", max_retries,url,last_reason,)
-    data=curl_get_json(url, params, timeout=timeout, request_semaphore=request_semaphore,)
-    if data is not None:
-        log.info("[WIKI] curl fallback succeeded url=%s",url)
-        return data
-
-    log.error("[WIKI] requests + curl fallback failed url=%s", url,)
     return None
-
-def curl_get_json(url: str, params: dict[str,Any], *, timeout: float=60.0, request_semaphore=None) -> Optional[dict[str,Any]]:
-    full_url=f"{url}?{urlencode(params,doseq=True)}"
-    marker="__HTTP_STATUS__:"
-
-    cmd=[
-        "curl",
-        "-sS",
-        "--compressed",
-        "--location",
-        "--connect-timeout","15",
-        "--max-time",str(timeout),
-        "-A",_FANDOM_USER_AGENT,
-        "-H","Accept: application/json",
-        "-w",f"\n{marker}%{{http_code}}",
-        full_url,
-    ]
-
-    if request_semaphore is not None:
-        request_semaphore.acquire()
-
-    try:
-        with _CURL_FALLBACK_LOCK:
-            if request_semaphore is not None:
-                request_semaphore.acquire()
-            try:
-                result=subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+10,)
-            finally:
-                if request_semaphore is not None:
-                    request_semaphore.release()
-    finally:
-        if request_semaphore is not None:
-            request_semaphore.release()
-
-    if result.returncode!=0:
-        log.warning("[WIKI] curl fallback failed exit=%d stderr=%r", result.returncode, result.stderr[:500],)
-        return None
-
-    split_marker=f"\n{marker}"
-    pos=result.stdout.rfind(split_marker)
-
-    if pos<0:
-        log.warning("[WIKI] curl fallback missing HTTP status")
-        return None
-
-    body=result.stdout[:pos]
-
-    try:
-        status=int(result.stdout[pos+len(split_marker):].strip())
-    except ValueError:
-        log.warning("[WIKI] curl fallback invalid HTTP status")
-        return None
-
-    if status>=400:
-        log.warning("[WIKI] curl fallback HTTP %d url=%s body=%r", status,url,body[:500],)
-        return None
-
-    try:
-        data=json.loads(body)
-    except json.JSONDecodeError as exc:
-        log.warning("[WIKI] curl fallback bad JSON url=%s err=%s", url,exc,)
-        return None
-
-    return data if isinstance(data, dict) else None
 
 def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaphore = None, rate_limiter: SharedRateLimiter | None = None, max_outer_failures: int = 3):
     session=make_fandom_session()
@@ -214,7 +245,10 @@ def list_allpages(api: str, limit: int = 100, namespace: int = 0, request_semaph
 
         failures = 0
         
-        pages = data.get("query", {}).get("allpages", [])
+        pages = data.get("query", {}).get("allpages")
+        if not isinstance(pages, list):
+            raise RuntimeError(f"[WIKI] Invalid allpages response: {data.get('error', data)}")
+        
         for p in pages:
             t = p.get("title")
             if t:
