@@ -122,6 +122,8 @@ def normalize_backend_name(name: str | None) -> str | None:
         return "llamacpp"
     if x == "ollama":
         return "ollama"
+    if x in {"quantum_peft", "quantum", "hq_peft"}:
+        return "quantum_peft"
     raise RuntimeError(f"Unknown embedding backend: {name}")
 
 def embed_ollama(base_url: str, model: str, text_or_texts, keep_alive: str, timeout: int):
@@ -182,6 +184,15 @@ def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int=10,
                     llamacpp["embedding_model"],
                     text_or_texts,
                     int(llamacpp.get("timeout", "180"))
+                )
+
+            if provider == "quantum_peft":
+                from core.quantum_embed import embed_quantum
+
+                return embed_quantum(
+                    cfg,
+                    text_or_texts,
+                    mode=mode,
                 )
             
             raise RuntimeError(f"Unknown embedding provider: {provider}")
