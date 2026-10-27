@@ -5,12 +5,10 @@ Experimental Hybrid-Quantum LoRA
 import torch
 import math
 import logging
-import pennylane as qml
-import numpy as np
 import torch.nn as nn
-import torch.nn.functional as F
+from configs import LORA_DOWN_INIT_STD, LORA_UP_INIT_STD
 
-from .VQC import VariationalQuantumLayer
+from VQC import VariationalQuantumLayer
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +24,9 @@ class HybridQuantumLoRAAdapter(nn.Module):
         shots: int | None = None,
         diff_method: str = "parameter-shift",
         quantum_backend=None,
+        use_ibm_fake_noise: bool = False,
+        ibm_fake_backend_name: str = "FakeSherbrooke",
+        simulator_seed: int | None = None
     ):
         super().__init__()
         self.rank = rank
@@ -38,11 +39,14 @@ class HybridQuantumLoRAAdapter(nn.Module):
             diff_method=diff_method,
             quantum_dropout=quantum_dropout,
             device=quantum_backend,
+            use_ibm_fake_noise=use_ibm_fake_noise,
+            ibm_fake_backend_name=ibm_fake_backend_name,
+            simulator_seed=simulator_seed
         )
         self.up = nn.Linear(rank, hidden_size, bias=False)
         self.dropout = nn.Dropout(dropout)
-        nn.init.normal_(self.down.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.up.weight, mean=0.0, std=1e-3)
+        nn.init.normal_(self.down.weight, mean=0.0, std=LORA_DOWN_INIT_STD)
+        nn.init.normal_(self.up.weight, mean=0.0, std=LORA_UP_INIT_STD)
 
     def forward(self, hidden: torch.Tensor) -> torch.Tensor:
         angles = math.pi * torch.tanh(self.down(hidden))
@@ -64,6 +68,9 @@ class ModuleQuantumLoRALinear(nn.Module):
         diff_method: str = "parameter-shift",
         token_policy: str = "cls",
         adapter_device: torch.device = torch.device("cpu"),
+        use_ibm_fake_noise: bool = False,
+        ibm_fake_backend_name: str = "FakeSherbrooke",
+        simulator_seed: int | None = None
     ):
         super().__init__()
         if token_policy not in {"cls", "all"}:
@@ -85,11 +92,14 @@ class ModuleQuantumLoRALinear(nn.Module):
             diff_method=diff_method,
             quantum_dropout=quantum_dropout,
             device=None,
+            use_ibm_fake_noise=use_ibm_fake_noise,
+            ibm_fake_backend_name=ibm_fake_backend_name,
+            simulator_seed=simulator_seed
         ).to(adapter_device)
         self.up = nn.Linear(rank, out_features, bias=False).to(adapter_device)
         self.dropout = nn.Dropout(dropout)
-        nn.init.normal_(self.down.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.up.weight, mean=0.0, std=1e-3)
+        nn.init.normal_(self.down.weight, mean=0.0, std=LORA_DOWN_INIT_STD)
+        nn.init.normal_(self.up.weight, mean=0.0, std=LORA_UP_INIT_STD)
 
     def adapter_update(self, hidden: torch.Tensor) -> torch.Tensor:
         original_device = hidden.device

@@ -67,6 +67,50 @@ class DVoRALinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.effective_weight(), self.base_bias)
+
+class ClassicalDVoRAAdapter(nn.Module):
+    def __init__(
+        self, hidden_size: int, rank: int = 4,
+        alpha: float = 8.0, dropout: float = 0.05
+    ):
+        super().__init__()
+        self.rank = rank
+        self.scale = alpha / rank
+
+        self.down = nn.Linear(hidden_size, rank, bias=False)
+        self.up = nn.Linear(rank, hidden_size, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+        self.vera_b = nn.Parameter(torch.ones(rank))
+        self.vera_d = nn.Parameter(torch.ones(hidden_size))
+        self.log_magnitude = nn.Parameter(torch.zeros(hidden_size))
+
+        nn.init.normal_(
+            self.down.weight,
+            mean=0.0,
+            std=1.0 / math.sqrt(hidden_size),
+        )
+        nn.init.normal_(
+            self.up.weight,
+            mean=0.0,
+            std=1.0 / math.sqrt(rank),
+        )
+        self.down.weight.requires_grad_(False)
+        self.up.weight.requires_grad_(False)
+
+    def forward(self, hidden):
+        z = self.down(hidden) * self.vera_b
+        directional_update = self.up(self.dropout(z))
+        directional_update = directional_update * self.vera_d
+
+        direction = hidden + self.scale * directional_update
+        direction = F.normalize(direction, p=2, dim=-1)
+
+        magnitude = torch.exp(self.log_magnitude).view(1, -1)
+        magnitude = magnitude.to(
+            device=hidden.device, dtype=hidden.dtype
+        )
+        return magnitude * direction
     
 def apply_dvora_adapters(model: nn.Module, train_cfg: dict) -> nn.Module:
     c = train_cfg.get("dvora", {}) or {}

@@ -10,7 +10,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .VQC import VariationalQuantumLayer
+from VQC import VariationalQuantumLayer
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,9 @@ class HybridQuantumDVoRAAdapter(nn.Module):
         shots: int | None = None,
         diff_method: str = "parameter-shift",
         quantum_backend=None,
+        use_ibm_fake_noise: bool = False,
+        ibm_fake_backend_name: str = "FakeSherbrooke",
+        simulator_seed: int | None = None
     ):
         super().__init__()
         self.rank = rank
@@ -38,6 +41,9 @@ class HybridQuantumDVoRAAdapter(nn.Module):
             diff_method=diff_method,
             quantum_dropout=quantum_dropout,
             device=quantum_backend,
+            use_ibm_fake_noise=use_ibm_fake_noise,
+            ibm_fake_backend_name=ibm_fake_backend_name,
+            simulator_seed=simulator_seed,
         )
         self.up = nn.Linear(rank, hidden_size, bias=False)
         self.dropout = nn.Dropout(dropout)
@@ -49,6 +55,7 @@ class HybridQuantumDVoRAAdapter(nn.Module):
         self.quantum_magnitude_strength = nn.Parameter(torch.tensor(0.10))
         self.magnitude_up = nn.Linear(rank, hidden_size, bias=False)
         nn.init.zeros_(self.magnitude_up.weight)
+        # nn.init.normal_(self.magnitude_up.weight, mean=0.0, std=1e-4,)
         nn.init.normal_(self.down.weight, mean=0.0, std=1.0 / math.sqrt(hidden_size))
         nn.init.normal_(self.up.weight, mean=0.0, std=1.0 / math.sqrt(rank))
         self.down.weight.requires_grad_(False)
@@ -62,14 +69,14 @@ class HybridQuantumDVoRAAdapter(nn.Module):
         angles = math.pi * torch.tanh(z)  
         quantum_features = self.quantum(angles).to(device=hidden.device, dtype=hidden.dtype)
         # Quantum-conditioned rank gate
-        quantum_rank_gate = 1.0 + self.quantum_rank_gate_strength * torch.tanh( quantum_features)
+        quantum_rank_gate = 1.0 + self.quantum_rank_gate_strength * torch.tanh(quantum_features)
         quantum_features = quantum_features * quantum_rank_gate
         # Frozen random projection: rank -> hidden_size
-        directional_update = self.up( self.dropout(quantum_features))
+        directional_update = self.up(self.dropout(quantum_features))
         # Static VeRA output scaling
         directional_update = directional_update * self.vera_d
         # Quantum-conditioned output gate
-        quantum_output_gate = 1.0 + self.quantum_output_gate_strength * torch.tanh( directional_update)
+        quantum_output_gate = 1.0 + self.quantum_output_gate_strength * torch.tanh(directional_update)
         directional_update = directional_update * quantum_output_gate
         # DoRA-style direction branch
         direction = hidden + self.scale * directional_update
@@ -96,6 +103,9 @@ class ModuleQuantumDVoRALinear(nn.Module):
         diff_method: str = "parameter-shift",
         token_policy: str = "cls",
         adapter_device: torch.device = torch.device("cpu"),
+        use_ibm_fake_noise: bool = False,
+        ibm_fake_backend_name: str = "FakeSherbrooke",
+        simulator_seed: int | None = None
     ):
         super().__init__()
         if token_policy not in {"cls", "all"}:
@@ -117,6 +127,9 @@ class ModuleQuantumDVoRALinear(nn.Module):
             diff_method=diff_method,
             quantum_dropout=quantum_dropout,
             device=None,
+            use_ibm_fake_noise=use_ibm_fake_noise,
+            ibm_fake_backend_name=ibm_fake_backend_name,
+            simulator_seed=simulator_seed,
         ).to(adapter_device)
         self.up = nn.Linear(rank, out_features, bias=False).to(adapter_device)
         self.dropout = nn.Dropout(dropout)
@@ -128,6 +141,7 @@ class ModuleQuantumDVoRALinear(nn.Module):
         self.quantum_magnitude_strength = nn.Parameter(torch.tensor(0.10, device=adapter_device))
         self.magnitude_up = nn.Linear(rank, out_features, bias=False).to(adapter_device)
         nn.init.zeros_(self.magnitude_up.weight)
+        # nn.init.normal_(self.magnitude_up.weight, mean=0.0, std=1e-4)
         nn.init.normal_(self.down.weight, mean=0.0, std=1.0 / math.sqrt(in_features))
         nn.init.normal_(self.up.weight, mean=0.0, std=1.0 / math.sqrt(rank))
         self.down.weight.requires_grad_(False)
