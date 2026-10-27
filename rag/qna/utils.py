@@ -15,6 +15,8 @@ from difflib import SequenceMatcher
 
 from .types import RetrievalResult
 
+from core.embedding_workspace import activate_hq_workspace
+
 log = logging.getLogger(__name__)
 
 INTENT_PROFILES = {
@@ -740,6 +742,10 @@ def expected_model_from_cfg(cfg: dict, backend: str | None = None, source: str =
     if provider == "llamacpp":
         return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
 
+    if source == "runtime" and provider == "quantum_peft":
+        qcfg = cfg.get("quantum_peft", {})
+        return str(qcfg.get("model_id") or qcfg.get("model_dir", ""))
+
     return str(cfg.get("ollama", {}).get("embedding_model", ""))
 
 def check_faiss_model_match(*, actual_model, expected_model, policy: str = "error") -> None:
@@ -1057,7 +1063,9 @@ def filter_by_intent_source(conn: sqlite3.Connection, chunk_ids: list[int], inte
 
 def load_cfg(path: str = "rag/config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+
+    return activate_hq_workspace(cfg)
     
 def as_bool(x, default: bool = False) -> bool:
     if x is None:

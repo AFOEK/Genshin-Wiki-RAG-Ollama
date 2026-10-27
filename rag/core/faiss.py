@@ -8,6 +8,7 @@ import numpy as np
 
 from core.paths import resolve_db_path, resolve_faiss_dir
 from core.db import read_only_connect
+from core.embed import embedding_model_name
 
 log = logging.getLogger(__name__)
 
@@ -215,7 +216,7 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
         "normalized": True,
         "db_path": str(db_path),
         "embedding_backend": cfg.get("runtime", {}).get("embedding_provider", "unknown"),
-        "embedding_model": (cfg.get("ollama", {}).get("embedding_model") if cfg.get("runtime", {}).get("embedding_provider") == "ollama" else cfg.get("llamacpp", {}).get("embedding_model", "unknown")),
+        "embedding_model": embedding_model_name(cfg),
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     log.info("[FAISS] JSON written at %s", str(meta_path))

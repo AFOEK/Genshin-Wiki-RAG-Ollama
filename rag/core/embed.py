@@ -231,7 +231,7 @@ def embed_quantum(cfg: dict, text_or_texts, *, mode: str = "passage"):
             if not torch.isfinite(vectors).all().item():
                 raise RuntimeError("HQ returned nonfinite embedding values")
 
-            results.extend(pack_vec(row.detach().float().cpu().tolist()) for row in vectors)
+            results.extend([pack_vec(row.detach().float().cpu().tolist()) for row in vectors])
     return results if is_batch else results[0]
 
 def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int=10, backoff_s: float=1.0, mode: Literal["passage", "query"] = "passage", title: str | list[str] | tuple[str,...] | None = None):

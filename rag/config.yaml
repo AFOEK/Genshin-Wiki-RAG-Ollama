@@ -284,15 +284,18 @@ retrieval_metrics:
   print_every: 25
   
 runtime:
-  embedding_provider: ollama   #ollama | llamacpp
+  embedding_provider: ollama   #ollama | llamacpp | quantum_peft
   qa_provider: ollama          #ollama | llamacpp
   accelerator: auto            #auto | cpu | vulkan | opencl
   faiss_model_mismatch: error  # error | warn | ignore
   faiss_expected_model: kaggle # kaggle | runtime | ollama | llamacpp
 
 quantum_peft:
-  model_dir: rag/data/models/
-  model_id: genshin-hq-lora-ideal-seed42
+  model_dir: rag/data/models/hq_lora_pooled_seed_42 #Change to the appropiate model name / path
+  model_id: genshin-hq-lora-ideal-seed42  #Change to the appropiate model name / path
+  weight_kind: adapter
+  max_length: 256
+  auto_prepare: true
   device: auto
   batch_size: 16
 

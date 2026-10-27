@@ -64,6 +64,10 @@ def embedding_model_from_cfg(cfg: dict, *, backend: str | None = None, source: s
     if provider == "llamacpp":
         return str(cfg.get("llamacpp", {}).get("embedding_model", ""))
 
+    if source == "runtime" and provider == "quantum_peft":
+        qcfg = cfg.get("quantum_peft", {})
+        return str(qcfg.get("model_id") or qcfg.get("model_dir", ""))
+
     return str(cfg.get("ollama", {}).get("embedding_model", ""))
 
 def build_turbovec_from_sqlite(cfg: dict, *, overwrite: bool = False, backend: str | None = None) -> dict:

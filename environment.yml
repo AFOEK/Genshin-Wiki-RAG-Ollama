@@ -59,6 +59,7 @@ dependencies:
   - zstandard
   - pymysql
   - protobuf
+  - filelock
 
   # --------------------------------------------------------------------------
   # Git

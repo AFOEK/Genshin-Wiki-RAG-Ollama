@@ -9,6 +9,7 @@ from pathlib import Path
 
 from core.db import connect, ensure_db
 from core.embed import embed
+from core.embedding_workspace import activate_hq_workspace
 from core.paths import resolve_db_path
 from core.faiss import build_faiss_from_sqlite
 from core.fts import sync_dirty_chunks_fts, mark_all_active_docs_dirty, rebuild_chunks_fts
@@ -105,6 +106,15 @@ def main():
             cfg.get("logging", {}).get("file"),
             cfg.get("logging", {}).get("level", "INFO")
         )
+        if cfg.get("runtime", {}).get("embedding_provider") == "quantum_peft":
+            if args.BACKEND is not None:
+                raise RuntimeError("For HQ-PEFT, select the provider using config.yaml and omit the --BACKEND override.")
+
+            if do_crawl:
+                logging.getLogger(__name__).warning("[Custom_Embedding] Disabling crawl for the embedding snapshot. Crawl into the canonical database separately.")
+                do_crawl = False
+
+        cfg = activate_hq_workspace(cfg)
         log = logging.getLogger(__name__)
         log.info("[INFO] Logging initialized")
         db_path = resolve_db_path(cfg)
