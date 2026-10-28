@@ -4,12 +4,13 @@ import time
 import threading
 import logging
 import torch
+import sys
 
 from typing import Literal, Any
 from pathlib import Path
 from functools import lru_cache
 
-from fine_tune.custom_peft.safetensors_loader import load_hq_retriever
+from fine_tune.custom_peft.safetensor_loader import load_hq_retriever
 from core.paths import resolve_storage_root
 
 log = logging.getLogger(__name__)
@@ -174,6 +175,10 @@ def embed_llamacpp(base_url: str, model: str, text_or_texts, timeout: int):
 
 @lru_cache(maxsize=1)
 def _load_hq_model(export_dir: str, device: str, weights_kind: str):
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
     return load_hq_retriever(
         export_dir,
         encoder_device=device,

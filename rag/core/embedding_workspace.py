@@ -4,8 +4,9 @@ import hashlib
 import json
 import logging
 import sqlite3
-from pathlib import Path
 
+from typing import cast
+from pathlib import Path
 from filelock import FileLock
 
 from core.embed import embed
@@ -125,19 +126,18 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
 
             texts = [defang_tables(str(r["text"] or "")[:max_chars]) for r in rows]
             packed = embed(cfg, texts, mode="passage")
+            if not isinstance(packed, list):
+                raise TypeError("Expected a list of (bytes, dimensions) tuples from batch embedding")
+
             if len(packed) != len(rows):
-                raise RuntimeError("HQ embedding batch returned wrong vector count")
+                raise RuntimeError(f"HQ embedding batch returned {len(packed)} vectors for {len(rows)} rows")
 
             values = []
-            for row, (blob, dims) in zip(rows, packed):
-                if (not isinstance(blob, bytes) or dims <= 0 or len(blob) != dims * 4):
+            for row, (blob, dims) in zip(rows, packed, strict=True):
+                if (not isinstance(blob, bytes) or not isinstance(dims, int) or dims <= 0 or len(blob) != dims * 4):
                     raise RuntimeError(f"Invalid HQ embedding at chunk {row['chunk_id']}")
 
-                values.append((
-                    int(row["chunk_id"]),
-                    int(dims),
-                    blob,
-                ))
+                values.append((int(row["chunk_id"]), dims, blob,))
 
             conn.executemany("""
                 INSERT INTO embeddings(chunk_id,dims,vector)

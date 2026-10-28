@@ -3,11 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
-from .configs import (
-    MODULE_TARGET_PRESETS,
-    QUANTUM_DEVICE,
-    ENCODER_DEVICE,
-)
+from .configs import MODULE_TARGET_PRESETS, QUANTUM_DEVICE, ENCODER_DEVICE
 
 from HQ_LoRA import HybridQuantumLoRAAdapter
 from HQ_DVoRA import HybridQuantumDVoRAAdapter

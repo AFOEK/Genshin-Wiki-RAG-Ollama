@@ -1,12 +1,17 @@
 import json
 import torch
+import sys
+
 from pathlib import Path
 from safetensors.torch import load_file, load_model
+
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from HybridQuantumRetriever import HybridQuantumRetriever
 from HQ_LoRA import ModuleQuantumLoRALinear
 from HQ_DVoRA import ModuleQuantumDVoRALinear
-
 
 def expected_adapter_keys(model):
     if not model.uses_module_peft:
