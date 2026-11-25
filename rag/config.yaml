@@ -707,22 +707,22 @@ dataset_split:
   seed: 1337
 
 pipeline:
-  chunk_size: 600
-  chunk_overlap: 150
+  chunk_size: 2500
+  chunk_overlap: 1500
   max_embed_chars: 450
   min_embed_chars: 100
   archive_raw: true
 
 crawler:
-  default_workers: 2
-  max_concurrent_requests: 8
+  default_workers: 8
+  max_concurrent_requests: 16
 
 threading:
-  embed_queue_size: 200
+  embed_queue_size: 2500
   embed_workers: 1
-  embed_batch_size: 32
-  embed_batch_wait_ms: 500
-  document_queue_size: 120
+  embed_batch_size: 64
+  embed_batch_wait_ms: 5500
+  document_queue_size: 2200
 
 embedding_prompts:
   enabled: true
@@ -814,7 +814,7 @@ sources:
     api: https://genshin-impact.fandom.com/api.php
     max_pages: null
     rate_limit_s: 2.0
-    crawl_workers: 2
+    crawl_workers: 8
     validation:
       search_domains:
         - genshin-impact.fandom.com
@@ -824,7 +824,7 @@ sources:
   - name: honey
     kind: honey_html
     tier: supplementary
-    enabled: true
+    enabled: false
     weight: 0.65
     base_url: https://gensh.honeyhunterworld.com
     seeds:
@@ -854,7 +854,7 @@ sources:
     deny_url_regex: "([?&]c_page=\\d+|/archives/Players-Report|/comments|#comments|#comment|#respond|login|signin|signup|register|premium)"
     chunk_deny_text_regex: '(all message boards|list of message boards|co-op board|discussion board|friend requests|supporting cast|teapot designs|submissions:\s*\d+|post details)'
     rate_limit_s: 2.0
-    crawl_workers: 2
+    crawl_workers: 4
     validation:
       search_domains:
         - game8.co
@@ -881,7 +881,7 @@ sources:
     allow_url_regex: '^https://genshin\.gg(?:/(?:characters?|weapons?|artifacts?|enemies|materials?|food|tcg|tier-list|codes|builds?|teams?|farming|elements?|buffs?|ascension|resin|wishes?|banners?|events?|achievements?|domains?|bosses?|quests?)?(?:/[^/]*)?/?)?$'
     max_pages: null
     rate_limit_s: 2.0
-    crawl_workers: 2
+    crawl_workers: 4
     validation:
       search_domains:
         - genshin.gg

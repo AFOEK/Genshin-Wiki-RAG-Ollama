@@ -92,7 +92,7 @@ nuke_all() {
     mkdir -p "$LOG_ROOT"
 }
 
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="$PATH:$HOME/.local/bin"
 
 LOCK="/tmp/genshin_rag_pipeline.lock"
 if [ "${CRON_MODE:-0}" = "1" ]; then
@@ -323,8 +323,16 @@ log "Pipeline starting (cron=${CRON_MODE:-0})"
 
 #rm -rf /mnt/ssd/genshin_rag/data/* &&  rm -rf rag/logs/* && rm -rf rag/chunks_kaggle && rm -rf rag/data/*
 
-log "Activating virtual environment"
-source .venv/bin/activate
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+    log "[ENV] Activating project venv"
+    source "$SCRIPT_DIR/.venv/bin/activate"
+elif [ -n "${CONDA_PREFIX:-}" ]; then
+    log "[ENV] Using active Conda environment: $CONDA_DEFAULT_ENV"
+else
+    log "[ENV] ERROR: Neither project venv nor active Conda environment found"
+    exit 1
+fi
+log "[ENV] Python: $(python3 -c 'import sys; print(sys.executable)')"
 
 log "Starting crawl, repair, audit, and FAISS migrations"
 if ! python3 rag/main.py --DB_CRAWL=True --DB_AUDIT=True --DB_REPAIR=True --FAISS_MIGRATE=True --FAISS_AUDIT=True --FAISS_OVERWRITE=True --TURBOVEC_MIGRATE=True --TURBOVEC_OVERWRITE=True --TURBOVEC_AUDIT=True --FTS_SYNC=True --PARENT_SYNC=True --GRAPH_SYNC=False --GRAPH_FORCE=False --GRAPH_PRUNE=False; then

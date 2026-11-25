@@ -37,5 +37,8 @@ fine_tune/data/hf_cache/
 #Browser settings
 Preferences
 
+#Drisson page artifatcs
+data/
+
 .env.*
 .env
