@@ -8,8 +8,10 @@ import sqlite3
 from typing import cast
 from pathlib import Path
 from filelock import FileLock
+from copy import deepcopy
+from contextlib import closing
 
-from core.embed import embed
+from core.embed import embed, embedding_model_name, normalize_backend_name
 from core.faiss import build_faiss_from_sqlite
 from core.paths import resolve_storage_root
 from core.turbovec import build_turbovec_from_sqlite
@@ -30,31 +32,28 @@ def _file_stat(path: Path) -> dict | None:
     return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
+
 def _identity(cfg: dict, root: Path, source: Path) -> dict:
-    qcfg = cfg["quantum_peft"]
-    model_dir = _absolute(root, str(qcfg["model_dir"]))
-    config_path = model_dir / "quantum_config.json"
-    if not config_path.is_file():
-        raise FileNotFoundError(config_path)
+    provider = normalize_backend_name(
+        cfg.get("runtime", {}).get(
+            "embedding_provider", "ollama"
+        )
+    )
 
-    weights = {name: _file_stat(model_dir / name) for name in ("adapter.safetensors", "model.safetensors")}
-    if not any(value is not None for value in weights.values()):
-        raise FileNotFoundError(f"No Safetensors checkpoint in {model_dir}")
-
-    return {
-        "model_id": str(qcfg["model_id"]),
-        "model_dir": str(model_dir),
-        "model_config_sha256": hashlib.sha256(
-            config_path.read_bytes()
-        ).hexdigest(),
-        "weights": weights,
+    identity = {
+        "provider": provider,
+        "model_id": embedding_model_name(cfg),
         "source": str(source),
         "source_db": _file_stat(source),
         "source_wal": _file_stat(Path(str(source) + "-wal")),
         "max_embed_chars": int(
-            cfg.get("pipeline", {}).get("max_embed_chars", 1800)
+            cfg.get("pipeline", {}).get(
+                "max_embed_chars", 1800
+            )
         ),
-        "max_length": qcfg.get("max_length"),
+        "embedding_prompts": cfg.get(
+            "embedding_prompts", {}
+        ),
         "faiss": cfg.get("faiss", {}),
         "turbovec": {
             key: cfg.get("turbovec", {}).get(key)
@@ -66,6 +65,46 @@ def _identity(cfg: dict, root: Path, source: Path) -> dict:
         },
     }
 
+    if not identity["model_id"]:
+        raise ValueError("Embedding model is not configured")
+
+    if provider == "quantum_peft":
+        qcfg = cfg["quantum_peft"]
+        model_dir = _absolute(root, str(qcfg["model_dir"]))
+        config_path = model_dir / "quantum_config.json"
+
+        if not config_path.is_file():
+            raise FileNotFoundError(config_path)
+
+        weights = {
+            name: _file_stat(model_dir / name)
+            for name in (
+                "adapter.safetensors",
+                "model.safetensors",
+            )
+        }
+
+        if not any(weights.values()):
+            raise FileNotFoundError(
+                f"No Safetensors found in {model_dir}"
+            )
+
+        identity.update({
+            "model_dir": str(model_dir),
+            "model_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "weights": weights,
+            "weights_kind": qcfg.get("weights_kind", "auto"),
+            "max_length": qcfg.get("max_length"),
+        })
+
+    elif provider == "ollama":
+        identity["base_url"] = cfg["ollama"]["base_url"]
+
+    elif provider == "llamacpp":
+        identity["embedding_url"] = cfg["llamacpp"]["embedding_url"]
+
+    return identity
+
 
 def _copy_snapshot(original: Path, target: Path):
     if target.exists():
@@ -73,8 +112,12 @@ def _copy_snapshot(original: Path, target: Path):
 
     temp = target.with_suffix(".copying.sqlite")
     temp.unlink(missing_ok=True)
-    with sqlite3.connect(f"{original.as_uri()}?mode=ro", uri=True) as src:
-        with sqlite3.connect(str(temp)) as dst:
+
+    with closing(sqlite3.connect(
+        f"{original.as_uri()}?mode=ro",
+        uri=True,
+    )) as src:
+        with closing(sqlite3.connect(str(temp))) as dst:
             src.backup(dst, pages=1000)
 
     temp.replace(target)
@@ -110,7 +153,7 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
         max_chars = int(cfg.get("pipeline", {}).get("max_embed_chars", 1800))
         while True:
             rows = conn.execute("""
-                SELECT c.chunk_id, c.text
+                SELECT c.chunk_id, c.text, d.title
                 FROM chunks c
                 JOIN docs d ON d.doc_id = c.doc_id
                 LEFT JOIN embeddings e ON e.chunk_id = c.chunk_id
@@ -125,12 +168,13 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
                 break
 
             texts = [defang_tables(str(r["text"] or "")[:max_chars]) for r in rows]
-            packed = embed(cfg, texts, mode="passage")
+            titles = [str(r["title"] or "") for r in rows]
+            packed = embed(cfg, texts, mode="passage", title=titles)
             if not isinstance(packed, list):
-                raise TypeError("Expected a list of (bytes, dimensions) tuples from batch embedding")
+                raise TypeError("Expected batch embedding results")
 
             if len(packed) != len(rows):
-                raise RuntimeError(f"HQ embedding batch returned {len(packed)} vectors for {len(rows)} rows")
+                raise RuntimeError("Embedding batch returned wrong vector count")
 
             values = []
             for row, (blob, dims) in zip(rows, packed, strict=True):
@@ -176,78 +220,114 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
         return int(total)
 
 
-def activate_hq_workspace(cfg: dict) -> dict:
+
+def activate_hq_workspace(cfg: dict, *, embed_only: bool = False,) -> dict:
     if cfg.get("_hq_workspace_active"):
         return cfg
 
-    provider = str(cfg.get("runtime", {}).get("embedding_provider", "ollama")).lower()
-    if provider != "quantum_peft":
+    cfg = deepcopy(cfg)
+    provider = normalize_backend_name(
+        cfg.get("runtime", {}).get(
+            "embedding_provider", "ollama"
+        )
+    )
+
+    cfg.setdefault("runtime", {})["embedding_provider"] = provider
+    qcfg = cfg.get("quantum_peft", {}) or {}
+    wcfg = cfg.get("embedding_workspace", {}) or {}
+    enabled = bool(wcfg.get("enabled", False))
+    if provider == "quantum_peft":
+        enabled = enabled or bool(qcfg.get("auto_prepare", False))
+
+    if not embed_only and not enabled:
         return cfg
 
-    qcfg = cfg.get("quantum_peft", {})
-    if not qcfg.get("auto_prepare", False):
-        return cfg
+    # Select the appropriate embedding batch size.
+    if provider == "quantum_peft":
+        batch_size = int(qcfg.get("batch_size", 8))
+    else:
+        batch_size = int(cfg.get("threading", {}).get("embed_batch_size", 32))
 
-    if not qcfg.get("model_id"):
-        raise ValueError("quantum_peft.model_id must be set")
-
-    batch_size = int(qcfg.get("batch_size", 8))
     if batch_size < 1:
-        raise ValueError("quantum_peft.batch_size must be positive")
+        raise ValueError("Embedding batch size must be positive")
 
     root = resolve_storage_root(cfg)
     original = _absolute(root, str(cfg.get("db_path", "data/genshin_rag.db")),)
-
     if not original.is_file():
         raise FileNotFoundError(original)
 
     identity = _identity(cfg, root, original)
-    encoded = json.dumps(identity, sort_keys=True, default=str)
-    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+
     workspace = (root / "data" / "embedding_workspaces" / digest)
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "genshin_rag.db"
-    faiss_index = (workspace / "faiss" / "current" / "index.faiss")
-    tv_index = ( workspace / "turbovec" / "current" / "index.tvim")
     ready = workspace / "ready.json"
-    # Override paths in memory, not in config.yaml.
+    faiss_index = (workspace / "faiss" / "current" / "index.faiss")
+    tv_index = (workspace / "turbovec" / "current" / "index.tvim")
     cfg["db_path"] = str(target)
     cfg["faiss_path"] = str(workspace / "faiss")
     cfg.setdefault("turbovec", {})["path"] = str(workspace / "turbovec")
+    cfg["turbovec"]["model_source"] = "runtime"
+    cfg["runtime"]["faiss_expected_model"] = "runtime"
     cfg.setdefault("retrieval_cache", {})["path"] = str(workspace / "retrieval_cache.sqlite")
-    cfg["_hq_workspace_active"] = True
+    log.info("[EMBED] Provider: %s", provider)
+    log.info("[EMBED] Model: %s", identity["model_id"])
+    log.info("[EMBED] Workspace: %s", workspace)
 
-    lock = FileLock(str(workspace / "prepare.lock"), timeout=-1,)
-
+    lock = FileLock(str(workspace / "prepare.lock"),  timeout=-1,)
     with lock:
-        if (ready.is_file() and target.is_file() and faiss_index.is_file() and tv_index.is_file()):
+        # Reuse the original corpus without crawling.
+        _copy_snapshot(original, target)
+        # Generate or resume embeddings.
+        count = _embed_missing(cfg, target, digest, batch_size,)
+        if count == 0:
+            raise RuntimeError("No active chunks to embed")
+
+        log.info("[EMBED] Active embedded chunks: %d", count,)
+        if embed_only:
+            log.info("[EMBED_ONLY] Skipping dense index construction")
+            return cfg
+
+        # Only import index builders when needed.
+        from core.faiss import build_faiss_from_sqlite
+        from core.turbovec import build_turbovec_from_sqlite
+        indexes_ready = False
+        if (ready.is_file() and faiss_index.is_file() and tv_index.is_file()):
             try:
                 saved = json.loads(ready.read_text(encoding="utf-8"))
-                if saved.get("identity") == digest:
-                    log.info("[Custom_Embedding] Reusing workspace: %s", workspace,)
-                    return cfg
+
+                indexes_ready = (saved.get("identity") == digest and saved.get("chunks") == count)
+
             except (OSError, ValueError):
-                pass
+                indexes_ready = False
 
-        _copy_snapshot(original, target)
-        count = _embed_missing(cfg, target, digest, batch_size)
-        if count == 0:
-            raise RuntimeError("Cannot create dense indexes from an empty corpus")
+        if not indexes_ready:
+            ready.unlink(missing_ok=True)
+            log.info("[EMBED] Building FAISS")
+            build_faiss_from_sqlite(cfg, overwrite=True,)
+            log.info("[EMBED] Building TurboVec")
+            build_turbovec_from_sqlite(cfg, overwrite=True, backend=provider,)
+            if not (faiss_index.is_file() and tv_index.is_file()):
+                raise RuntimeError("Dense index construction incomplete")
 
-        log.info("[Custom_Embedding] Building FAISS index")
-        build_faiss_from_sqlite(cfg, overwrite=True)
-        log.info("[Custom_Embedding] Building TurboVec index")
-        build_turbovec_from_sqlite(cfg, overwrite=True, backend="quantum_peft",)
-        if not (faiss_index.is_file() and tv_index.is_file()):
-            raise RuntimeError("Dense index files missing after build")
+            temp = ready.with_suffix(".tmp")
+            temp.write_text(
+                json.dumps({
+                    "identity": digest,
+                    "model": identity["model_id"],
+                    "provider": provider,
+                    "chunks": count,
+                }, indent=2),
+                encoding="utf-8",
+            )
+            temp.replace(ready)
 
-        temp = ready.with_suffix(".tmp")
-        temp.write_text(
-            json.dumps({
-                "identity": digest,
-                "chunks": count,
-            }), encoding="utf-8",)
-        temp.replace(ready)
-        log.info("[Custom_Embedding] Workspace ready: %d chunks", count,)
-
+    cfg["_hq_workspace_active"] = True
     return cfg

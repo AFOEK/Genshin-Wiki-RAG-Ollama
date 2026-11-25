@@ -55,6 +55,7 @@ def main():
         ap = argparse.ArgumentParser()
         ap.add_argument("--DB_CRAWL", default="True")
         ap.add_argument("--DB_AUDIT", default="True")
+        ap.add_argument("--EMBED_ONLY", default="False")
         ap.add_argument("--FAISS_MIGRATE", default="False")
         ap.add_argument("--FAISS_AUDIT", default="False")
         ap.add_argument("--FAISS_OVERWRITE", default="False")
@@ -75,11 +76,12 @@ def main():
         ap.add_argument("--GRAPH_FORCE", default="False")
         ap.add_argument("--GRAPH_PRUNE", default="True")
         ap.add_argument("--GRAPH_LIMIT", type=int, default=None)
-        ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp"])
+        ap.add_argument("--BACKEND", default=None, choices=["ollama", "llamacpp", "llama.cpp", "quantum_peft"])
         args = ap.parse_args()
 
         do_crawl = parse_bool(args.DB_CRAWL)
         do_db_audit = parse_bool(args.DB_AUDIT)
+        do_embed_only = parse_bool(args.EMBED_ONLY)
         do_faiss_migrate = parse_bool(args.FAISS_MIGRATE)
         do_faiss_audit = parse_bool(args.FAISS_AUDIT)
         do_turbovec_migrate = parse_bool(args.TURBOVEC_MIGRATE)
@@ -106,6 +108,25 @@ def main():
             cfg.get("logging", {}).get("file"),
             cfg.get("logging", {}).get("level", "INFO")
         )
+
+        log = logging.getLogger(__name__)
+        log.info("[INFO] Logging initialized")
+        db_path = resolve_db_path(cfg)
+        ensure_db(str(db_path))
+        log.info("[INFO] Database init at %s", db_path)
+
+        if do_embed_only:
+            from core.embed import normalize_backend_name
+            runtime = cfg.setdefault("runtime", {})
+            provider = normalize_backend_name(args.BACKEND or runtime.get("embedding_provider", "ollama"))
+            runtime["embedding_provider"] = provider
+            log.info("[EMBED_ONLY] Starting")
+            log.info("[EMBED_ONLY] Backend: %s", provider)
+            workspace_cfg = activate_hq_workspace(cfg, embed_only=True,)
+            log.info("[EMBED_ONLY] Database: %s", workspace_cfg["db_path"],)
+            log.info("[EMBED_ONLY] Completed successfully")
+            return
+        
         if cfg.get("runtime", {}).get("embedding_provider") == "quantum_peft":
             if args.BACKEND is not None:
                 raise RuntimeError("For HQ-PEFT, select the provider using config.yaml and omit the --BACKEND override.")
@@ -115,11 +136,11 @@ def main():
                 do_crawl = False
 
         cfg = activate_hq_workspace(cfg)
-        log = logging.getLogger(__name__)
-        log.info("[INFO] Logging initialized")
-        db_path = resolve_db_path(cfg)
-        ensure_db(str(db_path))
-        log.info("[INFO] Database init at %s", db_path)
+        log.info("[INFO] Activating Hybrid Quantum Workspaces")
+        if cfg.get("_hq_workspace_active"):
+            log.info("[INFO] Hybrid Quantum Workspace enabled, turning off auto crawl and database repairs")
+            do_crawl = False
+            do_db_repair = False
 
         def embed_fn(text_or_texts, mode: str = "passage", title=None):
             return embed(cfg, text_or_texts, backend=args.BACKEND, mode=mode, title=title)
@@ -150,7 +171,6 @@ def main():
         
         if do_crawl:
             q = queue.Queue(maxsize=document_queue_size)
-
             producers = []
             tier_map = {}
             weight_map = {}
