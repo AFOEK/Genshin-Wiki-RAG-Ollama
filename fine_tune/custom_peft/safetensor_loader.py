@@ -1,17 +1,13 @@
 import json
 import torch
-import sys
+import hashlib
 
 from pathlib import Path
 from safetensors.torch import load_file, load_model
 
-_HERE = str(Path(__file__).resolve().parent)
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
-
-from HybridQuantumRetriever import HybridQuantumRetriever
-from HQ_LoRA import ModuleQuantumLoRALinear
-from HQ_DVoRA import ModuleQuantumDVoRALinear
+from .HybridQuantumRetriever import HybridQuantumRetriever
+from .HQ_LoRA import ModuleQuantumLoRALinear
+from .HQ_DVoRA import ModuleQuantumDVoRALinear
 
 def expected_adapter_keys(model):
     if not model.uses_module_peft:
@@ -38,31 +34,18 @@ def expected_adapter_keys(model):
     return expected
 
 
-def load_hq_retriever(
-    export_dir,
-    *,
-    encoder_device="cpu",
-    weights_kind="auto",
-):
+def load_hq_retriever(export_dir, *, encoder_device="cpu", weights_kind="auto"):
     folder = Path(export_dir).expanduser().resolve()
     meta_path = folder / "quantum_config.json"
-
     if not meta_path.is_file():
         raise FileNotFoundError(meta_path)
 
-    meta = json.loads(
-        meta_path.read_text(encoding="utf-8")
-    )
-
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if meta.get("architecture") != "HybridQuantumRetriever":
         raise ValueError("Invalid HQ retriever architecture")
 
     mode = meta["adapter_mode"]
-
-    if (
-        mode.endswith("dvora")
-        and meta.get("reconstructed_frozen_parameters", False)
-    ):
+    if (mode.endswith("dvora") and meta.get("reconstructed_frozen_parameters", False)):
         raise RuntimeError(
             "DVoRA frozen projection weights were not "
             "verified during export. Refusing to load."
@@ -75,9 +58,7 @@ def load_hq_retriever(
     if weights_kind not in {"auto", "adapter", "full"}:
         raise ValueError("Invalid weights_kind")
 
-    if weights_kind == "adapter" or (
-        weights_kind == "auto" and adapter_path.exists()
-    ):
+    if weights_kind == "adapter" or (weights_kind == "auto" and adapter_path.exists()):
         weights_path = adapter_path
         selected_kind = "adapter"
     else:
@@ -103,43 +84,22 @@ def load_hq_retriever(
         quantum_dropout=float(meta["quantum_dropout"]),
         shots=meta.get("shots"),
         diff_method=meta["diff_method"],
-        module_target_preset=(
-            meta.get("module_target_preset") or "qv"
-        ),
-        module_token_policy=(
-            meta.get("module_token_policy") or "cls"
-        ),
-        module_layer_policy=(
-            meta.get("module_layer_policy") or "all"
-        ),
-        module_last_k=int(
-            meta.get("module_last_k") or 2
-        ),
-        module_selected_layers=meta.get(
-            "module_selected_layers"
-        ),
+        module_target_preset=(meta.get("module_target_preset") or "qv"),
+        module_token_policy=(meta.get("module_token_policy") or "cls"),
+        module_layer_policy=(meta.get("module_layer_policy") or "all"),
+        module_last_k=int(meta.get("module_last_k") or 2),
+        module_selected_layers=meta.get("module_selected_layers"),
         module_adapter_device=torch.device("cpu"),
         encoder_device=device,
-        use_ibm_fake_noise=bool(
-            meta.get("use_ibm_fake_noise", False)
-        ),
-        ibm_fake_backend_name=(
-            meta.get("ibm_fake_backend_name")
-            or "FakeSherbrooke"
-        ),
-        simulator_seed=meta.get("simulator_seed"),
+        use_ibm_fake_noise=bool(meta.get("use_ibm_fake_noise", False)),
+        ibm_fake_backend_name=(meta.get("ibm_fake_backend_name") or "FakeSherbrooke"),
+        simulator_seed=meta.get("simulator_seed", meta.get("seed"),),
     )
 
     # Verify the encoder profile matches training.
-    for key in (
-        "pooling_mode",
-        "query_prefix",
-        "document_prefix",
-    ):
+    for key in ("pooling_mode", "query_prefix", "document_prefix",):
         if key in meta and getattr(model, key) != meta[key]:
-            raise RuntimeError(
-                f"Model profile mismatch for {key}"
-            )
+            raise RuntimeError(f"Model profile mismatch for {key}")
 
     if "max_length" in meta:
         model.model_max_length = int(meta["max_length"])
@@ -147,58 +107,43 @@ def load_hq_retriever(
     if "embedding_dimension" in meta:
         expected_dim = int(meta["embedding_dimension"])
         actual_dim = int(model.encoder.config.hidden_size)
-
         if expected_dim != actual_dim:
-            raise RuntimeError(
-                f"Embedding dimension mismatch: "
-                f"{expected_dim} != {actual_dim}"
-            )
+            raise RuntimeError(f"Embedding dimension mismatch: {expected_dim} != {actual_dim}")
 
     # Restore tokenizer saved alongside the weights.
     if (folder / "tokenizer_config.json").is_file():
         from transformers import AutoTokenizer
-
-        model.tokenizer = AutoTokenizer.from_pretrained(
-            str(folder),
-            local_files_only=True,
-        )
+        model.tokenizer = AutoTokenizer.from_pretrained(str(folder), local_files_only=True,)
 
     # Restore weights
     if selected_kind == "adapter":
         state = load_file(str(weights_path), device="cpu")
+        expected_hash = meta.get("safetensors_sha256")
+        if expected_hash is not None:
+            actual_hash = hashlib.sha256(weights_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                raise RuntimeError("Safetensors checksum mismatch")
+        
         expected = expected_adapter_keys(model)
-
         if not expected or set(state) != expected:
-            raise RuntimeError(
-                "Adapter checkpoint keys do not match.\n"
-                f"Missing: {sorted(expected - set(state))[:10]}\n"
-                f"Extra: {sorted(set(state) - expected)[:10]}"
-            )
+            raise RuntimeError("Adapter checkpoint keys do not match.\nMissing: {sorted(expected - set(state))[:10]}\nExtra: {sorted(set(state) - expected)[:10]}")
 
-        result = model.load_state_dict(
-            state,
-            strict=False,
-        )
+        result = model.load_state_dict(state, strict=False,)
+        if result.unexpected_keys or (set(result.missing_keys) & expected):
+            raise RuntimeError(f"Adapter loading failed: {result}")
 
-        if result.unexpected_keys or (
-            set(result.missing_keys) & expected
-        ):
-            raise RuntimeError(
-                f"Adapter loading failed: {result}"
-            )
+        loaded_state = model.state_dict()
+        for name, tensor in state.items():
+            actual = loaded_state[name].detach().cpu()
+            if actual.dtype != tensor.dtype:
+                raise RuntimeError(f"Adapter dtype mismatch: {name}")
 
+            if not torch.equal(actual, tensor):
+                raise RuntimeError(f"Adapter tensor mismatch: {name}")
     else:
-        missing, unexpected = load_model(
-            model,
-            str(weights_path),
-            strict=True,
-        )
-
+        missing, unexpected = load_model(model, str(weights_path), strict=True,)
         if missing or unexpected:
-            raise RuntimeError(
-                f"Full model loading failed: "
-                f"{missing}, {unexpected}"
-            )
+            raise RuntimeError(f"Full model loading failed: {missing}, {unexpected}")
 
     model.eval()
 
@@ -210,5 +155,4 @@ def load_hq_retriever(
     print("Shots:", meta.get("shots"))
     print("IBM noise:", meta.get("use_ibm_fake_noise"))
     print("Embedding dimensions:", model.encoder.config.hidden_size)
-
     return model

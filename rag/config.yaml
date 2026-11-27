@@ -32,6 +32,10 @@ llamacpp:
   timeout: 300
   n_gpu_layers: 99
 
+embedding_workspace:
+  enabled: true
+  build_turbovec: false
+
 fts5:
   batch_size: 2000
 
@@ -256,7 +260,7 @@ hyde:
   timeout: 300
 
 versioning:
-  current: 606
+  current: 702
   aliases:
     luna 1: 600
     luna i: 600
@@ -295,6 +299,9 @@ quantum_peft:
   model_id: genshin-hq-lora-ideal-seed42  #Change to the appropiate model name / path
   weight_kind: adapter
   max_length: 256
+  query_max_length: 80
+  document_max_length: 320
+  include_document_title: true
   auto_prepare: true
   device: auto
   batch_size: 16

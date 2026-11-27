@@ -46,15 +46,10 @@ def _identity(cfg: dict, root: Path, source: Path) -> dict:
         "source": str(source),
         "source_db": _file_stat(source),
         "source_wal": _file_stat(Path(str(source) + "-wal")),
-        "max_embed_chars": int(
-            cfg.get("pipeline", {}).get(
-                "max_embed_chars", 1800
-            )
-        ),
-        "embedding_prompts": cfg.get(
-            "embedding_prompts", {}
-        ),
+        "max_embed_chars": int(cfg.get("pipeline", {}).get("max_embed_chars", 1800)),
+        "embedding_prompts": cfg.get("embedding_prompts", {}),
         "faiss": cfg.get("faiss", {}),
+        "build_turbovec": bool(cfg.get("embedding_workspace", {}).get("build_turbovec", True)),
         "turbovec": {
             key: cfg.get("turbovec", {}).get(key)
             for key in (
@@ -76,25 +71,31 @@ def _identity(cfg: dict, root: Path, source: Path) -> dict:
         if not config_path.is_file():
             raise FileNotFoundError(config_path)
 
-        weights = {
-            name: _file_stat(model_dir / name)
-            for name in (
-                "adapter.safetensors",
-                "model.safetensors",
-            )
-        }
+        weights = {}
+        for name in ("adapter.safetensors", "model.safetensors",):
+            path = model_dir / name
+            if path.is_file():
+                with path.open("rb") as f:
+                    digest = hashlib.file_digest(f, "sha256").hexdigest()
+
+                weights[name] = {
+                    "sha256": digest,
+                    "size": path.stat().st_size,
+                }
 
         if not any(weights.values()):
-            raise FileNotFoundError(
-                f"No Safetensors found in {model_dir}"
-            )
+            raise FileNotFoundError(f"No Safetensors found in {model_dir}")
 
         identity.update({
             "model_dir": str(model_dir),
             "model_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
             "weights": weights,
             "weights_kind": qcfg.get("weights_kind", "auto"),
-            "max_length": qcfg.get("max_length"),
+            "query_max_length": int(qcfg.get("query_max_length", 80)),
+            "document_max_length": int(qcfg.get("document_max_length", 320)),
+            "include_document_title": bool(qcfg.get("include_document_title", True)),
+            "batch_size": int(qcfg.get("batch_size", 16)),
+            "preprocessing_version": 2,
         })
 
     elif provider == "ollama":
@@ -167,7 +168,11 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
             if not rows:
                 break
 
-            texts = [defang_tables(str(r["text"] or "")[:max_chars]) for r in rows]
+            provider = normalize_backend_name(cfg.get("runtime", {}).get("embedding_provider", "ollama"))
+            if provider == "quantum_peft":
+                texts = [str(r["text"] or "") for r in rows]
+            else:
+                texts = [defang_tables(str(r["text"] or "")[:max_chars]) for r in rows]
             titles = [str(r["title"] or "") for r in rows]
             packed = embed(cfg, texts, mode="passage", title=titles)
             if not isinstance(packed, list):
@@ -219,8 +224,6 @@ def _embed_missing(cfg: dict, target: Path, signature: str, batch_size: int) -> 
 
         return int(total)
 
-
-
 def activate_hq_workspace(cfg: dict, *, embed_only: bool = False,) -> dict:
     if cfg.get("_hq_workspace_active"):
         return cfg
@@ -235,6 +238,7 @@ def activate_hq_workspace(cfg: dict, *, embed_only: bool = False,) -> dict:
     cfg.setdefault("runtime", {})["embedding_provider"] = provider
     qcfg = cfg.get("quantum_peft", {}) or {}
     wcfg = cfg.get("embedding_workspace", {}) or {}
+    build_turbovec = bool(wcfg.get("build_turbovec", True))
     enabled = bool(wcfg.get("enabled", False))
     if provider == "quantum_peft":
         enabled = enabled or bool(qcfg.get("auto_prepare", False))
@@ -299,10 +303,9 @@ def activate_hq_workspace(cfg: dict, *, embed_only: bool = False,) -> dict:
         from core.faiss import build_faiss_from_sqlite
         from core.turbovec import build_turbovec_from_sqlite
         indexes_ready = False
-        if (ready.is_file() and faiss_index.is_file() and tv_index.is_file()):
+        if (ready.is_file() and faiss_index.is_file() and (not build_turbovec or tv_index.is_file())):
             try:
                 saved = json.loads(ready.read_text(encoding="utf-8"))
-
                 indexes_ready = (saved.get("identity") == digest and saved.get("chunks") == count)
 
             except (OSError, ValueError):
@@ -312,10 +315,15 @@ def activate_hq_workspace(cfg: dict, *, embed_only: bool = False,) -> dict:
             ready.unlink(missing_ok=True)
             log.info("[EMBED] Building FAISS")
             build_faiss_from_sqlite(cfg, overwrite=True,)
-            log.info("[EMBED] Building TurboVec")
-            build_turbovec_from_sqlite(cfg, overwrite=True, backend=provider,)
-            if not (faiss_index.is_file() and tv_index.is_file()):
-                raise RuntimeError("Dense index construction incomplete")
+            if build_turbovec:
+                log.info("[EMBED] Building TurboVec")
+                build_turbovec_from_sqlite(cfg, overwrite=True, backend=provider,)
+                
+            if not faiss_index.is_file():
+                raise RuntimeError("FAISS index construction incomplete")
+
+            if build_turbovec and not tv_index.is_file():
+                raise RuntimeError("TurboVec index construction incomplete")
 
             temp = ready.with_suffix(".tmp")
             temp.write_text(

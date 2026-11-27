@@ -6,7 +6,7 @@ import pennylane as qml
 from qiskit import transpile
 from qiskit_aer import AerSimulator
 
-from configs import QUANTUM_BACKEND_NAME, NOISE_SIMULATION_METHOD, NOISE_SIMULATION_DEVICE, NOISE_BATCHED_SHOTS_GPU
+from .configs import QUANTUM_BACKEND_NAME, NOISE_SIMULATION_METHOD, NOISE_SIMULATION_DEVICE, NOISE_BATCHED_SHOTS_GPU
 
 log = logging.getLogger(__name__)
 
@@ -89,10 +89,16 @@ class IBMFakeNoiseFactory:
         log.info("[QUANTUM] backend=%s method=%s device=%s shots=%s", self.backend_name, self.simulation_method, self.simulation_device, self.shots,)
         return dev
 
-
 def make_quantum_device(n_qubits: int, shots: int | None = None, use_ibm_fake_noise: bool = False, ibm_fake_backend_name: str = "FakeSherbrooke", simulator_seed: int | None = None):
     if use_ibm_fake_noise:
         factory = IBMFakeNoiseFactory(backend_name=ibm_fake_backend_name, shots=shots, simulation_method=NOISE_SIMULATION_METHOD, simulation_device=NOISE_SIMULATION_DEVICE, batched_shots_gpu=NOISE_BATCHED_SHOTS_GPU, simulator_seed=simulator_seed,)
         return factory.make_pennylane_device(n_qubits)
 
-    return qml.device(QUANTUM_BACKEND_NAME, wires=n_qubits, shots=shots,)
+    device_kwargs = {
+        "wires": n_qubits,
+        "shots": shots,
+    }
+    if simulator_seed is not None:
+        device_kwargs["seed"] = int(simulator_seed)
+
+    return qml.device(QUANTUM_BACKEND_NAME, **device_kwargs)

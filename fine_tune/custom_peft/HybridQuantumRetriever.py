@@ -5,12 +5,12 @@ from transformers import AutoModel, AutoTokenizer
 
 from .configs import MODULE_TARGET_PRESETS, QUANTUM_DEVICE, ENCODER_DEVICE
 
-from HQ_LoRA import HybridQuantumLoRAAdapter
-from HQ_DVoRA import HybridQuantumDVoRAAdapter
-from DVoRA import ClassicalDVoRAAdapter
-from LoRA import ClassicalLoRAAdapter
+from .HQ_LoRA import HybridQuantumLoRAAdapter
+from .HQ_DVoRA import HybridQuantumDVoRAAdapter
+from .DVoRA import ClassicalDVoRAAdapter
+from .LoRA import ClassicalLoRAAdapter
 
-from retriever_support import get_model_profile, get_num_encoder_layers, resolve_module_layer_indices, inject_quantum_peft_modules
+from .retriever_support import get_model_profile, get_num_encoder_layers, resolve_module_layer_indices, inject_quantum_peft_modules
 
 class HybridQuantumRetriever(nn.Module):
     def __init__(

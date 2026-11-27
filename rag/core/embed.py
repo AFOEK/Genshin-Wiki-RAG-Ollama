@@ -186,9 +186,8 @@ def _load_hq_model(export_dir: str, device: str, weights_kind: str):
         weights_kind=weights_kind,
     )
 
-def embed_quantum(cfg: dict, text_or_texts, *, mode: str = "passage"):
+def embed_quantum(cfg: dict, text_or_texts, *, mode: str = "passage", title=None,):
     qcfg = cfg.get("quantum_peft", {}) or {}
-
     model_dir = qcfg.get("model_dir")
     if not model_dir:
         raise ValueError("Missing quantum_peft.model_dir in config.yaml")
@@ -217,6 +216,17 @@ def embed_quantum(cfg: dict, text_or_texts, *, mode: str = "passage"):
     if not texts:
         return []
 
+    if (mode in {"passage", "document", "doc"} and qcfg.get("include_document_title", True)):
+        if isinstance(title, (list, tuple)):
+            titles = list(title)
+        else:
+            titles = [title] * len(texts)
+
+        if len(titles) != len(texts):
+            raise ValueError("HQ embedding title count mismatch")
+
+        texts = [f"{str(t or '').strip()}\n{text}".strip() for text, t in zip(texts, titles)]
+
     if mode not in ("query", "passage", "document", "doc"):
         raise ValueError(f"Unsupported HQ embedding mode: {mode}")
 
@@ -224,15 +234,16 @@ def embed_quantum(cfg: dict, text_or_texts, *, mode: str = "passage"):
     results = []
     with _HQ_MODEL_LOCK, torch.no_grad():
         model = _load_hq_model(str(folder), str(torch.device(device)), weights_kind,)
-        max_length = qcfg.get("max_length")
-        if max_length is not None:
-            max_length = int(max_length)
+        if mode == "query":
+            max_length = int(qcfg.get("query_max_length", 80))
+        else:
+            max_length = int(qcfg.get("document_max_length", 320))
 
         for start in range(0, len(texts), batch_size):
             batch = texts[start:start + batch_size]
             vectors = model.encode_texts(batch, max_length=max_length, is_query=(mode == "query"),)
             if (vectors.ndim != 2 or vectors.shape[0] != len(batch)):
-                raise RuntimeError("Unexpected HQ embedding shape: {tuple(vectors.shape)}")
+                raise RuntimeError(f"Unexpected HQ embedding shape: {tuple(vectors.shape)}")
 
             if not torch.isfinite(vectors).all().item():
                 raise RuntimeError("HQ returned nonfinite embedding values")
@@ -244,7 +255,7 @@ def embed(cfg: dict, text_or_texts, backend: str | None = None, retries: int=10,
     runtime = cfg.get("runtime", {})
     provider = normalize_backend_name(backend if backend is not None  else runtime.get("embedding_provider", "ollama"))
     if provider == "quantum_peft":
-        return embed_quantum(cfg, text_or_texts, mode=mode,)
+        return embed_quantum(cfg, text_or_texts, mode=mode, title=title,)
 
     text_or_texts = apply_embedding_prompt(cfg, text_or_texts, mode=mode, backend=provider, title=title,)
     last_err =  None

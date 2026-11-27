@@ -3,8 +3,8 @@ import logging
 import pennylane as qml
 import torch.nn as nn
 
-from quantum_device import make_quantum_device
-from configs import QUANTUM_INIT_STD, QUANTUM_BACKEND_NAME
+from .quantum_device import make_quantum_device
+from .configs import QUANTUM_INIT_STD, QUANTUM_BACKEND_NAME
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class VariationalQuantumLayer(nn.Module):
 
         self.weights = nn.Parameter(QUANTUM_INIT_STD * torch.randn(n_layers, n_qubits, 3,))
 
-        @qml.qnode(self.device, interface="torch", diff_method=diff_method, cache=True)
+        @qml.qnode(self.device, interface="torch", diff_method=diff_method, cache=(shots is None))
         def circuit(inputs, weights, rotation_mask):
             qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation="Y")
             for layer in range(n_layers):

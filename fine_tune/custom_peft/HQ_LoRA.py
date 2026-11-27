@@ -6,9 +6,9 @@ import torch
 import math
 import logging
 import torch.nn as nn
-from configs import LORA_DOWN_INIT_STD, LORA_UP_INIT_STD
+from .configs import LORA_DOWN_INIT_STD, LORA_UP_INIT_STD
 
-from VQC import VariationalQuantumLayer
+from .VQC import VariationalQuantumLayer
 
 log = logging.getLogger(__name__)
 

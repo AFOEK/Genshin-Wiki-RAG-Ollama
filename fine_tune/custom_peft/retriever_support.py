@@ -4,9 +4,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from configs import  MODEL_PROFILES
-from HQ_LoRA import ModuleQuantumLoRALinear
-from HQ_DVoRA import ModuleQuantumDVoRALinear
+from .configs import  MODEL_PROFILES
+from .HQ_LoRA import ModuleQuantumLoRALinear
+from .HQ_DVoRA import ModuleQuantumDVoRALinear
 
 
 def get_model_profile(model_name: str) -> dict:
