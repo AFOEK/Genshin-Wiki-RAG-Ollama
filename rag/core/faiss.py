@@ -45,7 +45,10 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
         SELECT e.dims AS dims
         FROM embeddings e
         JOIN chunks c ON c.chunk_id = e.chunk_id
-        WHERE c.is_active=1 LIMIT 1
+        JOIN docs d ON d.doc_id = c.doc_id
+        WHERE c.is_active = 1
+        AND COALESCE(d.status, 1) = 1
+        LIMIT 1
     """)
     row = cur.fetchone()
     if row is None:
@@ -117,10 +120,15 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
 
     while True:
         cur.execute("""
-            SELECT e.chunk_id AS chunk_id, e.dims AS dims, e.vector AS vector
+            SELECT
+                e.chunk_id AS chunk_id,
+                e.dims AS dims,
+                e.vector AS vector
             FROM embeddings e
             JOIN chunks c ON c.chunk_id = e.chunk_id
-            WHERE c.is_active=1
+            JOIN docs d ON d.doc_id = c.doc_id
+            WHERE c.is_active = 1
+            AND COALESCE(d.status, 1) = 1
             ORDER BY e.chunk_id
             LIMIT ? OFFSET ?
         """, (batch, offset))
@@ -146,8 +154,18 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
             batch_ids.append(cid)
             vecs.append(v)
         
-        X = np.stack(vecs, axis=0).astype(np.float32, copy=False)
+        X = np.ascontiguousarray(np.stack(vecs, axis=0), dtype=np.float32,)
+        if not np.isfinite(X).all():
+            invalid_rows = np.where(~np.isfinite(X).all(axis=1))[0]
+            invalid_ids = [batch_ids[i] for i in invalid_rows]
+            raise RuntimeError(f"[FAISS] NaN or Inf detected in chunks: {invalid_ids}")
+
         if normalize:
+            norms = np.linalg.norm(X, axis=1)
+            if np.any(norms <= 1e-12):
+                invalid_rows = np.where(norms <= 1e-12)[0]
+                invalid_ids = [batch_ids[i] for i in invalid_rows]
+                raise RuntimeError(f"[FAISS] Zero-norm embeddings: {invalid_ids}")
             faiss.normalize_L2(X)
 
         if isinstance(index, faiss.IndexIVF) and not trained:
@@ -155,13 +173,11 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
             train_ids.append(batch_ids)
             total_train = sum(arr.shape[0] for arr in train_vecs)
             nlist = int(faiss_cfg.get("nlist", 256))
-
             if total_train >= max(10000, nlist * 40):
                 Xtrain = np.vstack(train_vecs)
                 log.info("[FAISS] training IVF index on %d vectors", Xtrain.shape[0])
                 index.train(Xtrain)
                 trained = True
-
                 for buffered_X, buffered_ids in zip(train_vecs, train_ids):
                     bn = buffered_X.shape[0]
                     start = 0
@@ -190,13 +206,12 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
             start = end
 
         offset += len(rows)
-
         if total and total % log_every == 0:
             dt = time.time() - t0
             rate = total / max(dt, 1e-9)
             log.info("[FAISS] indexed=%d rate=%.0f vec/s", total, rate)
     
-
+    conn.close()
     if isinstance(index, faiss.IndexIVF):
         if not trained:
             raise RuntimeError("[FAISS] IVF index never got enough training vectors")
@@ -204,16 +219,25 @@ def build_faiss_from_sqlite(cfg: dict, *, batch: int = 5000, add_batch: int = 20
     
     faiss.write_index(index, str(index_path))
     log.info("[FAISS] Index written at %s", str(index_path))
+    if index.ntotal == 0:
+        raise RuntimeError("[FAISS] Empty index")
+
+    if index.ntotal != len(ids):
+        raise RuntimeError(f"[FAISS] Index/ID count mismatch: {index.ntotal} != {len(ids)}")
+
+    if len(ids) != len(set(ids)):
+        raise RuntimeError("[FAISS] Duplicate chunk IDs detected")
+
+    log.info("[FAISS] Index integrity PASSED: %d vectors", index.ntotal)
     np.save(str(ids_path), np.asarray(ids, dtype=np.int64))
     log.info("[FAISS] Index ids written at %s", str(ids_path))
-
     meta = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "dims": d,
         "count": int(index.ntotal),
-        "metric": "cosine",
+        "metric": metric_name,
         "faiss_index": index_mode,
-        "normalized": True,
+        "normalized": normalize,
         "db_path": str(db_path),
         "embedding_backend": cfg.get("runtime", {}).get("embedding_provider", "unknown"),
         "embedding_model": embedding_model_name(cfg),
