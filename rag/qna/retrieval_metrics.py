@@ -87,6 +87,28 @@ def flatten_metadata(data:dict[str,Any], prefix:str="meta")->dict[str,Any]:
                 out[name]=value
         return out
 
+def make_dense_metric_record(*, query_id: str, question: str, positive_chunk_id: int, positive_doc_id: int, retrieved_chunk_ids: list[int], retrieved_doc_ids: list[int], embedding_latency_ms: float, search_latency_ms: float) -> dict[str, Any]:
+    if len(retrieved_chunk_ids) != len(retrieved_doc_ids):
+        raise ValueError("Chunk/document result count mismatch")
+
+    unique_docs = list(dict.fromkeys(retrieved_doc_ids))
+    return {
+        "query_id": query_id,
+        "question": question,
+        "positive_chunk_id": positive_chunk_id,
+        "positive_doc_id": positive_doc_id,
+        "chunk_rank": rank(retrieved_chunk_ids, positive_chunk_id,),
+        "document_in_chunk_rank": rank(retrieved_doc_ids, positive_doc_id,),
+        "unique_document_rank": rank(unique_docs, positive_doc_id,),
+        "candidate_count": len(retrieved_chunk_ids),
+        "unique_document_count": len(unique_docs),
+        "retrieved_chunk_ids": retrieved_chunk_ids,
+        "retrieved_doc_ids": retrieved_doc_ids,
+        "embedding_latency_ms": embedding_latency_ms,
+        "search_latency_ms": search_latency_ms,
+        "latency_ms": (embedding_latency_ms + search_latency_ms),
+    }
+
 class RetrievalMetrics:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
@@ -277,3 +299,49 @@ class RetrievalMetrics:
             print(f"Retrieval latency P50   : {f(s['latency_p50_ms'],1)} ms")
             print(f"Retrieval latency P95   : {f(s['latency_p95_ms'],1)} ms")
         print("=======================================\n")
+
+class DenseRetrievalMetrics(RetrievalMetrics):
+    def __init__(self, top_k: int = 100):
+        super().__init__()
+        self.top_k = int(top_k)
+        if self.top_k < 1:
+            raise ValueError("top_k must be positive")
+
+    def summary(self) -> dict[str, Any]:
+        rows = self.rows
+        output = {
+            "queries": len(rows),
+            "errors": self.errors,
+            "search_depth": self.top_k,
+        }
+        rank_fields = {
+            "chunk": "chunk_rank",
+            "document_in_chunk_ranking": "document_in_chunk_rank",
+        }
+        for prefix, field in rank_fields.items():
+            ranks = [row[field] for row in rows]
+            for k in [1, 3, 5, 10, 20, 50, 100, 300, 950]:
+                if k > self.top_k:
+                    continue
+                output[f"{prefix}_recall@{k}"] = (recall(ranks, k))
+                output[f"{prefix}_mrr@{k}"] = (mrr(ranks, k))
+                output[f"{prefix}_ndcg@{k}"] = (ndcg(ranks, k))
+
+            output[f"{prefix}_rank_statistics"] = (rank_stats(ranks))
+
+        latency_fields = ["embedding_latency_ms", "search_latency_ms", "latency_ms",]
+        for field in latency_fields:
+            values = [float(row[field]) for row in rows if row.get(field) is not None]
+            output[f"{field}_mean"] = (mean(values) if values else None)
+            for p in [0.50, 0.90, 0.95, 0.99]:
+                output[f"{field}_p{int(p * 100)}"] = percentile(values, p)
+
+        return output
+
+    def print(self):
+        print("\n===== DENSE RETRIEVAL METRICS =====")
+        for key, value in self.summary().items():
+            if isinstance(value, float):
+                print(f"{key}: {value:.6f}")
+            else:
+                print(f"{key}: {value}")
