@@ -5,6 +5,7 @@ import hashlib
 import json
 import sqlite3
 import sys
+import faiss
 import time
 
 from pathlib import Path
@@ -95,6 +96,30 @@ def configure_model(base_cfg: dict, model_dir: Path) -> dict:
     cfg.setdefault("retrieval_cache", {})["enabled"] = False
     return cfg
 
+def configure_ollama_baseline(base_cfg: dict) -> dict:
+    cfg = deepcopy(base_cfg)
+    cfg.setdefault("runtime", {}).update({
+        "embedding_provider": "ollama",
+        "faiss_expected_model": "runtime",
+        "faiss_model_mismatch": "error",
+    })
+    cfg.setdefault("embedding_workspace", {}).update({
+        "enabled": False,
+    })
+    cfg.setdefault("quantum_peft", {}).update({
+        "auto_prepare": False,
+    })
+    cfg.setdefault("retrieval_cache", {}).update({
+        "enabled": False,
+    })
+    cfg.setdefault("faiss", {}).update({
+        "index_mode": "flat_ip",
+        "metric": "cosine",
+    })
+    cfg.setdefault("ollama", {}).update({
+        "embed_keep_alive": "30m",
+    })
+    return cfg
 
 def load_chunk_document_mapping(cfg: dict) -> dict:
     db_path = resolve_db_path(cfg)
@@ -117,10 +142,15 @@ def validate_benchmark(benchmark: list[dict], chunk_to_doc: dict):
             raise RuntimeError(f"Invalid benchmark relevance label: " f"{row['id']}")
 
 
-def benchmark_model(base_cfg: dict, model_dir: Path, benchmark: list[dict], output_root: Path, top_k: int = 100):
-    cfg = configure_model(base_cfg, model_dir)
+def benchmark_model(base_cfg: dict, model_dir: Path | None, benchmark: list[dict], output_root: Path, top_k: int = 100):
+    is_baseline = model_dir is None
+    if is_baseline:
+        cfg = configure_ollama_baseline(base_cfg)
+    else:
+        cfg = configure_model(base_cfg, model_dir,)
     model_id = embedding_model_name(cfg)
-    output_dir = output_root / model_id
+    run_name = (f"baseline__ollama__{model_id.replace(':', '_')}" if is_baseline else model_id)
+    output_dir = output_root / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print("\n" + "=" * 70)
     print("Benchmarking:", model_id)
@@ -128,11 +158,32 @@ def benchmark_model(base_cfg: dict, model_dir: Path, benchmark: list[dict], outp
 
     # Build or reuse model-specific embeddings and FAISS.
     prepare_started = time.perf_counter()
-    cfg = activate_hq_workspace(cfg)
+    if is_baseline:
+        print("[BASELINE] Reusing existing Ollama FAISS index")
+    else:
+        print("[PEFT] Preparing model-specific workspace")
+        cfg = activate_hq_workspace(cfg)
     prepare_seconds = (time.perf_counter() - prepare_started)
 
     # Load the same FAISS retriever used by production.
     retriever = FaissRetriever(resolve_faiss_dir(cfg), expected_model=model_id, mismatch_policy="error")
+    if not isinstance(retriever.index, faiss.IndexFlat):
+        raise RuntimeError("Benchmark requires an exact FAISS Flat index")
+    if retriever.index.metric_type != faiss.METRIC_INNER_PRODUCT:
+        raise RuntimeError("Benchmark requires inner-product search")
+    if retriever.meta.get("metric") != "cosine":
+        raise RuntimeError("FAISS index was not configured for cosine similarity")
+    if retriever.meta.get("normalized") is not True:
+        raise RuntimeError("FAISS index does not report normalized vectors")
+    if retriever.index.ntotal != len(retriever.ids):
+        raise RuntimeError("FAISS index and chunk ID count mismatch")
+    if len(retriever.ids) != len(set(retriever.ids.tolist())):
+        raise RuntimeError("Duplicate FAISS chunk IDs detected")
+
+    print("[FAISS] Model:", retriever.model)
+    print("[FAISS] Dimensions:", retriever.dims)
+    print("[FAISS] Indexed vectors:", retriever.index.ntotal)
+    print("[FAISS] Exact search verification: PASSED")
     chunk_to_doc = load_chunk_document_mapping(cfg)
     validate_benchmark(benchmark, chunk_to_doc)
     indexed_ids = {int(cid) for cid in retriever.ids}
@@ -148,6 +199,12 @@ def benchmark_model(base_cfg: dict, model_dir: Path, benchmark: list[dict], outp
         query_started = time.perf_counter()
         blob, dims = embed(cfg, row["question"], mode="query")
         query_vector = normalize_query_vec(blob, dims)
+        if not np.isfinite(query_vector).all():
+            raise RuntimeError(f"Nonfinite query embedding: {row['id']}")
+
+        if np.linalg.norm(query_vector) <= 1e-12:
+            raise RuntimeError(f"Zero-norm query embedding: {row['id']}")
+        
         embedding_ms = (time.perf_counter() - query_started) * 1000
         if dims != retriever.dims:
             raise RuntimeError("Query/index dimension mismatch")
@@ -177,20 +234,25 @@ def benchmark_model(base_cfg: dict, model_dir: Path, benchmark: list[dict], outp
 
     metadata = {
         "model": model_id,
-        "model_dir": str(model_dir),
-        "corpus_chunks": retriever.index.ntotal,
+        "run_name": run_name,
+        "architecture": ("frozen_snowflake" if is_baseline else cfg["quantum_peft"]["model_id"]),
+        "embedding_backend": (cfg["runtime"]["embedding_provider"]),
+        "model_dir": (str(model_dir) if model_dir is not None else None),
+        "is_unadapted_baseline": is_baseline,
+        "corpus_chunks": int(retriever.index.ntotal),
         "benchmark_queries": len(benchmark),
         "workspace_prepare_seconds": prepare_seconds,
-        "index_type": "flat_ip",
+        "index_type": type(retriever.index).__name__,
         "metric": "cosine",
+        "search_k": actual_k,
+        "embedding_dimension": retriever.dims,
         "database": str(resolve_db_path(cfg)),
+        "benchmark_sha256": hashlib.sha256(json.dumps(benchmark, sort_keys=True, ensure_ascii=False,).encode("utf-8")).hexdigest(),
+        "corpus_chunk_ids_sha256": hashlib.sha256(np.asarray(sorted(chunk_to_doc), dtype="<i8",).tobytes()).hexdigest(),
     }
-
     metrics.save(output_dir, run_id="embedding_benchmark", metadata=metadata)
     metrics.print()
-
     result = {**metadata, **metrics.summary(), "status": "completed"}
-
     (output_dir / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
@@ -219,13 +281,16 @@ def discover_models(models_root: Path, seed: int = 42) -> list[Path]:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=ROOT / "rag/config.yaml")
-    parser.add_argument("--models", type=Path, required=True)
+    parser.add_argument("--models", type=Path, default=None, help="Directory containing exported PEFT models")
     parser.add_argument("--benchmark", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--top-k", type=int, default=100)
     parser.add_argument("--limit-queries", type=int, default=0)
     parser.add_argument("--select", nargs="+", default=None)
+    baseline_group = parser.add_mutually_exclusive_group()
+    baseline_group.add_argument("--baseline-only", action="store_true", help="Evaluate only unadapted Ollama Snowflake",)
+    baseline_group.add_argument("--include-baseline", action="store_true", help="Evaluate Ollama Snowflake before PEFT models",)
 
     args = parser.parse_args()
     with args.config.open("r") as f:
@@ -233,10 +298,25 @@ def main():
     benchmark = load_benchmark(args.benchmark)
     if args.limit_queries > 0:
         benchmark = benchmark[:args.limit_queries]
-    models = discover_models(args.models, seed=args.seed)
-    args.output.mkdir(parents=True, exist_ok=True)
+    args.output.mkdir(parents=True, exist_ok=True,)
     results = []
+    if args.baseline_only or args.include_baseline:
+        print("\n" + "=" * 70)
+        print("UNADAPTED OLLAMA SNOWFLAKE BASELINE")
+        print("=" * 70)
+        result = benchmark_model(base_cfg=base_cfg, model_dir=None, benchmark=benchmark, output_root=args.output, top_k=args.top_k,)
+        results.append(result)
+        pd.json_normalize(results).to_csv(args.output / "benchmark_summary.csv", index=False,)
+        print("[COMPLETED] Ollama Snowflake baseline")
 
+    if args.baseline_only:
+        print("\nBaseline benchmark completed.")
+        return
+
+    if args.models is None:
+        parser.error("--models is required when benchmarking PEFT models")
+
+    models = discover_models(args.models, seed=args.seed,)
     for model_dir in models:
         meta = json.loads((model_dir / "quantum_config.json").read_text())
         if (args.select and meta["adapter_mode"] not in args.select):
